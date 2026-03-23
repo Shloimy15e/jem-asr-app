@@ -315,8 +315,7 @@ function openRemapModal(audioId) {
     const filtered = state.transcripts.filter(t => {
       if (!term) return true;
       return (t.name || '').toLowerCase().includes(term) ||
-             (t.firstLine || '').toLowerCase().includes(term) ||
-             (t.text || '').toLowerCase().includes(term);
+             (t.firstLine || '').toLowerCase().includes(term);
     });
     for (const t of filtered.slice(0, 60)) {
       const row = document.createElement('div');
@@ -458,6 +457,7 @@ function buildTable(rows) {
             input.type = 'text';
             input.className = 'audio-name-input';
             input.value = row.name;
+            input.addEventListener('click', (e) => e.stopPropagation());
             td.replaceChild(input, nameSpan);
             input.focus();
             input.select();
@@ -664,18 +664,20 @@ function buildCardView(rows) {
 
     const actions = document.createElement('div');
     actions.className = 'card-item-actions';
-    const viewBtn = document.createElement('button');
-    viewBtn.className = 'action-btn';
-    viewBtn.textContent = 'View';
-    viewBtn.addEventListener('click', (e) => {
+
+    const openBtn = document.createElement('button');
+    openBtn.className = 'action-btn action-btn-primary';
+    openBtn.textContent = 'Open';
+    openBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (_onRowExpand) _onRowExpand(row.id);
+      window.open(`/detail.html?id=${encodeURIComponent(row.id)}`, '_blank');
     });
-    actions.appendChild(viewBtn);
+    actions.appendChild(openBtn);
+
     card.appendChild(actions);
 
     card.addEventListener('click', () => {
-      if (_onRowExpand) _onRowExpand(row.id);
+      window.open(`/detail.html?id=${encodeURIComponent(row.id)}`, '_blank');
     });
 
     container.appendChild(card);
