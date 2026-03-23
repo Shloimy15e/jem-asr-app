@@ -1,11 +1,11 @@
-import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, exportState, importState } from './state.js';
+import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, exportState, importState, mergeSupabaseData } from './state.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
 import { alignRow } from './alignment.js';
 import { renderReviewPanel } from './review.js';
 import { renderKaraokePlayer } from './karaoke.js';
 import { formatConfidence } from './utils.js';
-import { loadAlignmentWords, loadTranscriptText } from './db.js';
+import { loadAlignmentWords, loadTranscriptText, loadFromSupabase } from './db.js';
 
 const R2_BASE = 'https://audio.kohnai.ai';
 
@@ -27,101 +27,45 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.location.href = '/';
   });
 
-  // Load data (same as app.js)
-  const resp = await fetch('/data.json');
-  if (!resp.ok) {
-    page.innerHTML = '<div class="empty-state"><div class="empty-state-title">Failed to load data</div></div>';
+  // Load data from Supabase (single source of truth)
+  page.innerHTML = '<div class="loading-state">Loading…</div>';
+  let remote;
+  try {
+    remote = await loadFromSupabase();
+  } catch (err) {
+    page.innerHTML = `<div class="empty-state"><div class="empty-state-title">Failed to load data: ${err.message}</div></div>`;
     return;
   }
-  const raw = await resp.json();
 
-  const selectedNames = new Set((raw.selected || []).map(s => s.audioName));
-  const audioMap = new Map();
-  (raw.allAudio || []).forEach((a, i) => {
-    const id = 'a_' + i;
-    audioMap.set(a.name, id);
-    a.id = id;
-    a.driveLink = a.link;
-    a.isSelected50hr = selectedNames.has(a.name);
-    a.isBenchmark = false;
-  });
+  initState({ audio: remote.audio, transcripts: remote.transcripts });
+  mergeSupabaseData(remote);
 
-  const firstLines = {};
-  (raw.matched || []).forEach(m => { if (m.firstLine && m.transcriptName) firstLines[m.transcriptName] = m.firstLine; });
-  (raw.selected || []).forEach(s => { if (s.firstLine && s.transcriptName) firstLines[s.transcriptName] = s.firstLine; });
-
-  const transcriptMap = new Map();
-  (raw.allTranscripts || []).forEach((t, i) => {
-    const id = 't_' + i;
-    transcriptMap.set(t.name, id);
-    t.id = id;
-    t.driveLink = t.link;
-    const txtName = t.name.replace(/\.(doc|docx|pdf|rtf|txt)$/i, '.txt');
-    t.r2TranscriptLink = `/api/transcript?name=${encodeURIComponent(txtName)}`;
-    if (!t.firstLine && firstLines[t.name]) t.firstLine = firstLines[t.name];
-  });
-
-  const mappings = {};
-  (raw.matched || []).forEach(m => {
-    const aId = audioMap.get(m.audioName);
-    const tId = transcriptMap.get(m.transcriptName);
-    if (aId && tId) {
-      mappings[aId] = { transcriptId: tId, confidence: 0.9, matchReason: 'pre-matched', confirmedBy: 'imported', confirmedAt: raw.generated || new Date().toISOString() };
-    }
-  });
-  (raw.selected || []).forEach(s => {
-    const aId = audioMap.get(s.audioName);
-    const tId = transcriptMap.get(s.transcriptName);
-    if (aId && tId && !mappings[aId]) {
-      mappings[aId] = { transcriptId: tId, confidence: 0.95, matchReason: '50hr-selected', confirmedBy: 'imported', confirmedAt: raw.generated || new Date().toISOString() };
-    }
-  });
-
-  const benchmarkNames = [
-    '0015--5711-Tamuz 12 Sicha 1.mp3',
-    '0142--5715-Tamuz 13d Sicha 3.mp3',
-    '2781--5741-Nissan 11e Mamar.mp3',
-    '0003--5711-Shvat 10c Mamar.mp3',
-    '2925--5742-Kislev 19 Sicha 1.mp3',
-  ];
-  const benchmarkSet = new Set(benchmarkNames);
-  (raw.allAudio || []).forEach(a => {
-    if (benchmarkSet.has(a.name)) {
-      a.isBenchmark = true;
-      a.isSelected50hr = false;
-      a.r2Link = `${R2_BASE}/benchmark/${encodeURIComponent(a.name)}`;
-    } else if (selectedNames.has(a.name)) {
-      a.r2Link = `${R2_BASE}/training/${encodeURIComponent(a.name)}`;
-    }
-  });
-
-  const data = { audio: raw.allAudio || [], transcripts: raw.allTranscripts || [], preMappings: mappings };
-  const state = initState(data);
-  if (data.preMappings) {
-    for (const [aId, mapping] of Object.entries(data.preMappings)) {
-      if (!state.mappings[aId]) state.mappings[aId] = mapping;
-    }
+  // Apply audioNames localStorage overrides so renamed files show correct names
+  const s = getState();
+  for (const [aId, name] of Object.entries(s.audioNames || {})) {
+    const entry = s.audio.find(a => a.id === aId);
+    if (entry) entry.name = name;
   }
 
   // Standalone transcript view
   if (transcriptId && !audioId) {
-    const transcript = state.transcripts.find(t => t.id === transcriptId);
+    const transcript = getState().transcripts.find(t => t.id === transcriptId);
     if (!transcript) {
       page.innerHTML = '<div class="empty-state"><div class="empty-state-title">Transcript not found</div></div>';
       return;
     }
-    renderTranscriptPage(transcriptId, transcript, state, page);
+    renderTranscriptPage(transcriptId, transcript, getState(), page);
     return;
   }
 
   // Find the audio entry
-  const audio = state.audio.find(a => a.id === audioId);
+  const audio = getState().audio.find(a => a.id === audioId);
   if (!audio) {
     page.innerHTML = '<div class="empty-state"><div class="empty-state-title">Audio not found</div></div>';
     return;
   }
 
-  renderDetailPage(audioId, audio, state, page);
+  renderDetailPage(audioId, audio, getState(), page);
 });
 
 function renderTranscriptPage(transcriptId, transcript, state, container) {
