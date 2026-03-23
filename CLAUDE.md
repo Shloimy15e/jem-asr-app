@@ -223,11 +223,14 @@ Both `audio_files` and `transcripts` have a `name_history JSONB` column. A `BEFO
 - **FK constraint:** `mappings`, `alignments`, `reviews`, `transcript_edits` all have FK → `audio_files.id`. `db.js` upserts the audio file row first before writing related rows (`ensureAudioFile()`).
 
 ### Startup flow (Supabase-only)
-1. App shows "Loading from Supabase…" spinner
+Both `app.js` (main table) and `detail.js` (per-file detail page) use the same Supabase startup flow:
+
+1. Shows "Loading…" spinner
 2. `loadFromSupabase()` fetches all tables in parallel — returns full `audio[]`, `transcripts[]` arrays plus work data (mappings, cleaning, alignments, reviews)
 3. `initState({ audio, transcripts })` initializes state (also loads localStorage cache for offline work)
 4. `mergeSupabaseData(remote)` overwrites localStorage cache with authoritative Supabase work data
-5. Table renders
+5. `audioNames` localStorage overrides applied to `state.audio` entries so renamed files show correct names immediately
+6. Page renders
 
 **Every change:** `updateState()` saves to localStorage instantly, then calls `syncStateKey()` fire-and-forget to upsert the changed row in Supabase.
 
