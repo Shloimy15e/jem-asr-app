@@ -106,8 +106,30 @@ export async function syncReview(audioId, reviewData, audioEntry) {
 // ── Dispatch helper used by state.js ────────────────────────────────
 // Called fire-and-forget after every updateState() call.
 
+async function syncAudioName(audioId, newName) {
+  const { error } = await supabase
+    .from('audio_files')
+    .update({ name: newName })
+    .eq('id', audioId);
+  if (error) console.warn('[DB] syncAudioName:', error.message);
+}
+
+async function syncAudioComment(audioId, comment) {
+  const { error } = await supabase
+    .from('audio_files')
+    .update({ comments: comment || null })
+    .eq('id', audioId);
+  if (error) console.warn('[DB] syncAudioComment:', error.message);
+}
+
 export function syncStateKey(key, audioId, value, audioEntry) {
   switch (key) {
+    case 'audioNames':
+      syncAudioName(audioId, value).catch(console.warn);
+      break;
+    case 'audioComments':
+      syncAudioComment(audioId, value).catch(console.warn);
+      break;
     case 'mappings':
       syncMapping(audioId, value, audioEntry).catch(console.warn);
       break;
@@ -234,33 +256,44 @@ export async function bulkSyncMappings(mappingsObj) {
 }
 
 // ── Bulk load from Supabase on startup ──────────────────────────────
+// Fetch all rows from a table, paginating through Supabase's 1000-row server limit.
+async function fetchAll(table, columns = '*') {
+  const PAGE = 1000;
+  let all = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase.from(table).select(columns).range(from, from + PAGE - 1);
+    if (error) { console.warn(`[DB] fetchAll ${table}:`, error.message); break; }
+    if (!data || data.length === 0) break;
+    all = all.concat(data);
+    if (data.length < PAGE) break;
+    from += PAGE;
+  }
+  return all;
+}
+
 // Returns the full catalog (audio + transcripts arrays) plus all work data.
 // This is now the PRIMARY source — app.js no longer uses data.json.
 
 export async function loadFromSupabase() {
   try {
     const [
-      { data: audioData,       error: afErr },
-      { data: transcriptData,  error: tErr  },
-      { data: mappingsData,    error: mErr  },
-      { data: alignmentsData,  error: aErr  },
-      { data: reviewsData,     error: rErr  },
-      { data: editsData,       error: eErr  },
+      audioData,
+      transcriptData,
+      mappingsData,
+      alignmentsData,
+      reviewsData,
+      editsData,
     ] = await Promise.all([
-      supabase.from('audio_files').select('*').limit(10000),
-      supabase.from('transcripts').select('id,name,year,month,day,first_line,drive_link,r2_transcript_link,source_transcript_id').limit(10000),
-      supabase.from('mappings').select('*').limit(10000),
-      supabase.from('alignments').select('*').limit(10000),
-      supabase.from('reviews').select('*').limit(10000),
-      supabase.from('transcript_edits').select('*').limit(10000),
+      fetchAll('audio_files'),
+      fetchAll('transcripts', 'id,name,year,month,day,first_line,text,drive_link,r2_transcript_link,source_transcript_id'),
+      fetchAll('mappings'),
+      fetchAll('alignments'),
+      fetchAll('reviews'),
+      fetchAll('transcript_edits'),
     ]);
 
-    if (afErr) console.warn('[DB] load audio_files:', afErr.message);
-    if (tErr)  console.warn('[DB] load transcripts:', tErr.message);
-    if (mErr)  console.warn('[DB] load mappings:', mErr.message);
-    if (aErr)  console.warn('[DB] load alignments:', aErr.message);
-    if (rErr)  console.warn('[DB] load reviews:', rErr.message);
-    if (eErr)  console.warn('[DB] load edits:', eErr.message);
+    // errors are logged inside fetchAll
 
     // Sort by numeric ID suffix for consistent ordering
     const byId = (a, b) => parseInt(a.id.slice(2)) - parseInt(b.id.slice(2));
@@ -275,6 +308,7 @@ export async function loadFromSupabase() {
       estMinutes: a.duration_minutes,
       isSelected50hr: a.is_selected_50hr,
       isBenchmark: a.is_benchmark,
+      comments: a.comments || '',
       r2Link: a.r2_link,
       driveLink: a.drive_link,
     }));
@@ -286,6 +320,7 @@ export async function loadFromSupabase() {
       month: t.month,
       day: t.day,
       firstLine: t.first_line,
+      text: t.text || null,
       driveLink: t.drive_link,
       r2TranscriptLink: t.r2_transcript_link,
       sourceTranscriptId: t.source_transcript_id || null,

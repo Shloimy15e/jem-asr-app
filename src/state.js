@@ -116,6 +116,14 @@ export function updateState(key, audioId, value) {
   } else {
     state[key][audioId] = value;
   }
+  // Keep state.audio in sync for direct-field overrides
+  if (audioId !== null) {
+    const audioEntry = state.audio?.find(a => a.id === audioId);
+    if (audioEntry) {
+      if (key === 'audioNames') audioEntry.name = value;
+      if (key === 'audioComments') audioEntry.comments = value;
+    }
+  }
   saveToStorage();
   // Sync to Supabase (fire and forget)
   if (audioId !== null) {
@@ -242,37 +250,31 @@ export function getFilteredRows(filter, searchTerm, sortCol, sortDir, yearFilter
   const { audio } = state;
   const fifty = audio.filter(a => a.isSelected50hr);
 
-  // Only show Sicha/Maamar types
-  const isSichaOrMaamar = (a) => {
-    const name = (a.name || '').toLowerCase();
-    return name.includes('sicha') || name.includes('maamar') || name.includes('mamar');
-  };
-
   let rows;
   switch (filter) {
     case 'fifty':
     case '50hr':
-      rows = fifty.filter(isSichaOrMaamar);
+      rows = fifty;
       break;
     case 'fifty-unmapped':
     case '50hr-unmapped':
-      rows = fifty.filter(a => isSichaOrMaamar(a) && getStatus(a.id) === 'unmapped');
+      rows = fifty.filter(a => getStatus(a.id) === 'unmapped');
       break;
     case 'fifty-mapped':
     case '50hr-mapped':
-      rows = fifty.filter(a => isSichaOrMaamar(a) && getStatus(a.id) === 'mapped');
+      rows = fifty.filter(a => getStatus(a.id) === 'mapped');
       break;
     case 'fifty-cleaned':
     case '50hr-cleaned':
-      rows = fifty.filter(a => isSichaOrMaamar(a) && getStatus(a.id) === 'cleaned');
+      rows = fifty.filter(a => getStatus(a.id) === 'cleaned');
       break;
     case 'fifty-aligned':
     case '50hr-aligned':
-      rows = fifty.filter(a => isSichaOrMaamar(a) && getStatus(a.id) === 'aligned');
+      rows = fifty.filter(a => getStatus(a.id) === 'aligned');
       break;
     case 'fifty-approved':
     case '50hr-approved':
-      rows = fifty.filter(a => isSichaOrMaamar(a) && getStatus(a.id) === 'approved');
+      rows = fifty.filter(a => getStatus(a.id) === 'approved');
       break;
     case 'unmapped':
       rows = audio.filter(a => getStatus(a.id) === 'unmapped');
@@ -347,11 +349,7 @@ function getTranscriptNameForAudio(audioId) {
 export function getFilterCounts() {
   if (!state) return {};
   const { audio } = state;
-  const isSichaOrMaamar = (a) => {
-    const name = (a.name || '').toLowerCase();
-    return name.includes('sicha') || name.includes('maamar') || name.includes('mamar');
-  };
-  const fifty = audio.filter(a => a.isSelected50hr && isSichaOrMaamar(a));
+  const fifty = audio.filter(a => a.isSelected50hr);
 
   const statusCounts = { unmapped: 0, mapped: 0, cleaned: 0, aligned: 0, approved: 0 };
   audio.forEach(a => {

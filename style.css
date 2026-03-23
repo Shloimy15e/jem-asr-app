@@ -39,7 +39,7 @@
 
 html {
   font-size: 14px;
-  scroll-behavior: smooth;
+  height: 100%;
 }
 
 body {
@@ -47,7 +47,9 @@ body {
   background: var(--bg);
   color: var(--text);
   line-height: 1.5;
-  min-height: 100vh;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 button {
@@ -132,6 +134,7 @@ input {
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .filter-group {
@@ -232,7 +235,9 @@ input {
 /* === Table Container === */
 .table-container {
   padding: 0 24px 80px;
-  overflow-x: auto;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 /* === Data Table === */
@@ -260,7 +265,7 @@ input {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   position: sticky;
-  top: 52px;
+  top: 0;
   z-index: 50;
   cursor: pointer;
   user-select: none;
@@ -1869,6 +1874,42 @@ input {
   color: var(--text);
   font-size: 0.85rem;
   font-family: inherit;
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+/* === Inline Comment Cell === */
+.comment-cell {
+  display: block;
+  cursor: text;
+  color: var(--text);
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  min-width: 120px;
+  max-width: 260px;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 0.15s;
+}
+
+.comment-cell:hover {
+  border-bottom-color: var(--accent);
+}
+
+.comment-cell.comment-placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.comment-input {
+  width: 100%;
+  min-width: 200px;
+  padding: 4px 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-family: inherit;
+  resize: vertical;
   box-shadow: 0 0 0 2px var(--accent-dim);
 }
 

@@ -197,7 +197,7 @@ stateDiagram-v2
 
 | Table | PK | Contents |
 |-------|-----|---------|
-| `audio_files` | `id` | All 4,669 audio files. Key columns: `is_selected_50hr`, `is_benchmark`, `r2_link`, `duration_minutes`, `name_history` (JSONB rename trail) |
+| `audio_files` | `id` | All 4,669 audio files. Key columns: `is_selected_50hr`, `is_benchmark`, `r2_link`, `duration_minutes`, `comments`, `name_history` (JSONB rename trail) |
 | `transcripts` | `id` | All 1,065 transcripts. Key columns: `first_line`, `r2_transcript_link`, `text` (full text for 50hr), `name_history` (JSONB rename trail) |
 | `mappings` | `audio_id` | Audio → transcript links. Columns: `transcript_id`, `confidence`, `match_reason`, `confirmed_by`, `created_at` |
 | `alignments` | `audio_id` | Word timestamps + confidence scores |
@@ -293,11 +293,11 @@ The app enforces: no "Approve" button on these rows, never included in training 
 
 ## Known Gotchas
 
-### Supabase row limit
-All startup queries use `.limit(10000)`. Supabase PostgREST caps results at 1,000 rows by default — without it only the first 1,000 of 4,669 audio files load, causing the 50hr collection to show far fewer files than exist in the DB.
+### Supabase row limit — use fetchAll(), not .limit()
+`supabase.from(...).select(...).limit(10000)` does NOT work — Supabase's server-side `max_rows` caps responses at 1,000 rows regardless of the client-side `.limit()` call. All startup queries use `fetchAll(table, columns)` defined in `db.js`, which paginates in 1,000-row chunks via `.range(from, from+999)` until all records are returned. Never replace this with `.limit()`.
 
-### Sticky header covers row 1
-When scrolled past the filter bar, the sticky column header (`top: 52px`) can cover the first data row. Filter-pill clicks now scroll the page to put row 1 in view after re-rendering.
+### Page layout: body is a flex column, table scrolls internally
+`body` uses `display: flex; flex-direction: column; height: 100%`. The `.table-container` has `flex: 1; overflow: auto; min-height: 0` so it fills the remaining viewport height and scrolls internally. The `<thead>` is `position: sticky; top: 0` within that scroll container. The app header and filter bar are always visible above the table — they do not need `position: sticky`. Do not revert to a scrolling-page layout or the sticky column header will appear in the wrong position.
 
 ### Cloudflare Pages — manual deploy required
 The Pages project is NOT connected to GitHub auto-deploy. Every release requires:
@@ -308,6 +308,12 @@ npx wrangler pages deploy dist/ --project-name jem-asr-app
 
 ### DB column: `duration_minutes` not `est_minutes`
 Renamed via migration `20260323000000_rename_est_minutes.sql`. All app code uses `duration_minutes`.
+
+### DB column: `comments` on `audio_files`
+Added via migration `20260323000001_add_audio_comments.sql`. Editable inline in the table; syncs to Supabase on blur via `updateState('audioComments', id, value)` → `syncAudioComment()`.
+
+### Audio name edits sync to Supabase
+Editing a name in the table calls `updateState('audioNames', id, newName)` → `syncStateKey` → `UPDATE audio_files SET name = ? WHERE id = ?`. The `name_history` trigger on `audio_files` automatically records the old name. `state.audio[n].name` is also updated in memory so filters/search reflect the change immediately.
 
 ## Build Rules
 - Vite + vanilla JS ESM. No frameworks.
@@ -408,6 +414,8 @@ exportState(), importState(json)
 loadFromSupabase()
 
 syncStateKey(key, audioId, value, audioEntry)  // dispatch upsert for the changed key
+// Handled keys: 'audioNames' → audio_files.name, 'audioComments' → audio_files.comments,
+//               'mappings', 'cleaning', 'alignments', 'reviews'
 syncMapping(audioId, mapping, audioEntry)
 syncCleaning(audioId, cleaningData, audioEntry)
 syncAlignment(audioId, alignmentData, audioEntry)
@@ -504,7 +512,7 @@ debounce(fn, ms)
 
 Both formats work: `'fifty'` = `'50hr'`, `'fifty-unmapped'` = `'50hr-unmapped'`, etc.
 
-Note: The `'fifty'` view filters to Sicha/Maamar only (filenames containing "sicha", "maamar", "mamar"). Farbrengen files in the 50hr set are excluded.
+The `'fifty'` view shows all 200 `is_selected_50hr` files — no type filtering is applied.
 
 Valid keys: `fifty`, `fifty-unmapped`, `fifty-mapped`, `fifty-cleaned`, `fifty-aligned`, `fifty-approved`, `all`, `unmapped`, `mapped`, `cleaned`, `benchmark`, `needs-review`, `approved`
 

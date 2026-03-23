@@ -70,6 +70,7 @@ const COLUMNS = [
   { key: 'cleanRate',     label: 'Clean Rate',        sortable: true,  showWhen: (f) => !['unmapped', 'mapped'].includes(f) },
   { key: 'avgConf',       label: 'Avg. Confidence',   sortable: true,  showWhen: (f) => !['unmapped', 'mapped', 'cleaned'].includes(f) },
   { key: 'lowConfWords',  label: 'Low Conf. Words',   sortable: true,  showWhen: (f) => !['unmapped', 'mapped', 'cleaned'].includes(f) },
+  { key: 'comments',      label: 'Comments',          sortable: false, showWhen: () => true },
   { key: 'status',        label: 'Status',            sortable: true,  showWhen: () => true },
   { key: 'actions',       label: 'Actions',           sortable: false, showWhen: () => true },
 ];
@@ -113,6 +114,7 @@ function getRowData(audio) {
     cleanRate: cleaning ? cleaning.cleanRate + '%' : '',
     avgConf: alignment ? formatConfidence(alignment.avgConfidence) : '',
     lowConfWords: alignment ? alignment.lowConfidenceCount : '',
+    comments: audio.comments || '',
     status,
     isBenchmark: !!audio.isBenchmark,
   };
@@ -313,7 +315,8 @@ function openRemapModal(audioId) {
     const filtered = state.transcripts.filter(t => {
       if (!term) return true;
       return (t.name || '').toLowerCase().includes(term) ||
-             (t.firstLine || '').toLowerCase().includes(term);
+             (t.firstLine || '').toLowerCase().includes(term) ||
+             (t.text || '').toLowerCase().includes(term);
     });
     for (const t of filtered.slice(0, 60)) {
       const row = document.createElement('div');
@@ -509,6 +512,43 @@ function buildTable(rows) {
           td.textContent = row.firstLine;
           td.classList.add('cell-hebrew');
           break;
+        case 'comments': {
+          const commentSpan = document.createElement('span');
+          commentSpan.className = 'comment-cell';
+          commentSpan.textContent = row.comments || '+ Add comment';
+          commentSpan.title = 'Click to edit';
+          if (!row.comments) commentSpan.classList.add('comment-placeholder');
+          commentSpan.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const textarea = document.createElement('textarea');
+            textarea.className = 'comment-input';
+            textarea.value = row.comments || '';
+            textarea.rows = 3;
+            td.replaceChild(textarea, commentSpan);
+            textarea.focus();
+            let saved = false;
+            const save = () => {
+              if (saved) return;
+              saved = true;
+              const newVal = textarea.value.trim();
+              if (newVal !== row.comments) {
+                updateState('audioComments', row.id, newVal);
+              }
+              updateTable();
+            };
+            textarea.addEventListener('blur', save);
+            textarea.addEventListener('keydown', (ke) => {
+              if (ke.key === 'Escape') {
+                ke.preventDefault();
+                saved = true;
+                textarea.removeEventListener('blur', save);
+                td.replaceChild(commentSpan, textarea);
+              }
+            });
+          });
+          td.appendChild(commentSpan);
+          break;
+        }
         case 'status': {
           const badge = document.createElement('span');
           badge.className = `status-badge ${getStatusClass(row.status)}`;
@@ -733,10 +773,7 @@ function renderTable(container, options = {}) {
       selectedIds.clear();
       updateTable();
       _fireRowSelect();
-      if (_container) {
-        const top = _container.getBoundingClientRect().top + window.scrollY - 52;
-        window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
-      }
+      if (_container) _container.scrollTo({ top: 0, behavior: 'smooth' });
     });
   });
 
