@@ -247,12 +247,12 @@ export async function loadFromSupabase() {
       { data: reviewsData,     error: rErr  },
       { data: editsData,       error: eErr  },
     ] = await Promise.all([
-      supabase.from('audio_files').select('*'),
-      supabase.from('transcripts').select('id,name,year,month,day,first_line,drive_link,r2_transcript_link,source_transcript_id'),
-      supabase.from('mappings').select('*'),
-      supabase.from('alignments').select('*'),
-      supabase.from('reviews').select('*'),
-      supabase.from('transcript_edits').select('*'),
+      supabase.from('audio_files').select('*').limit(10000),
+      supabase.from('transcripts').select('id,name,year,month,day,first_line,drive_link,r2_transcript_link,source_transcript_id').limit(10000),
+      supabase.from('mappings').select('*').limit(10000),
+      supabase.from('alignments').select('*').limit(10000),
+      supabase.from('reviews').select('*').limit(10000),
+      supabase.from('transcript_edits').select('*').limit(10000),
     ]);
 
     if (afErr) console.warn('[DB] load audio_files:', afErr.message);
