@@ -197,7 +197,7 @@ stateDiagram-v2
 
 | Table | PK | Contents |
 |-------|-----|---------|
-| `audio_files` | `id` | All 4,669 audio files. Key columns: `is_selected_50hr`, `is_benchmark`, `r2_link`, `est_minutes`, `name_history` (JSONB rename trail) |
+| `audio_files` | `id` | All 4,669 audio files. Key columns: `is_selected_50hr`, `is_benchmark`, `r2_link`, `duration_minutes`, `name_history` (JSONB rename trail) |
 | `transcripts` | `id` | All 1,065 transcripts. Key columns: `first_line`, `r2_transcript_link`, `text` (full text for 50hr), `name_history` (JSONB rename trail) |
 | `mappings` | `audio_id` | Audio → transcript links. Columns: `transcript_id`, `confidence`, `match_reason`, `confirmed_by`, `created_at` |
 | `alignments` | `audio_id` | Word timestamps + confidence scores |
@@ -217,7 +217,7 @@ stateDiagram-v2
 Both `audio_files` and `transcripts` have a `name_history JSONB` column. A `BEFORE UPDATE` trigger automatically appends `{name, changed_at}` whenever a row's name changes, preserving the full rename trail.
 
 #### 50hr collection flags
-- `audio_files.is_selected_50hr = true` → 420 files (50hr training set, excluding 3 benchmarks that are also in selected)
+- `audio_files.is_selected_50hr = true` → 200 files, ~49.97 hours — equal distribution across all 40 years (5711–5752), ~75–80 min per year. Trimmed from original 420 files.
 - `audio_files.is_benchmark = true` → 5 files (gold standard, never in training)
 
 - **FK constraint:** `mappings`, `alignments`, `reviews`, `transcript_edits` all have FK → `audio_files.id`. `db.js` upserts the audio file row first before writing related rows (`ensureAudioFile()`).
@@ -275,7 +275,7 @@ The app enforces: no "Approve" button on these rows, never included in training 
 
 ## Success Looks Like
 
-1. All 423 pairs in the 50-hour set: mapped → cleaned → aligned → reviewed → approved
+1. All 200 pairs in the 50-hour set: mapped → cleaned → aligned → reviewed → approved
 2. Zero benchmark files in the training export
 3. WER score drops after fine-tuning (e.g., Whisper baseline 45% → fine-tuned 18%)
 4. The remaining 2,860 audio files transcribed automatically
@@ -289,6 +289,25 @@ The app enforces: no "Approve" button on these rows, never included in training 
 # Technical Reference (for developers)
 
 ---
+
+
+## Known Gotchas
+
+### Supabase row limit
+All startup queries use `.limit(10000)`. Supabase PostgREST caps results at 1,000 rows by default — without it only the first 1,000 of 4,669 audio files load, causing the 50hr collection to show far fewer files than exist in the DB.
+
+### Sticky header covers row 1
+When scrolled past the filter bar, the sticky column header (`top: 52px`) can cover the first data row. Filter-pill clicks now scroll the page to put row 1 in view after re-rendering.
+
+### Cloudflare Pages — manual deploy required
+The Pages project is NOT connected to GitHub auto-deploy. Every release requires:
+```bash
+npm run build
+npx wrangler pages deploy dist/ --project-name jem-asr-app
+```
+
+### DB column: `duration_minutes` not `est_minutes`
+Renamed via migration `20260323000000_rename_est_minutes.sql`. All app code uses `duration_minutes`.
 
 ## Build Rules
 - Vite + vanilla JS ESM. No frameworks.

@@ -733,6 +733,10 @@ function renderTable(container, options = {}) {
       selectedIds.clear();
       updateTable();
       _fireRowSelect();
+      if (_container) {
+        const top = _container.getBoundingClientRect().top + window.scrollY - 52;
+        window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+      }
     });
   });
 
