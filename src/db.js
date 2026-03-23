@@ -21,7 +21,7 @@ async function ensureAudioFile(audio) {
       month: audio.month || null,
       day: audio.day || null,
       type: audio.type || null,
-      est_minutes: audio.estMinutes || null,
+      duration_minutes: audio.estMinutes || null,
       is_selected_50hr: audio.isSelected50hr || false,
       is_benchmark: audio.isBenchmark || false,
     },
@@ -142,7 +142,7 @@ export async function bulkSyncAudioFiles(audioArray) {
       month: a.month || null,
       day: a.day || null,
       type: a.type || null,
-      est_minutes: a.estMinutes || null,
+      duration_minutes: a.estMinutes || null,
       is_selected_50hr: a.isSelected50hr || false,
       is_benchmark: a.isBenchmark || false,
     }));
@@ -166,6 +166,51 @@ export async function bulkSyncTranscripts(transcriptArray) {
     const { error } = await supabase.from('transcripts').upsert(rows, { onConflict: 'id' });
     if (error) console.warn('[DB] bulkSyncTranscripts:', error.message);
   }
+}
+
+// ── Split transcript ─────────────────────────────────────────────────
+// Creates a new transcript record derived from an existing one.
+// The new record gets source_transcript_id = originalId for traceability.
+// Returns the new transcript object in camelCase (ready to push into state).
+
+export async function splitTranscript(originalId) {
+  const { data: orig, error: fetchErr } = await supabase
+    .from('transcripts')
+    .select('*')
+    .eq('id', originalId)
+    .single();
+  if (fetchErr || !orig) throw new Error('Could not fetch original transcript: ' + (fetchErr?.message || 'not found'));
+
+  const newId = `t_${Date.now()}`;
+  const { data: created, error: insertErr } = await supabase
+    .from('transcripts')
+    .insert({
+      id: newId,
+      name: orig.name,
+      year: orig.year,
+      month: orig.month,
+      day: orig.day,
+      first_line: orig.first_line,
+      drive_link: orig.drive_link,
+      r2_transcript_link: orig.r2_transcript_link,
+      text: orig.text || null,
+      source_transcript_id: orig.source_transcript_id || originalId,
+    })
+    .select()
+    .single();
+  if (insertErr) throw new Error('Could not create split transcript: ' + insertErr.message);
+
+  return {
+    id: created.id,
+    name: created.name,
+    year: created.year,
+    month: created.month,
+    day: created.day,
+    firstLine: created.first_line,
+    driveLink: created.drive_link,
+    r2TranscriptLink: created.r2_transcript_link,
+    sourceTranscriptId: created.source_transcript_id,
+  };
 }
 
 // Must be called AFTER bulkSyncAudioFiles (FK constraint on audio_id).
@@ -203,7 +248,7 @@ export async function loadFromSupabase() {
       { data: editsData,       error: eErr  },
     ] = await Promise.all([
       supabase.from('audio_files').select('*'),
-      supabase.from('transcripts').select('id,name,year,month,day,first_line,drive_link,r2_transcript_link'),
+      supabase.from('transcripts').select('id,name,year,month,day,first_line,drive_link,r2_transcript_link,source_transcript_id'),
       supabase.from('mappings').select('*'),
       supabase.from('alignments').select('*'),
       supabase.from('reviews').select('*'),
@@ -227,7 +272,7 @@ export async function loadFromSupabase() {
       month: a.month,
       day: a.day,
       type: a.type,
-      estMinutes: a.est_minutes,
+      estMinutes: a.duration_minutes,
       isSelected50hr: a.is_selected_50hr,
       isBenchmark: a.is_benchmark,
       r2Link: a.r2_link,
@@ -243,6 +288,7 @@ export async function loadFromSupabase() {
       firstLine: t.first_line,
       driveLink: t.drive_link,
       r2TranscriptLink: t.r2_transcript_link,
+      sourceTranscriptId: t.source_transcript_id || null,
     }));
 
     const mappings = {};

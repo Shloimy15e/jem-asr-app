@@ -222,6 +222,21 @@ function syncLegacyKeys(audioId) {
   }
 }
 
+// Returns all audio IDs that are currently mapped to the given transcriptId.
+export function getAudiosByTranscriptId(transcriptId) {
+  if (!state) return [];
+  return Object.entries(state.mappings)
+    .filter(([, m]) => m.transcriptId === transcriptId)
+    .map(([audioId]) => audioId);
+}
+
+// Push a freshly-created transcript record into the in-memory catalog so the
+// UI sees it immediately without a full reload.
+export function addTranscript(transcript) {
+  if (!state) return;
+  state.transcripts.push(transcript);
+}
+
 export function getFilteredRows(filter, searchTerm, sortCol, sortDir, yearFilter, monthFilter, typeFilter) {
   if (!state) return [];
   const { audio } = state;

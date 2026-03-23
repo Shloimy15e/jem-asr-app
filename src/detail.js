@@ -251,7 +251,7 @@ function renderDetailPage(audioId, audio, state, container) {
   const metaItems = [
     audio.year && `Year: ${audio.year}`,
     audio.type && `Type: ${audio.type}`,
-    audio.estMinutes != null && `Duration: ~${audio.estMinutes} min`,
+    audio.estMinutes != null && `Duration: ${audio.estMinutes} min`,
     audio.isSelected50hr && '50-Hour Set',
     audio.isBenchmark && 'Benchmark',
   ].filter(Boolean);

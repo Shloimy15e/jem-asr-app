@@ -1,5 +1,5 @@
-import { initState, getState, getStatus, getFilteredRows, exportState, importState, mergeSupabaseData } from './state.js';
-import { loadFromSupabase } from './db.js';
+import { initState, getState, getStatus, getFilteredRows, exportState, importState, mergeSupabaseData, getAudiosByTranscriptId, addTranscript } from './state.js';
+import { loadFromSupabase, splitTranscript } from './db.js';
 import { renderTable, updateTable, getSelectedRows } from './table.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean } from './cleaning.js';
@@ -251,8 +251,49 @@ document.addEventListener('DOMContentLoaded', async () => {
         const label = document.createElement('span');
         label.className = 'text-secondary';
         label.style.fontSize = '0.85rem';
-        label.textContent = `Linked to: ${transcript ? transcript.name : currentMapping.transcriptId}`;
+
+        // Show source document name if this is a split transcript
+        const sourceName = transcript?.sourceTranscriptId
+          ? (() => {
+              const src = state.transcripts.find(t => t.id === transcript.sourceTranscriptId);
+              return src ? ` (split from: ${src.name})` : ` (split from: ${transcript.sourceTranscriptId})`;
+            })()
+          : '';
+        label.textContent = `Linked to: ${transcript ? transcript.name : currentMapping.transcriptId}${sourceName}`;
         mappingBar.appendChild(label);
+
+        // Shared-transcript warning + Split button
+        const sharedAudioIds = getAudiosByTranscriptId(currentMapping.transcriptId)
+          .filter(id => id !== audioId);
+        if (sharedAudioIds.length > 0) {
+          const warning = document.createElement('span');
+          warning.style.cssText = 'font-size:0.8rem;color:var(--orange,#fb923c);display:flex;align-items:center;gap:4px;';
+          warning.textContent = `⚠ Shared with ${sharedAudioIds.length} other audio file${sharedAudioIds.length > 1 ? 's' : ''}`;
+          mappingBar.appendChild(warning);
+
+          const splitBtn = document.createElement('button');
+          splitBtn.className = 'action-btn';
+          splitBtn.style.cssText = 'background:var(--orange,#fb923c);color:#000;font-weight:600;';
+          splitBtn.textContent = 'Split Transcript';
+          splitBtn.title = 'Create a private copy of this transcript for this audio file only';
+          splitBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            splitBtn.disabled = true;
+            splitBtn.textContent = 'Splitting…';
+            try {
+              const newTranscript = await splitTranscript(currentMapping.transcriptId);
+              addTranscript(newTranscript);
+              linkMatch(audioId, newTranscript.id, currentMapping.confidence, (currentMapping.matchReason || '') + (currentMapping.matchReason ? ' [split]' : 'split'));
+              updateTable();
+              onRowExpand(audioId);
+            } catch (err) {
+              splitBtn.disabled = false;
+              splitBtn.textContent = 'Split failed';
+              console.error('[split]', err);
+            }
+          });
+          mappingBar.appendChild(splitBtn);
+        }
 
         const unlinkBtn = document.createElement('button');
         unlinkBtn.className = 'action-btn action-btn-danger';

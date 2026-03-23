@@ -107,6 +107,14 @@ graph LR
 ### 1. Mapping — *"Which transcript goes with this recording?"*
 The archive has 4,669 audio files and 1,065 transcripts. They weren't linked. The app compares Hebrew dates and content type in filenames to suggest matches — ranked by confidence. The reviewer clicks to confirm or uses the search modal to find manually.
 
+Matching score (0–1.0):
+- Exact year+month+day match → 1.0
+- Year+month match → 0.5
+- Year only → 0.25
+- Content type keyword in both filenames → +0.15
+- Transcript has firstLine text stored → +0.05 (prefers transcripts with richer metadata)
+- firstLine contains matching content type keyword → +0.05
+
 ### 2. Cleaning — *"Strip the editor's notes, keep only the spoken words"*
 Transcripts were prepared by human editors who added notes, section headers, and markers. Five regex passes remove all of that:
 - `[brackets]` → removed
@@ -116,6 +124,8 @@ Transcripts were prepared by human editors who added notes, section headers, and
 - Extra whitespace and blank lines → collapsed
 
 **Clean Rate** = what percentage of words survived. Below 50% means something looks wrong.
+
+Note: "cleaned" is a pipeline status on an **audio file** — it means the transcript text linked to that audio has been cleaned and is ready for alignment. The cleaned text is stored in `transcript_edits` keyed by `audio_id`.
 
 ### 3. Alignment — *"Match each word to its exact timestamp in the audio"*
 The cleaned text and audio are sent to a GPU server (RunPod) running a Yiddish-tuned Whisper model. It returns every word with a start time, end time, and confidence score. **Important:** The GPU scales to zero when idle — the first call can take ~2.5 minutes to warm up. The app retries automatically.
@@ -142,9 +152,9 @@ Once the model is trained and benchmark scores look good, this mode sends the re
 
 ```mermaid
 stateDiagram-v2
-    [*] --> unmapped : File loaded from data.json
+    [*] --> unmapped : File loaded from Supabase
     unmapped --> mapped : User links a transcript
-    mapped --> cleaned : Cleaning pass runs
+    mapped --> cleaned : Transcript text cleaning pass runs
     cleaned --> aligned : GPU alignment completes
     aligned --> approved : Human approves in review
     aligned --> mapped : Human rejects → re-clean
@@ -169,40 +179,62 @@ stateDiagram-v2
 
 | What | Where | Notes |
 |------|-------|-------|
-| Audio metadata (4,669 files) | `public/data.json` | Loaded on startup, never mutated |
-| Transcript metadata (1,065 files) | `public/data.json` | Loaded on startup, never mutated |
-| User work (mappings, cleaning, alignment, reviews) | Supabase + `localStorage` | Supabase is primary; localStorage is instant-access cache |
+| Audio metadata (4,669 files) | Supabase `audio_files` | **Primary source** — loaded at startup |
+| Transcript metadata (1,065 files) | Supabase `transcripts` | **Primary source** — loaded at startup |
+| Full transcript text (50hr set) | Supabase `transcripts.text` | 227/228 50hr transcripts have full text stored |
+| User work (mappings, cleaning, alignment, reviews) | Supabase + `localStorage` | Supabase is primary; localStorage is offline cache |
 | Audio files | Cloudflare R2 (`audio.kohnai.ai`) | Proxied via `/api/audio` |
-| Transcript text | Cloudflare R2 (`audio.kohnai.ai/transcripts-txt/`) | Proxied via `/api/transcript` |
+| Original transcript files | Cloudflare R2 (`audio.kohnai.ai/transcripts-txt/`) | Proxied via `/api/transcript` |
+
+`public/data.json` is still present in the repo (used by the seed script) but the **app no longer loads it** — Supabase is the single source of truth for the catalog.
 
 ### Supabase database (JEM-ASR-Workbench)
 - **Project ref:** `xqivwkksimsvxsxhnzsj`
 - **URL:** `https://xqivwkksimsvxsxhnzsj.supabase.co`
 - **RLS:** All tables have `public_read_write` policy (anon key has full access)
-- **Tables:**
+
+#### Tables
 
 | Table | PK | Contents |
 |-------|-----|---------|
-| `audio_files` | `id` | All audio file metadata |
-| `transcripts` | `id` | Transcript metadata |
-| `mappings` | `audio_id` | Audio → transcript links + confidence |
+| `audio_files` | `id` | All 4,669 audio files. Key columns: `is_selected_50hr`, `is_benchmark`, `r2_link`, `est_minutes`, `name_history` (JSONB rename trail) |
+| `transcripts` | `id` | All 1,065 transcripts. Key columns: `first_line`, `r2_transcript_link`, `text` (full text for 50hr), `name_history` (JSONB rename trail) |
+| `mappings` | `audio_id` | Audio → transcript links. Columns: `transcript_id`, `confidence`, `match_reason`, `confirmed_by`, `created_at` |
 | `alignments` | `audio_id` | Word timestamps + confidence scores |
-| `reviews` | `audio_id` | Approval status + edited text |
-| `transcript_edits` | `(audio_id, version)` | Cleaned/edited text versions |
+| `reviews` | `audio_id` | Approval status + `edited_text` (user's corrected text) + `reviewed_at` |
+| `transcript_edits` | `(audio_id, version)` | Cleaned transcript text. `version` is TEXT (e.g. `'cleaned'`). Columns: `text`, `original_text`, `clean_rate`, `created_at`, `created_by` |
 | `asr_models` | `id` | ASR model configurations |
 | `benchmark_results` | `id` | WER/CER benchmark run results |
-| `latest_edits` | — | View: most recent edit per audio |
 
-- **FK constraint:** `mappings`, `alignments`, `reviews`, `transcript_edits` all have FK → `audio_files.id`. `db.js` upserts the audio file row first before writing related rows.
+#### Views
 
-### Sync flow
-- **Startup:** `loadFromSupabase()` fetches all 4 tables in parallel → `mergeSupabaseData()` merges over localStorage → table re-renders. Runs in background, app is usable immediately from localStorage.
-- **Every change:** `updateState()` saves to localStorage instantly, then calls `syncStateKey()` fire-and-forget to upsert the changed row in Supabase.
+| View | Purpose |
+|------|---------|
+| `latest_edits` | Most recent edit per audio file |
+| `audio_pipeline_status` | Each audio with `pipeline_status` (unmapped/mapped/cleaned/aligned/approved), `is_selected_50hr`, `is_benchmark`, `transcript_name`, `mapping_confidence` — use this in Supabase dashboard to monitor progress |
+
+#### Name history tracking
+Both `audio_files` and `transcripts` have a `name_history JSONB` column. A `BEFORE UPDATE` trigger automatically appends `{name, changed_at}` whenever a row's name changes, preserving the full rename trail.
+
+#### 50hr collection flags
+- `audio_files.is_selected_50hr = true` → 420 files (50hr training set, excluding 3 benchmarks that are also in selected)
+- `audio_files.is_benchmark = true` → 5 files (gold standard, never in training)
+
+- **FK constraint:** `mappings`, `alignments`, `reviews`, `transcript_edits` all have FK → `audio_files.id`. `db.js` upserts the audio file row first before writing related rows (`ensureAudioFile()`).
+
+### Startup flow (Supabase-only)
+1. App shows "Loading from Supabase…" spinner
+2. `loadFromSupabase()` fetches all tables in parallel — returns full `audio[]`, `transcripts[]` arrays plus work data (mappings, cleaning, alignments, reviews)
+3. `initState({ audio, transcripts })` initializes state (also loads localStorage cache for offline work)
+4. `mergeSupabaseData(remote)` overwrites localStorage cache with authoritative Supabase work data
+5. Table renders
+
+**Every change:** `updateState()` saves to localStorage instantly, then calls `syncStateKey()` fire-and-forget to upsert the changed row in Supabase.
 
 ### Exporting your work
 - **Export State** button → downloads a JSON file of all your work (mappings, cleaning, alignments, reviews)
 - **Export CSV** button → downloads only the approved rows, ready for training
-- Work is now cloud-synced — moving computers just means opening the app (Supabase loads automatically)
+- Work is cloud-synced — moving computers just means opening the app
 
 ---
 
@@ -218,7 +250,7 @@ These files have verified-perfect transcripts and are used only for measuring mo
 2925--5742-Kislev 19 Sicha 1.mp3
 ```
 
-The app enforces: no "Approve" button on these rows, never included in training exports, always shown with a purple "Benchmark" badge.
+The app enforces: no "Approve" button on these rows, never included in training exports, always shown with a purple "Benchmark" badge. `is_benchmark=true` and `is_selected_50hr=false` in Supabase.
 
 ---
 
@@ -273,7 +305,7 @@ jem-asr-app/
 ├── style.css                   # Dark theme, RTL, responsive
 ├── .env                        # VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY (build-time)
 ├── src/
-│   ├── app.js                  # Entry: load data.json, init state, wire everything
+│   ├── app.js                  # Entry: load catalog from Supabase, init state, wire everything
 │   ├── state.js                # State management, localStorage + Supabase sync
 │   ├── db.js                   # Supabase client, loadFromSupabase(), syncStateKey()
 │   ├── table.js                # Unified table: filters, sort, pagination, bulk select
@@ -289,7 +321,11 @@ jem-asr-app/
 │   ├── align.js                # CF Worker: POST proxy → align.kohnai.ai/api/align
 │   ├── audio.js                # CF Worker: GET proxy for R2 audio (streams, 1-day cache)
 │   └── transcript.js           # CF Worker: GET proxy for transcript text from R2
-├── public/data.json            # Pre-computed metadata (~246KB)
+├── scripts/
+│   ├── seed-transcripts.mjs    # One-off: seed all transcripts + fetch 50hr text from R2
+│   └── measure-audio-duration.mjs  # One-off: measure real MP3 duration, update est_minutes
+├── supabase/migrations/        # All schema changes tracked here
+├── public/data.json            # Legacy catalog (~246KB) — used only by seed scripts, NOT by app
 ├── wrangler.toml
 └── package.json
 ```
@@ -342,31 +378,47 @@ getStatus(audioId), getVersions(audioId), getVersionsByType(audioId, type)
 getBestVersion(audioId), addVersion(audioId, data), updateVersion(audioId, versionId, updates)
 getFilteredRows(filter, searchTerm, sortCol, sortDir, yearFilter, monthFilter, typeFilter)
 getFilterCounts()         // returns counts for all filter pill keys
-mergeSupabaseData(remote) // merge cloud data into state; called once on startup
+mergeSupabaseData(remote) // merge Supabase work data (mappings/cleaning/alignments/reviews) into state
 exportState(), importState(json)
 ```
 
 ### db.js
 ```javascript
-loadFromSupabase()                              // → { mappings, alignments, reviews, cleaning }
+// PRIMARY: returns { audio[], transcripts[], mappings, alignments, reviews, cleaning }
+// audio[] and transcripts[] are full catalog arrays sorted by numeric ID.
+loadFromSupabase()
+
 syncStateKey(key, audioId, value, audioEntry)  // dispatch upsert for the changed key
 syncMapping(audioId, mapping, audioEntry)
 syncCleaning(audioId, cleaningData, audioEntry)
 syncAlignment(audioId, alignmentData, audioEntry)
 syncReview(audioId, reviewData, audioEntry)
 deleteMapping(audioId)
+
+// Bulk seed helpers (used by scripts, not the app itself)
+bulkSyncAudioFiles(audioArray)
+bulkSyncTranscripts(transcriptArray)
+bulkSyncMappings(mappingsObj)   // ignoreDuplicates — won't overwrite user-confirmed
 ```
 
 `ensureAudioFile(audio)` is called internally before any write that has a FK → `audio_files.id`.
 
+**Actual DB column names** (important — these differ from the camelCase app fields):
+- `mappings.created_at` (not `confirmed_at` — that column doesn't exist)
+- `reviews.edited_text` (added via migration)
+- `transcript_edits.version` is TEXT (was mistakenly INTEGER at creation; fixed via migration)
+- `transcript_edits.text` (added via migration — stores the cleaned text content)
+
 ### mapping.js
 ```javascript
-getSuggestedMatches(audioItem, allTranscripts, existingMappings)  // → [{transcript, score, matchReason}]
+getSuggestedMatches(audioItem, allTranscripts, existingMappings)  // → [{transcriptId, score, matchReason, firstName}]
 renderSuggestedMatches(container, audioId, state, onLink)          // container is FIRST param
 linkMatch(audioId, transcriptId, confidence, reason)
-unlinkMatch(audioId)
+unlinkMatch(audioId)   // also calls deleteMapping() to persist deletion in Supabase
 renderSearchModal(container, state, onSelect)
 ```
+
+Scoring includes `firstLine` bonus: +0.05 if transcript has firstLine, +0.05 more if firstLine contains content-type keyword matching the audio filename.
 
 ### cleaning.js
 ```javascript
@@ -428,20 +480,6 @@ truncateWords(text, n)
 formatConfidence(score)             // 0.85 → "85%", null → "—" (em dash)
 debounce(fn, ms)
 ```
-
-## data.json Shape
-
-```javascript
-{
-  "generated": "<ISO timestamp>",
-  "allAudio":      [{ name, link, year, month, day, type, estMinutes }],
-  "allTranscripts":[{ name, link, year, month, day, firstLine }],
-  "matched":       [{ audioName, transcriptName, firstLine }],  // pre-linked pairs
-  "selected":      [{ audioName, transcriptName, firstLine }]   // 50-hour training set
-}
-```
-
-`app.js` assigns IDs (`a_0`…`a_N`, `t_0`…`t_N`), sets `isSelected50hr`, `isBenchmark`, and `r2Link` at startup.
 
 ## Filter Keys
 
