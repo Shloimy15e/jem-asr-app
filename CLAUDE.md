@@ -346,6 +346,18 @@ In `detail.js` `renderWordView()`, an **"Edit Words"** toggle button switches be
 ### Mobile card view opens detail page
 At ≤480px the table switches to card view (`buildCardView` in `table.js`). Each card has an **"Open"** button and the card itself is clickable — both navigate to `detail.html?id=<audioId>` in a new tab. The old inline-expand behavior is removed.
 
+### Row click behavior by status
+Clicking a table row calls `onRowExpand(audioId)` in `app.js`, which dispatches based on status:
+- `unmapped` → expands inline to show mapping suggestions + Search Transcripts button
+- `mapped` / `cleaned` → navigates directly to `detail.html?id=` in a new tab (no inline panel)
+- `aligned` / `approved` → expands inline to show the review panel + Karaoke button
+- `benchmark` → expands inline to show benchmark tools
+
+The inline mapping bar (Linked to / Unlink / Change Transcript / Split Transcript) has been removed from all expanded panels — those controls are on the detail page.
+
+### Audio name inline editing stops propagation on the input
+In `table.js` `case 'name'`, clicking the `nameSpan` replaces it with an `<input>` and calls `e.stopPropagation()`. The `<input>` itself also has a click handler calling `e.stopPropagation()` — without this, clicking inside the input to reposition the cursor would bubble to the `<tr>` click handler and trigger row navigation.
+
 ### Cleaning passes and alignment use the selected version tab's text
 `renderDetailPage` creates a shared `activeVersionRef = { id }` object and passes it to both `renderMappingSection` and `renderUnifiedWorkSection`. Whenever the user clicks a version tab, `activeVersionRef.id` is updated. `getCurrentText()` in `renderUnifiedWorkSection` reads from the selected version's `.text` for non-manual versions, or falls back to loading the raw transcript from R2/Supabase for the manual version. The alignment button calls `getCurrentText()` and passes the result as `textOverride` to `alignRow(audioId, state, textOverride)` — so alignment always runs on whatever version is currently displayed.
 
