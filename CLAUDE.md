@@ -293,6 +293,15 @@ The app enforces: no "Approve" button on these rows, never included in training 
 
 ## Known Gotchas
 
+### Startup lazy loading — transcript text and alignment words NOT fetched at startup
+`loadFromSupabase()` intentionally omits heavy fields:
+- `transcripts` fetched without `text` column — full text loaded on demand in the detail page
+- `alignments` fetched without `words` column — word array loaded on demand in the detail page
+
+`loadAlignmentWords(audioId)` and `loadTranscriptText(transcriptId)` in `db.js` are the lazy loaders. `detail.js` calls these when opening a file. `cleaning.js` `batchClean()` calls `loadTranscriptText` as fallback when R2 fetch fails.
+
+**Do not add `text` or `words` back to the startup queries** — it would fetch megabytes for 4,669 files on every page load.
+
 ### Supabase row limit — use fetchAll(), not .limit()
 `supabase.from(...).select(...).limit(10000)` does NOT work — Supabase's server-side `max_rows` caps responses at 1,000 rows regardless of the client-side `.limit()` call. All startup queries use `fetchAll(table, columns)` defined in `db.js`, which paginates in 1,000-row chunks via `.range(from, from+999)` until all records are returned. Never replace this with `.limit()`.
 
@@ -314,6 +323,34 @@ Added via migration `20260323000001_add_audio_comments.sql`. Editable inline in 
 
 ### Audio name edits sync to Supabase
 Editing a name in the table calls `updateState('audioNames', id, newName)` → `syncStateKey` → `UPDATE audio_files SET name = ? WHERE id = ?`. The `name_history` trigger on `audio_files` automatically records the old name. `state.audio[n].name` is also updated in memory so filters/search reflect the change immediately.
+
+### Manual transcript tab is read-only
+In `detail.js`, versions with `type === 'manual'` render the textarea with `readOnly = true` — no save handlers are attached, and a 🔒 badge is shown. A **"Start Editing"** button appears below the read-only area; clicking it fetches the full text (R2 → Supabase fallback), creates an `edited` version via `addVersion()`, and re-renders the detail page with that version active. This means every mapped file can immediately start editing without running cleaning tools first.
+
+### Cleaning pass buttons are async
+`getCurrentText()` in `detail.js` is async — it fetches the full transcript text from R2 or Supabase if no cleaning data exists yet (startup optimization means `transcript.text` is null). Pass buttons show "Loading…" while fetching, then open the diff preview. Always `await getCurrentText()` before running a pass.
+
+### wordDiffTokens emits both removed and added tokens
+`wordDiffTokens(origLine, cleanLine)` returns tokens of three kinds: `{ text, isSpace }` (unchanged), `{ text, removed: true }` (struck-through red), and `{ text, added: true }` (green replacement). When a word is removed, the function peeks at the next clean word — if it doesn't appear later in orig, it's treated as a replacement and emitted as `added`. CSS: `.diff-word-added { background: rgba(74,222,128,0.15); color: var(--green); }`. All three token-rendering sites in `detail.js` must handle `tok.added`.
+
+### Rejected diff rows have visual feedback
+`.diff-row-rejected` class sets `opacity: 0.38` and strikes through child text. Applied by checkbox `change` handler and the "Reject All" button. "Accept All" removes it from all rows.
+
+### Karaoke inline word editing
+In `detail.js` `renderWordView()`, an **"Edit Words"** toggle button switches between play mode and edit mode:
+- Edit mode: clicking a chip opens an inline `<input>`; Tab advances to next word; Enter/Escape commits/cancels
+- A bulk RTL textarea shows all words space-joined; "Apply Text to Words" maps back by position (warns on count mismatch)
+- "Save Word Edits" calls `updateState('alignments', audioId, { ...alignment, words: editModeWords })`
+- Seek-click handlers are stored as `chip._seekHandler` and disabled/restored on mode toggle
+
+### Mobile card view opens detail page
+At ≤480px the table switches to card view (`buildCardView` in `table.js`). Each card has an **"Open"** button and the card itself is clickable — both navigate to `detail.html?id=<audioId>` in a new tab. The old inline-expand behavior is removed.
+
+### Cleaning passes and alignment use the selected version tab's text
+`renderDetailPage` creates a shared `activeVersionRef = { id }` object and passes it to both `renderMappingSection` and `renderUnifiedWorkSection`. Whenever the user clicks a version tab, `activeVersionRef.id` is updated. `getCurrentText()` in `renderUnifiedWorkSection` reads from the selected version's `.text` for non-manual versions, or falls back to loading the raw transcript from R2/Supabase for the manual version. The alignment button calls `getCurrentText()` and passes the result as `textOverride` to `alignRow(audioId, state, textOverride)` — so alignment always runs on whatever version is currently displayed.
+
+### Manual version text is always loaded from the transcript, never from a stale cache
+In `renderVersionContent`, `type === 'manual'` versions skip the `version.text` check entirely and always load from `transcript.text` (or R2/Supabase if not yet in memory), caching on the `transcript` object rather than the `version` object. This ensures the Manual tab always matches "View Transcript Independently" (`detail?tid=`). Non-manual versions (`cleaned`, `edited`, etc.) still use `version.text` as before.
 
 ## Build Rules
 - Vite + vanilla JS ESM. No frameworks.

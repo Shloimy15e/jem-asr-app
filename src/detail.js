@@ -1,10 +1,11 @@
 import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, exportState, importState } from './state.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
-import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSymbols, cleanWhitespace, calculateCleanRate } from './cleaning.js';
+import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
 import { alignRow } from './alignment.js';
 import { renderReviewPanel } from './review.js';
 import { renderKaraokePlayer } from './karaoke.js';
 import { formatConfidence } from './utils.js';
+import { loadAlignmentWords, loadTranscriptText } from './db.js';
 
 const R2_BASE = 'https://audio.kohnai.ai';
 
@@ -282,16 +283,17 @@ function renderDetailPage(audioId, audio, state, container) {
   // === Section: Mapping ===
   if (!audio.isBenchmark) {
     const mappingSection = createSection('Transcript Mapping');
-    renderMappingSection(audioId, state, mappingSection.content, container);
+    const activeVersionRef = { id: getBestVersion(audioId)?.id || null };
+    renderMappingSection(audioId, state, mappingSection.content, container, activeVersionRef);
     container.appendChild(mappingSection.el);
-  }
 
-  // === Section: Cleaning + Alignment + Word View (unified) ===
-  if (state.mappings[audioId] && !audio.isBenchmark) {
-    const workSection = createSection('Processing');
-    const playerEl = container.querySelector('.audio-player');
-    renderUnifiedWorkSection(audioId, state, workSection.content, container, playerEl);
-    container.appendChild(workSection.el);
+    // === Section: Cleaning + Alignment + Word View (unified) ===
+    if (state.mappings[audioId]) {
+      const workSection = createSection('Processing');
+      const playerEl = container.querySelector('.audio-player');
+      renderUnifiedWorkSection(audioId, state, workSection.content, container, playerEl, activeVersionRef);
+      container.appendChild(workSection.el);
+    }
   }
 }
 
@@ -308,7 +310,7 @@ function createSection(title) {
   return { el, content };
 }
 
-function renderMappingSection(audioId, state, container, pageContainer) {
+function renderMappingSection(audioId, state, container, pageContainer, activeVersionRef) {
   container.innerHTML = '';
   const versions = getVersions(audioId);
   const mapping = state.mappings[audioId];
@@ -344,6 +346,7 @@ function renderMappingSection(audioId, state, container, pageContainer) {
       const contentArea = document.createElement('div');
 
       let activeVersionId = getBestVersion(audioId)?.id || versions[0].id;
+      if (activeVersionRef) activeVersionRef.id = activeVersionId;
 
       function renderVersionContent(versionId) {
         contentArea.innerHTML = '';
@@ -355,48 +358,80 @@ function renderMappingSection(audioId, state, container, pageContainer) {
           tab.classList.toggle('active', tab.dataset.versionId === versionId);
         });
 
-        // Editable textarea
+        const isManual = version.type === 'manual';
+
+        // Textarea (read-only for manual versions)
         const textarea = document.createElement('textarea');
         textarea.className = 'transcript-editor';
         textarea.dir = 'rtl';
         textarea.rows = 12;
         textarea.placeholder = 'Loading transcript text...';
-
-        // Load text into textarea
-        if (version.text) {
-          textarea.value = version.text;
-        } else if (transcript?.text) {
-          textarea.value = transcript.text;
-          version.text = transcript.text;
-        } else if (transcript?.firstLine) {
-          textarea.value = transcript.firstLine;
-          // Auto-load full text
-          if (transcript.r2TranscriptLink) {
-            fetch(transcript.r2TranscriptLink).then(r => r.ok ? r.text() : null).then(text => {
-              if (text) {
-                transcript.text = text;
-                if (!version.text) {
-                  version.text = text;
-                  textarea.value = text;
-                }
-              }
-            }).catch(() => {});
-          }
+        if (isManual) {
+          textarea.readOnly = true;
+          textarea.style.opacity = '0.75';
+          textarea.style.cursor = 'default';
         }
 
-        // Save on change (debounced)
-        let saveTimer = null;
+        // Load text into textarea
+        if (isManual) {
+          // Manual versions always reflect the live transcript — never use a stale version.text cache
+          if (transcript?.text) {
+            textarea.value = transcript.text;
+          } else if (transcript?.firstLine) {
+            textarea.value = transcript.firstLine;
+            const loadFullText = async () => {
+              let text = null;
+              if (transcript.r2TranscriptLink) {
+                const res = await fetch(transcript.r2TranscriptLink).catch(() => null);
+                if (res?.ok) text = await res.text().catch(() => null);
+              }
+              if (!text && transcript.id) {
+                text = await loadTranscriptText(transcript.id);
+              }
+              if (text) {
+                transcript.text = text; // cache on transcript object, not version
+                textarea.value = text;
+              }
+            };
+            loadFullText().catch(() => {});
+          }
+        } else if (version.text) {
+          textarea.value = version.text;
+        } else if (transcript?.firstLine) {
+          textarea.value = transcript.firstLine;
+          // Try R2 first, fall back to Supabase
+          const loadFullText = async () => {
+            let text = null;
+            if (transcript.r2TranscriptLink) {
+              const res = await fetch(transcript.r2TranscriptLink).catch(() => null);
+              if (res?.ok) text = await res.text().catch(() => null);
+            }
+            if (!text && transcript.id) {
+              text = await loadTranscriptText(transcript.id);
+            }
+            if (text && !version.text) {
+              version.text = text;
+              textarea.value = text;
+            }
+          };
+          loadFullText().catch(() => {});
+        }
+
+        // Save on change (debounced) — not available for manual versions
         const saveStatus = document.createElement('span');
         saveStatus.className = 'save-status text-secondary';
-        textarea.addEventListener('input', () => {
-          saveStatus.textContent = 'Unsaved...';
-          clearTimeout(saveTimer);
-          saveTimer = setTimeout(() => {
-            updateVersion(audioId, version.id, { text: textarea.value });
-            saveStatus.textContent = 'Saved';
-            setTimeout(() => { saveStatus.textContent = ''; }, 2000);
-          }, 800);
-        });
+        if (!isManual) {
+          let saveTimer = null;
+          textarea.addEventListener('input', () => {
+            saveStatus.textContent = 'Unsaved...';
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(() => {
+              updateVersion(audioId, version.id, { text: textarea.value });
+              saveStatus.textContent = 'Saved';
+              setTimeout(() => { saveStatus.textContent = ''; }, 2000);
+            }, 800);
+          });
+        }
 
         contentArea.appendChild(textarea);
 
@@ -407,6 +442,12 @@ function renderMappingSection(audioId, state, container, pageContainer) {
         typeLabel.className = `version-type-badge version-type-${version.type}`;
         typeLabel.textContent = version.type;
         infoBar.appendChild(typeLabel);
+        if (isManual) {
+          const lockBadge = document.createElement('span');
+          lockBadge.className = 'text-secondary';
+          lockBadge.textContent = '🔒 read-only';
+          infoBar.appendChild(lockBadge);
+        }
         if (version.cleanRate) {
           const cr = document.createElement('span');
           cr.className = 'text-secondary';
@@ -419,27 +460,59 @@ function renderMappingSection(audioId, state, container, pageContainer) {
           al.textContent = `Avg confidence: ${formatConfidence(version.alignment.avgConfidence)}`;
           infoBar.appendChild(al);
         }
-        infoBar.appendChild(saveStatus);
+        if (!isManual) infoBar.appendChild(saveStatus);
 
-        // "Save as new edited version" button
-        const saveAsBtn = document.createElement('button');
-        saveAsBtn.className = 'action-btn';
-        saveAsBtn.textContent = 'Save as Edited Version';
-        saveAsBtn.addEventListener('click', () => {
-          const newText = textarea.value;
-          if (newText === version.text && version.type === 'edited') return;
-          addVersion(audioId, {
-            type: 'edited',
-            parentVersionId: version.id,
-            sourceTranscriptId: version.sourceTranscriptId || manual?.sourceTranscriptId,
-            text: newText,
-            createdBy: 'user',
+        if (isManual) {
+          // "Start Editing" — creates an Edited copy of the manual text immediately
+          const startEditBtn = document.createElement('button');
+          startEditBtn.className = 'action-btn action-btn-primary';
+          startEditBtn.textContent = 'Start Editing';
+          startEditBtn.addEventListener('click', async () => {
+            startEditBtn.disabled = true;
+            startEditBtn.textContent = 'Loading...';
+            // Ensure full text is loaded before copying
+            let text = textarea.value;
+            if (!version.text && transcript) {
+              let full = null;
+              if (transcript.r2TranscriptLink) {
+                const res = await fetch(transcript.r2TranscriptLink).catch(() => null);
+                if (res?.ok) full = await res.text().catch(() => null);
+              }
+              if (!full && transcript.id) full = await loadTranscriptText(transcript.id);
+              if (full) { version.text = full; text = full; }
+            }
+            addVersion(audioId, {
+              type: 'edited',
+              parentVersionId: version.id,
+              sourceTranscriptId: version.sourceTranscriptId,
+              text,
+              createdBy: 'user',
+            });
+            const s = getState();
+            renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
           });
-          const s = getState();
-          const audio = s.audio.find(a => a.id === audioId);
-          renderDetailPage(audioId, audio, s, pageContainer);
-        });
-        infoBar.appendChild(saveAsBtn);
+          infoBar.appendChild(startEditBtn);
+        } else {
+          // "Save as new edited version" button
+          const saveAsBtn = document.createElement('button');
+          saveAsBtn.className = 'action-btn';
+          saveAsBtn.textContent = 'Save as Edited Version';
+          saveAsBtn.addEventListener('click', () => {
+            const newText = textarea.value;
+            if (newText === version.text && version.type === 'edited') return;
+            addVersion(audioId, {
+              type: 'edited',
+              parentVersionId: version.id,
+              sourceTranscriptId: version.sourceTranscriptId || manual?.sourceTranscriptId,
+              text: newText,
+              createdBy: 'user',
+            });
+            const s = getState();
+            const audio = s.audio.find(a => a.id === audioId);
+            renderDetailPage(audioId, audio, s, pageContainer);
+          });
+          infoBar.appendChild(saveAsBtn);
+        }
 
         contentArea.appendChild(infoBar);
       }
@@ -453,6 +526,7 @@ function renderMappingSection(audioId, state, container, pageContainer) {
         if (v.id === activeVersionId) tab.classList.add('active');
         tab.addEventListener('click', () => {
           activeVersionId = v.id;
+          if (activeVersionRef) activeVersionRef.id = v.id;
           renderVersionContent(v.id);
         });
         tabBar.appendChild(tab);
@@ -570,58 +644,302 @@ function renderMappingSection(audioId, state, container, pageContainer) {
   }
 }
 
-function renderUnifiedWorkSection(audioId, state, container, pageContainer, playerEl) {
+// Opens a modal showing a per-line diff preview for a cleaning pass.
+// currentText: text before the pass; previewText: what the pass would produce.
+// rawOriginal: the locked original transcript text (never overwritten).
+// Accepted lines are applied; rejected lines keep their original content.
+function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawOriginal, pageContainer) {
+  const origLines = currentText.split('\n');
+  const cleanLines = previewText.split('\n');
+  const maxLen = Math.max(origLines.length, cleanLines.length);
+
+  const rows = [];
+  for (let i = 0; i < maxLen; i++) {
+    const orig = origLines[i] || '';
+    const clean = cleanLines[i] || '';
+    rows.push({ lineNum: i + 1, orig, clean, changed: orig !== clean, accepted: true, editedClean: clean });
+  }
+
+  const changedCount = rows.filter(r => r.changed).length;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal pass-preview-modal';
+
+  // Header
+  const header = document.createElement('div');
+  header.className = 'modal-header';
+  const title = document.createElement('h2');
+  title.textContent = 'Preview: ' + passLabel;
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'btn btn-close';
+  closeBtn.textContent = '\u00D7';
+  closeBtn.addEventListener('click', () => overlay.remove());
+  header.appendChild(title);
+  header.appendChild(closeBtn);
+  modal.appendChild(header);
+
+  if (changedCount === 0) {
+    const noChange = document.createElement('div');
+    noChange.style.cssText = 'padding:20px;color:var(--text-secondary);text-align:center;';
+    noChange.textContent = 'No changes would be made by this pass.';
+    modal.appendChild(noChange);
+    const doneBtn = document.createElement('button');
+    doneBtn.className = 'action-btn';
+    doneBtn.textContent = 'Close';
+    doneBtn.style.cssText = 'margin:16px;';
+    doneBtn.addEventListener('click', () => overlay.remove());
+    modal.appendChild(doneBtn);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    return;
+  }
+
+  // Stats + batch controls
+  const actions = document.createElement('div');
+  actions.className = 'diff-actions';
+
+  const countLabel = document.createElement('span');
+  countLabel.className = 'text-secondary';
+  countLabel.textContent = changedCount + ' line' + (changedCount !== 1 ? 's' : '') + ' of ' + maxLen + ' would change';
+  actions.appendChild(countLabel);
+
+  const acceptAllBtn = document.createElement('button');
+  acceptAllBtn.className = 'action-btn';
+  acceptAllBtn.textContent = 'Accept All';
+  acceptAllBtn.addEventListener('click', () => {
+    rows.forEach(r => { if (r.changed) r.accepted = true; });
+    modal.querySelectorAll('.diff-row-checkbox').forEach(cb => {
+      cb.checked = true;
+      cb.closest('.diff-row')?.classList.remove('diff-row-rejected');
+    });
+  });
+  actions.appendChild(acceptAllBtn);
+
+  const rejectAllBtn = document.createElement('button');
+  rejectAllBtn.className = 'action-btn action-btn-danger';
+  rejectAllBtn.textContent = 'Reject All';
+  rejectAllBtn.addEventListener('click', () => {
+    rows.forEach(r => { if (r.changed) r.accepted = false; });
+    modal.querySelectorAll('.diff-row-checkbox').forEach(cb => {
+      cb.checked = false;
+      cb.closest('.diff-row')?.classList.add('diff-row-rejected');
+    });
+  });
+  actions.appendChild(rejectAllBtn);
+
+  const showOnlyLabel = document.createElement('label');
+  showOnlyLabel.className = 'diff-filter-label';
+  const showOnlyCb = document.createElement('input');
+  showOnlyCb.type = 'checkbox';
+  showOnlyCb.checked = true; // default: show only changed lines
+  showOnlyLabel.appendChild(showOnlyCb);
+  showOnlyLabel.appendChild(document.createTextNode(' Changed only'));
+  actions.appendChild(showOnlyLabel);
+
+  modal.appendChild(actions);
+
+  // Diff rows
+  const rowsContainer = document.createElement('div');
+  rowsContainer.className = 'diff-rows-container';
+
+  const rowEls = [];
+  rows.forEach((row) => {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'diff-row' + (row.changed ? ' diff-row-changed' : '');
+    if (!row.changed) rowEl.style.display = 'none'; // hidden by default (matches showOnlyCb)
+
+    const lineNum = document.createElement('span');
+    lineNum.className = 'diff-row-linenum';
+    lineNum.textContent = row.lineNum;
+    rowEl.appendChild(lineNum);
+
+    if (row.changed) {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'diff-row-checkbox';
+      cb.checked = row.accepted;
+      cb.title = 'Accept this change';
+      cb.addEventListener('change', () => {
+        row.accepted = cb.checked;
+        rowEl.classList.toggle('diff-row-rejected', !cb.checked);
+      });
+      rowEl.appendChild(cb);
+
+      // Word-level diff: original with removed words struck through
+      const diffContent = document.createElement('div');
+      diffContent.className = 'diff-word-content';
+      diffContent.dir = 'rtl';
+
+      if (!row.clean.trim() && row.orig.trim()) {
+        const allRemoved = document.createElement('span');
+        allRemoved.className = 'diff-word-removed';
+        allRemoved.textContent = row.orig;
+        diffContent.appendChild(allRemoved);
+      } else {
+        const tokens = wordDiffTokens(row.orig, row.clean);
+        tokens.forEach(tok => {
+          if (tok.isSpace) { diffContent.appendChild(document.createTextNode(tok.text)); return; }
+          const span = document.createElement('span');
+          span.textContent = tok.text;
+          if (tok.removed) span.className = 'diff-word-removed';
+          else if (tok.added) span.className = 'diff-word-added';
+          diffContent.appendChild(span);
+        });
+      }
+      rowEl.appendChild(diffContent);
+
+      // Editable cleaned result
+      if (row.clean.trim()) {
+        const editRow = document.createElement('div');
+        editRow.className = 'diff-edit-row';
+        editRow.dir = 'rtl';
+        editRow.contentEditable = 'true';
+        editRow.textContent = row.clean;
+        editRow.title = 'Edit cleaned text before accepting';
+        editRow.addEventListener('blur', () => { row.editedClean = editRow.textContent; });
+        rowEl.appendChild(editRow);
+      }
+    } else {
+      const spacer = document.createElement('span');
+      spacer.className = 'diff-row-checkbox-spacer';
+      rowEl.appendChild(spacer);
+      const unchanged = document.createElement('span');
+      unchanged.className = 'diff-unchanged';
+      unchanged.dir = 'rtl';
+      unchanged.textContent = row.orig;
+      rowEl.appendChild(unchanged);
+    }
+
+    rowsContainer.appendChild(rowEl);
+    rowEls.push({ el: rowEl, changed: row.changed });
+  });
+
+  showOnlyCb.addEventListener('change', () => {
+    rowEls.forEach(r => {
+      if (!r.changed) r.el.style.display = showOnlyCb.checked ? 'none' : '';
+    });
+  });
+
+  modal.appendChild(rowsContainer);
+
+  // Footer
+  const applyBar = document.createElement('div');
+  applyBar.className = 'diff-apply-bar';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'action-btn';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', () => overlay.remove());
+  applyBar.appendChild(cancelBtn);
+
+  const applyBtn = document.createElement('button');
+  applyBtn.className = 'btn btn-secondary';
+  applyBtn.textContent = 'Apply Selected';
+  applyBtn.addEventListener('click', () => {
+    const finalLines = rows.map(r => r.changed ? (r.accepted ? r.editedClean : r.orig) : r.orig);
+    const finalText = finalLines.join('\n');
+    updateState('cleaning', audioId, {
+      originalText: rawOriginal, // locked: never overwritten
+      cleanedText: finalText,
+      cleanRate: calculateCleanRate(rawOriginal, finalText),
+      cleanedAt: new Date().toISOString(),
+    });
+    overlay.remove();
+    const s = getState();
+    renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
+  });
+  applyBar.appendChild(applyBtn);
+  modal.appendChild(applyBar);
+
+  overlay.appendChild(modal);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.addEventListener('keydown', function escHandler(e) {
+    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); }
+  });
+  document.body.appendChild(overlay);
+}
+
+function renderUnifiedWorkSection(audioId, state, container, pageContainer, playerEl, activeVersionRef) {
   const cleaning = state.cleaning[audioId];
   const alignment = state.alignments[audioId];
 
   // ── Cleaning buttons ──
-  function getCurrentText() {
-    const c = getState().cleaning[audioId];
-    if (c) return c.cleanedText || c.originalText || '';
+  // Returns the text of the currently selected version tab. For manual versions
+  // (or no selection), loads the raw transcript from R2 / Supabase.
+  async function getCurrentText() {
+    const selectedId = activeVersionRef?.id;
+    if (selectedId) {
+      const versions = getVersions(audioId);
+      const selected = versions.find(v => v.id === selectedId);
+      if (selected && selected.type !== 'manual' && selected.text) {
+        return selected.text;
+      }
+    }
+    // Manual version selected, no version selected, or version has no text yet —
+    // load from the raw transcript record (R2 → Supabase fallback)
     const m = getState().mappings[audioId];
     if (!m) return '';
-    const t = getState().transcripts.find(t => t.id === m.transcriptId);
-    return t?.text || t?.firstLine || '';
+    const t = getState().transcripts.find(tr => tr.id === m.transcriptId);
+    if (!t) return '';
+    if (t.text) return t.text;
+    let text = null;
+    if (t.r2TranscriptLink) {
+      const res = await fetch(t.r2TranscriptLink).catch(() => null);
+      if (res?.ok) text = await res.text().catch(() => null);
+    }
+    if (!text && t.id) text = await loadTranscriptText(t.id);
+    if (text) t.text = text; // cache on transcript object for this session
+    return text || t.firstLine || '';
   }
-  function getOriginalText() {
+  async function getOriginalText() {
     const c = getState().cleaning[audioId];
-    return c?.originalText || getCurrentText();
+    return c?.originalText || await getCurrentText();
   }
 
   const cleanLabel = document.createElement('div');
   cleanLabel.className = 'section-sublabel';
-  cleanLabel.textContent = 'Cleaning';
+  cleanLabel.textContent = 'Cleaning — click a pass to preview changes line by line';
   container.appendChild(cleanLabel);
 
   const btnBar = document.createElement('div');
   btnBar.className = 'clean-btn-bar';
   const passes = [
-    { label: 'Remove [brackets]', fn: cleanBrackets },
-    { label: 'Remove (parentheses)', fn: cleanParentheses },
-    { label: 'Remove section markers', fn: cleanSectionMarkers },
-    { label: 'Remove symbols', fn: cleanSymbols },
-    { label: 'Clean whitespace', fn: cleanWhitespace },
+    { label: 'Remove [brackets]',        fn: cleanBrackets },
+    { label: 'Remove (parentheses)',      fn: cleanParentheses },
+    { label: 'Remove section markers',    fn: cleanSectionMarkers },
+    { label: 'Remove surrounding quotes', fn: cleanSurroundingQuotes },
+    { label: 'Remove dashes / hyphens',   fn: cleanHyphens },
+    { label: 'Remove ? marks',            fn: cleanQuestionMarks },
+    { label: 'Remove ellipsis (…)',       fn: cleanEllipsis },
+    { label: 'Clean whitespace',          fn: cleanWhitespace },
   ];
   passes.forEach(pass => {
     const btn = document.createElement('button');
     btn.className = 'action-btn clean-pass-btn';
     btn.textContent = pass.label;
-    btn.addEventListener('click', () => {
-      const original = getOriginalText();
-      const result = pass.fn(getCurrentText());
-      updateState('cleaning', audioId, {
-        originalText: original, cleanedText: result,
-        cleanRate: calculateCleanRate(original, result),
-        cleanedAt: new Date().toISOString(),
-      });
-      const s = getState();
-      renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const origLabel = btn.textContent;
+      btn.textContent = 'Loading...';
+      try {
+        const rawOriginal = await getOriginalText();
+        const currentText = await getCurrentText();
+        const previewText = pass.fn(currentText);
+        openPassPreviewModal(audioId, pass.label, currentText, previewText, rawOriginal, pageContainer);
+      } finally {
+        btn.textContent = origLabel;
+        btn.disabled = false;
+      }
     });
     btnBar.appendChild(btn);
   });
   const cleanAllBtn = document.createElement('button');
   cleanAllBtn.className = 'action-btn action-btn-primary clean-pass-btn';
-  cleanAllBtn.textContent = 'Clean All';
+  cleanAllBtn.textContent = 'Clean All (no preview)';
   cleanAllBtn.addEventListener('click', async () => {
     cleanAllBtn.textContent = 'Cleaning...';
     cleanAllBtn.disabled = true;
@@ -643,7 +961,8 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     alignBtn.textContent = 'Aligning (may take ~2.5 min)...';
     alignBtn.disabled = true;
     try {
-      await alignRow(audioId, getState());
+      const textForAlignment = await getCurrentText();
+      await alignRow(audioId, getState(), textForAlignment);
     } catch (err) {
       alignBtn.textContent = 'Error: ' + err.message;
       return;
@@ -664,7 +983,22 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
 
   // ── Unified Word View (diff + karaoke in one) ──
   if (cleaning || alignment) {
-    renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl);
+    if (alignment && !alignment.words) {
+      // Words not loaded at startup — fetch lazily
+      const placeholder = document.createElement('div');
+      placeholder.className = 'text-secondary';
+      placeholder.style.cssText = 'padding:12px;font-size:0.9rem;';
+      placeholder.textContent = 'Loading word timestamps...';
+      container.appendChild(placeholder);
+      loadAlignmentWords(audioId).then(words => {
+        const fullAlignment = words ? { ...alignment, words } : alignment;
+        if (words) updateState('alignments', audioId, fullAlignment);
+        placeholder.remove();
+        renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl);
+      });
+    } else {
+      renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl);
+    }
   }
 }
 
@@ -735,10 +1069,9 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       // Click to seek
       if (playerEl) {
         span.style.cursor = 'pointer';
-        span.addEventListener('click', () => {
-          playerEl.currentTime = w.start;
-          if (playerEl.paused) playerEl.play();
-        });
+        const seekFn = () => { playerEl.currentTime = w.start; if (playerEl.paused) playerEl.play(); };
+        span._seekHandler = seekFn;
+        span.addEventListener('click', seekFn);
       }
 
       wordGrid.appendChild(span);
@@ -765,6 +1098,151 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       };
       playerEl.addEventListener('timeupdate', onTimeUpdate);
     }
+
+    // ── Inline word editing ──
+    const editModeWords = words.map(w => ({ ...w }));
+    let editMode = false;
+
+    const editBar = document.createElement('div');
+    editBar.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;';
+
+    const editToggleBtn = document.createElement('button');
+    editToggleBtn.className = 'btn btn-secondary';
+    editToggleBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
+    editToggleBtn.textContent = 'Edit Words';
+
+    const saveEditsBtn = document.createElement('button');
+    saveEditsBtn.className = 'btn btn-primary';
+    saveEditsBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;display:none;';
+    saveEditsBtn.textContent = 'Save Word Edits';
+
+    const editStatus = document.createElement('span');
+    editStatus.className = 'text-secondary';
+    editStatus.style.fontSize = '0.8rem';
+
+    editBar.appendChild(editToggleBtn);
+    editBar.appendChild(saveEditsBtn);
+    editBar.appendChild(editStatus);
+
+    // Bulk text panel (all-at-once editing)
+    const bulkPanel = document.createElement('div');
+    bulkPanel.style.cssText = 'display:none;margin-top:8px;';
+    const bulkTextarea = document.createElement('textarea');
+    bulkTextarea.className = 'transcript-editor';
+    bulkTextarea.dir = 'rtl';
+    bulkTextarea.rows = 6;
+    bulkTextarea.style.cssText = 'width:100%;box-sizing:border-box;font-size:0.85rem;';
+    const bulkBtnRow = document.createElement('div');
+    bulkBtnRow.style.cssText = 'display:flex;gap:8px;margin-top:6px;align-items:center;';
+    const bulkApplyBtn = document.createElement('button');
+    bulkApplyBtn.className = 'btn btn-secondary';
+    bulkApplyBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
+    bulkApplyBtn.textContent = 'Apply Text to Words';
+    const bulkStatus = document.createElement('span');
+    bulkStatus.className = 'text-secondary';
+    bulkStatus.style.fontSize = '0.8rem';
+    bulkBtnRow.appendChild(bulkApplyBtn);
+    bulkBtnRow.appendChild(bulkStatus);
+    bulkPanel.appendChild(bulkTextarea);
+    bulkPanel.appendChild(bulkBtnRow);
+
+    function startChipEdit(chip, idx) {
+      if (chip.querySelector('input')) return;
+      const origText = editModeWords[idx].word || '';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = origText;
+      input.style.cssText = 'width:auto;min-width:30px;max-width:100px;font-size:inherit;padding:1px 3px;background:var(--surface);color:var(--text);border:1px solid var(--accent);border-radius:3px;box-sizing:content-box;';
+      // size input dynamically
+      input.size = Math.max(3, origText.length + 1);
+      chip.textContent = '';
+      chip.appendChild(input);
+      input.focus();
+      input.select();
+      const commit = () => {
+        const val = input.value.trim() || origText;
+        editModeWords[idx] = { ...editModeWords[idx], word: val };
+        chip.textContent = val;
+        bulkTextarea.value = editModeWords.map(w => w.word || '').join(' ');
+        editStatus.textContent = '';
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+        if (e.key === 'Escape') { chip.textContent = origText; }
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          commit();
+          const next = chipEls[idx + (e.shiftKey ? -1 : 1)];
+          if (next) next.click();
+        }
+      });
+    }
+
+    function enterEditMode() {
+      editMode = true;
+      editToggleBtn.textContent = 'Exit Edit Mode';
+      saveEditsBtn.style.display = '';
+      bulkTextarea.value = editModeWords.map(w => w.word || '').join(' ');
+      bulkPanel.style.display = '';
+      chipEls.forEach((chip, idx) => {
+        chip.style.cursor = 'text';
+        chip._editHandler = () => startChipEdit(chip, idx);
+        chip.addEventListener('click', chip._editHandler);
+        // Disable seek-click while editing
+        if (chip._seekHandler) chip.removeEventListener('click', chip._seekHandler);
+      });
+      editStatus.textContent = 'Click a word to edit it';
+    }
+
+    function exitEditMode() {
+      editMode = false;
+      editToggleBtn.textContent = 'Edit Words';
+      saveEditsBtn.style.display = 'none';
+      bulkPanel.style.display = 'none';
+      editStatus.textContent = '';
+      chipEls.forEach((chip, idx) => {
+        if (chip._editHandler) {
+          chip.removeEventListener('click', chip._editHandler);
+          chip._editHandler = null;
+        }
+        chip.style.cursor = playerEl ? 'pointer' : '';
+        // Restore seek-click
+        if (playerEl && chip._seekHandler) chip.addEventListener('click', chip._seekHandler);
+      });
+    }
+
+    bulkApplyBtn.addEventListener('click', () => {
+      const tokens = bulkTextarea.value.trim().split(/\s+/).filter(Boolean);
+      if (tokens.length !== editModeWords.length) {
+        bulkStatus.style.color = 'var(--orange)';
+        bulkStatus.textContent = `Word count mismatch: ${tokens.length} vs ${editModeWords.length} expected`;
+        return;
+      }
+      tokens.forEach((tok, i) => { editModeWords[i] = { ...editModeWords[i], word: tok }; });
+      chipEls.forEach((chip, i) => { chip.textContent = editModeWords[i].word; });
+      bulkStatus.style.color = 'var(--green)';
+      bulkStatus.textContent = `${tokens.length} words updated — click Save to keep`;
+    });
+
+    editToggleBtn.addEventListener('click', () => {
+      if (!editMode) enterEditMode(); else exitEditMode();
+    });
+
+    saveEditsBtn.addEventListener('click', () => {
+      // Commit any open input first
+      const openInput = wordGrid.querySelector('input');
+      if (openInput) openInput.blur();
+      const currentState = getState();
+      const currentAlignment = currentState.alignments?.[audioId] || alignment;
+      updateState('alignments', audioId, { ...currentAlignment, words: editModeWords });
+      exitEditMode();
+      editStatus.textContent = 'Saved';
+      setTimeout(() => { editStatus.textContent = ''; }, 2500);
+    });
+
+    viewer.appendChild(editBar);
+    viewer.appendChild(bulkPanel);
   } else if (cleaning) {
     // No alignment yet — show line-by-line diff with word-level removed highlighting
     const origLines = origText.split('\n');
@@ -793,6 +1271,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
           const s = document.createElement('span');
           s.textContent = tok.text;
           if (tok.removed) s.className = 'diff-word-removed';
+          else if (tok.added) s.className = 'diff-word-added';
           lineDiv.appendChild(s);
         });
         wordGrid.appendChild(lineDiv);
@@ -1157,34 +1636,55 @@ function renderTrimControls(audioId, playerEl, container) {
   updateSlider();
 }
 
-// Word-level diff: returns array of {word, removed} tokens
+// Word-level diff: returns array of {text, removed, added, isSpace} tokens.
+// Both removed (orig only) and added (clean only) tokens are returned so the
+// display can show ~~old~~ +new side by side.
 function wordDiffTokens(origLine, cleanLine) {
   const origWords = origLine.split(/(\s+)/);
-  const cleanSet = new Set(cleanLine.split(/\s+/).filter(Boolean));
-  // Simple approach: walk original words, mark ones not in cleaned as removed
-  // For better accuracy, do LCS-like matching
   const cleanWords = cleanLine.split(/\s+/).filter(Boolean);
   const result = [];
   let ci = 0;
+
   for (const token of origWords) {
     if (/^\s+$/.test(token)) {
-      result.push({ text: token, removed: false, isSpace: true });
+      result.push({ text: token, isSpace: true });
       continue;
     }
     if (ci < cleanWords.length && token === cleanWords[ci]) {
-      result.push({ text: token, removed: false });
+      // Exact match — unchanged
+      result.push({ text: token });
       ci++;
     } else {
-      // Check if this word appears later in clean
       const ahead = cleanWords.indexOf(token, ci);
       if (ahead >= 0) {
-        // Words between ci and ahead were inserted (rare for cleaning)
-        result.push({ text: token, removed: false });
+        // Clean has extra words before this match — show them as added
+        for (let j = ci; j < ahead; j++) {
+          result.push({ text: cleanWords[j], added: true });
+          result.push({ text: ' ', isSpace: true });
+        }
+        result.push({ text: token });
         ci = ahead + 1;
       } else {
+        // Orig word is removed; if the next clean word is different, show it as added replacement
         result.push({ text: token, removed: true });
+        if (ci < cleanWords.length && cleanWords[ci] !== token) {
+          // Peek: is the clean word a modified version of this one (e.g. "שנה?" → "שנה")?
+          const nextClean = cleanWords[ci];
+          const nextAhead = origWords.indexOf(nextClean, origWords.indexOf(token) + 1);
+          if (nextAhead < 0) {
+            // Clean word doesn't appear later in orig — it's a replacement
+            result.push({ text: ' ', isSpace: true });
+            result.push({ text: nextClean, added: true });
+            ci++;
+          }
+        }
       }
     }
+  }
+  // Any remaining clean words not matched — show as added
+  for (; ci < cleanWords.length; ci++) {
+    result.push({ text: ' ', isSpace: true });
+    result.push({ text: cleanWords[ci], added: true });
   }
   return result;
 }
@@ -1273,7 +1773,10 @@ function renderCleaningDiffViewer(audioId, cleaning, container, pageContainer) {
       cb.className = 'diff-row-checkbox';
       cb.checked = row.accepted;
       cb.title = 'Accept this change';
-      cb.addEventListener('change', () => { row.accepted = cb.checked; });
+      cb.addEventListener('change', () => {
+        row.accepted = cb.checked;
+        rowEl.classList.toggle('diff-row-rejected', !cb.checked);
+      });
       rowEl.appendChild(cb);
 
       // Word-level diff display: show original with removed words struck through
@@ -1289,9 +1792,8 @@ function renderCleaningDiffViewer(audioId, cleaning, container, pageContainer) {
         }
         const span = document.createElement('span');
         span.textContent = tok.text;
-        if (tok.removed) {
-          span.className = 'diff-word-removed';
-        }
+        if (tok.removed) span.className = 'diff-word-removed';
+        else if (tok.added) span.className = 'diff-word-added';
         diffContent.appendChild(span);
       });
 
