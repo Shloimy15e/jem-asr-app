@@ -122,6 +122,22 @@ async function syncAudioComment(audioId, comment) {
   if (error) console.warn('[DB] syncAudioComment:', error.message);
 }
 
+export async function syncAudioDuration(audioId, durationMinutes) {
+  const { error } = await supabase
+    .from('audio_files')
+    .update({ duration_minutes: durationMinutes })
+    .eq('id', audioId);
+  if (error) console.warn('[DB] syncAudioDuration:', error.message);
+}
+
+async function syncAudioTrim(audioId, trim) {
+  const { error } = await supabase
+    .from('audio_files')
+    .update({ trim_start: trim?.start || 0, trim_end: trim?.end || 0 })
+    .eq('id', audioId);
+  if (error) console.warn('[DB] syncAudioTrim:', error.message);
+}
+
 export function syncStateKey(key, audioId, value, audioEntry) {
   switch (key) {
     case 'audioNames':
@@ -129,6 +145,9 @@ export function syncStateKey(key, audioId, value, audioEntry) {
       break;
     case 'audioComments':
       syncAudioComment(audioId, value).catch(console.warn);
+      break;
+    case 'trims':
+      syncAudioTrim(audioId, value).catch(console.warn);
       break;
     case 'mappings':
       syncMapping(audioId, value, audioEntry).catch(console.warn);
@@ -188,6 +207,29 @@ export async function bulkSyncTranscripts(transcriptArray) {
     const { error } = await supabase.from('transcripts').upsert(rows, { onConflict: 'id' });
     if (error) console.warn('[DB] bulkSyncTranscripts:', error.message);
   }
+}
+
+// ── Lazy detail loaders ──────────────────────────────────────────────
+// Called from the detail page — loads the heavy fields not fetched at startup.
+
+export async function loadAlignmentWords(audioId) {
+  const { data, error } = await supabase
+    .from('alignments')
+    .select('words')
+    .eq('audio_id', audioId)
+    .single();
+  if (error || !data) return null;
+  return data.words || [];
+}
+
+export async function loadTranscriptText(transcriptId) {
+  const { data, error } = await supabase
+    .from('transcripts')
+    .select('text')
+    .eq('id', transcriptId)
+    .single();
+  if (error || !data) return null;
+  return data.text || null;
 }
 
 // ── Split transcript ─────────────────────────────────────────────────
@@ -286,9 +328,9 @@ export async function loadFromSupabase() {
       editsData,
     ] = await Promise.all([
       fetchAll('audio_files'),
-      fetchAll('transcripts', 'id,name,year,month,day,first_line,text,drive_link,r2_transcript_link,source_transcript_id'),
+      fetchAll('transcripts', 'id,name,year,month,day,first_line,drive_link,r2_transcript_link,source_transcript_id'),
       fetchAll('mappings'),
-      fetchAll('alignments'),
+      fetchAll('alignments', 'audio_id,avg_confidence,low_confidence_count,aligned_at'),
       fetchAll('reviews'),
       fetchAll('transcript_edits'),
     ]);
@@ -311,7 +353,16 @@ export async function loadFromSupabase() {
       comments: a.comments || '',
       r2Link: a.r2_link,
       driveLink: a.drive_link,
+      trimStart: a.trim_start || 0,
+      trimEnd: a.trim_end || 0,
     }));
+
+    const trims = {};
+    audio.forEach(a => {
+      if (a.trimStart || a.trimEnd) {
+        trims[a.id] = { start: a.trimStart, end: a.trimEnd };
+      }
+    });
 
     const transcripts = (transcriptData || []).sort(byId).map(t => ({
       id: t.id,
@@ -320,7 +371,7 @@ export async function loadFromSupabase() {
       month: t.month,
       day: t.day,
       firstLine: t.first_line,
-      text: t.text || null,
+      // text omitted at startup — fetched lazily in detail page
       driveLink: t.drive_link,
       r2TranscriptLink: t.r2_transcript_link,
       sourceTranscriptId: t.source_transcript_id || null,
@@ -340,7 +391,7 @@ export async function loadFromSupabase() {
     const alignments = {};
     (alignmentsData || []).forEach(a => {
       alignments[a.audio_id] = {
-        words: a.words,
+        // words omitted at startup — fetched lazily in detail page
         avgConfidence: a.avg_confidence,
         lowConfidenceCount: a.low_confidence_count,
         alignedAt: a.aligned_at,
@@ -366,7 +417,7 @@ export async function loadFromSupabase() {
       };
     });
 
-    return { audio, transcripts, mappings, alignments, reviews, cleaning };
+    return { audio, transcripts, mappings, alignments, reviews, cleaning, trims };
   } catch (err) {
     console.warn('[DB] loadFromSupabase failed:', err.message);
     return null;

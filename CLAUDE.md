@@ -321,6 +321,9 @@ npx wrangler pages deploy dist/ --project-name jem-asr-app
 ### DB column: `duration_minutes` not `est_minutes`
 Renamed via migration `20260323000000_rename_est_minutes.sql`. All app code uses `duration_minutes`.
 
+### Real audio duration auto-corrects via detail page
+`audio_files.duration_minutes` was originally seeded from estimated values. When a detail page loads, the audio player's `loadedmetadata` event fires and gives the real duration. `detail.js` compares it against `audio.estMinutes` — if different, it calls `syncAudioDuration(audioId, realMin)` in `db.js` to update `audio_files.duration_minutes` in Supabase. The table Duration column self-corrects for any file once its detail page has been visited.
+
 ### DB column: `comments` on `audio_files`
 Added via migration `20260323000001_add_audio_comments.sql`. Editable inline in the table; syncs to Supabase on blur via `updateState('audioComments', id, value)` → `syncAudioComment()`.
 

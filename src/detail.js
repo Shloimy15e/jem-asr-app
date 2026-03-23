@@ -5,7 +5,7 @@ import { alignRow } from './alignment.js';
 import { renderReviewPanel } from './review.js';
 import { renderKaraokePlayer } from './karaoke.js';
 import { formatConfidence } from './utils.js';
-import { loadAlignmentWords, loadTranscriptText, loadFromSupabase } from './db.js';
+import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration } from './db.js';
 
 const R2_BASE = 'https://audio.kohnai.ai';
 
@@ -196,11 +196,14 @@ function renderDetailPage(audioId, audio, state, container) {
   const metaItems = [
     audio.year && `Year: ${audio.year}`,
     audio.type && `Type: ${audio.type}`,
-    audio.estMinutes != null && `Duration: ${audio.estMinutes} min`,
     audio.isSelected50hr && '50-Hour Set',
     audio.isBenchmark && 'Benchmark',
   ].filter(Boolean);
   meta.textContent = metaItems.join('  |  ');
+  // Duration span — updated from real audio metadata
+  const durationSpan = document.createElement('span');
+  durationSpan.textContent = audio.estMinutes != null ? `${metaItems.length ? '  |  ' : ''}Duration: ${audio.estMinutes} min` : '';
+  meta.appendChild(durationSpan);
   container.appendChild(meta);
 
   // === Section: Audio Player ===
@@ -212,6 +215,14 @@ function renderDetailPage(audioId, audio, state, container) {
     playerEl.preload = 'metadata';
     playerEl.src = audioUrl;
     playerEl.className = 'audio-player';
+    playerEl.addEventListener('loadedmetadata', () => {
+      const realMin = parseFloat((playerEl.duration / 60).toFixed(1));
+      durationSpan.textContent = `${metaItems.length ? '  |  ' : ''}Duration: ${realMin} min`;
+      if (audio.estMinutes !== realMin) {
+        audio.estMinutes = realMin;
+        syncAudioDuration(audioId, realMin).catch(console.warn);
+      }
+    }, { once: true });
     playerSection.content.appendChild(playerEl);
 
     // Trim Controls
