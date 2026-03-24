@@ -2223,3 +2223,122 @@ input {
   border-top: 1px solid var(--border);
   justify-content: flex-end;
 }
+
+/* === Compare Versions View === */
+.compare-view {
+  margin-top: 16px;
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 16px;
+}
+
+.compare-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.compare-columns {
+  display: flex;
+  gap: 16px;
+}
+
+.compare-column {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--surface-alt);
+}
+
+.compare-selector {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-family: var(--font);
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.compare-selector:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+.compare-stats {
+  display: flex;
+  gap: 16px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  padding: 4px 0;
+}
+
+.compare-word-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  max-height: 350px;
+  overflow-y: auto;
+  padding: 8px;
+  line-height: 1.8;
+}
+
+/* Confidence change indicators */
+.word-chip.confidence-improved {
+  box-shadow: inset 0 -3px 0 0 var(--green);
+}
+
+.word-chip.confidence-degraded {
+  box-shadow: inset 0 -3px 0 0 var(--red);
+}
+
+.compare-legend {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.compare-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.compare-legend-dot {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+}
+
+.compare-legend-dot.confidence-improved {
+  box-shadow: inset 0 -3px 0 0 var(--green);
+}
+
+.compare-legend-dot.confidence-degraded {
+  box-shadow: inset 0 -3px 0 0 var(--red);
+}
+
+/* Responsive: stack columns on narrow screens */
+@media (max-width: 768px) {
+  .compare-columns {
+    flex-direction: column;
+  }
+}

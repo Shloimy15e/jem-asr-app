@@ -233,6 +233,25 @@ export function updateVersion(audioId, versionId, updates) {
   }
 }
 
+// Store alignment data on a specific version object.
+// Also updates the legacy flat key so existing code keeps working.
+export function setVersionAlignment(audioId, versionId, alignment) {
+  if (!state) return;
+  const versions = state.transcriptVersions[audioId];
+  if (!versions) return;
+  const v = versions.find(v => v.id === versionId);
+  if (v) {
+    v.alignment = alignment;
+    syncLegacyKeys(audioId);
+    saveToStorage();
+  }
+}
+
+// Return all versions that have alignment data attached.
+export function getAlignedVersions(audioId) {
+  return getVersions(audioId).filter(v => v.alignment && v.alignment.words);
+}
+
 function syncLegacyKeys(audioId) {
   const versions = state.transcriptVersions[audioId] || [];
   const manual = versions.find(v => v.type === 'manual');

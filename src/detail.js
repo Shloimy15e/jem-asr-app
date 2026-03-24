@@ -1,4 +1,4 @@
-import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData } from './state.js';
+import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions } from './state.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
 import { alignRow } from './alignment.js';
@@ -935,7 +935,8 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     alignBtn.disabled = true;
     try {
       const textForAlignment = await getCurrentText();
-      await alignRow(audioId, getState(), textForAlignment);
+      const currentVersionId = activeVersionRef?.id || null;
+      await alignRow(audioId, getState(), textForAlignment, currentVersionId);
     } catch (err) {
       alignBtn.textContent = 'Alignment failed — click to retry';
       alignBtn.disabled = false;
@@ -974,6 +975,202 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl);
     }
   }
+
+  // ── Compare Versions button ──
+  const alignedVersions = getAlignedVersions(audioId);
+  if (alignedVersions.length >= 2) {
+    const compareBar = document.createElement('div');
+    compareBar.style.cssText = 'margin-top:12px;';
+    const compareBtn = document.createElement('button');
+    compareBtn.className = 'action-btn action-btn-primary';
+    compareBtn.textContent = `Compare Versions (${alignedVersions.length} aligned)`;
+    compareBtn.addEventListener('click', () => {
+      renderCompareView(audioId, alignedVersions, container, pageContainer, playerEl);
+    });
+    compareBar.appendChild(compareBtn);
+    container.appendChild(compareBar);
+  } else if (alignedVersions.length === 1 && alignment) {
+    // Only one version has alignment stored on it — hint to align another
+    const hint = document.createElement('div');
+    hint.className = 'text-secondary';
+    hint.style.cssText = 'margin-top:8px;font-size:0.82rem;';
+    hint.textContent = 'Tip: Edit the text, align again, then compare both aligned versions side by side.';
+    container.appendChild(hint);
+  }
+}
+
+function renderCompareView(audioId, alignedVersions, container, pageContainer, playerEl) {
+  // Remove any previous compare view
+  container.querySelector('.compare-view')?.remove();
+
+  const wrap = document.createElement('div');
+  wrap.className = 'compare-view';
+
+  // Header
+  const header = document.createElement('div');
+  header.className = 'compare-header';
+  const title = document.createElement('h4');
+  title.textContent = 'Compare Aligned Versions';
+  title.style.margin = '0';
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'btn btn-close';
+  closeBtn.textContent = '\u00D7';
+  closeBtn.style.cssText = 'font-size:1.2rem;padding:2px 8px;';
+  closeBtn.addEventListener('click', () => wrap.remove());
+  header.appendChild(title);
+  header.appendChild(closeBtn);
+  wrap.appendChild(header);
+
+  // Two-column layout
+  const columns = document.createElement('div');
+  columns.className = 'compare-columns';
+
+  // State for the two selected versions
+  const selected = [
+    alignedVersions.length >= 2 ? alignedVersions[alignedVersions.length - 2] : alignedVersions[0],
+    alignedVersions[alignedVersions.length - 1],
+  ];
+
+  // Build a map from word position to the other side's confidence for diff highlighting
+  function buildConfidenceMap(words) {
+    const map = {};
+    words.forEach((w, i) => {
+      map[i] = w.confidence ?? 0;
+    });
+    return map;
+  }
+
+  function renderColumn(colIdx) {
+    const col = document.createElement('div');
+    col.className = 'compare-column';
+
+    // Version selector dropdown
+    const selector = document.createElement('select');
+    selector.className = 'compare-selector';
+    alignedVersions.forEach((v, i) => {
+      const opt = document.createElement('option');
+      opt.value = i;
+      const label = v.type.charAt(0).toUpperCase() + v.type.slice(1);
+      const date = v.alignment?.alignedAt ? new Date(v.alignment.alignedAt).toLocaleDateString() : '';
+      const avg = v.alignment?.avgConfidence != null ? ` (${(v.alignment.avgConfidence * 100).toFixed(0)}%)` : '';
+      opt.textContent = `${label}${avg} ${date}`;
+      if (v.id === selected[colIdx].id) opt.selected = true;
+      selector.appendChild(opt);
+    });
+    selector.addEventListener('change', () => {
+      selected[colIdx] = alignedVersions[parseInt(selector.value)];
+      rebuildColumns();
+    });
+    col.appendChild(selector);
+
+    const version = selected[colIdx];
+    const words = version.alignment?.words || [];
+    const otherWords = selected[1 - colIdx]?.alignment?.words || [];
+    const otherConfMap = buildConfidenceMap(otherWords);
+
+    // Stats bar
+    const stats = document.createElement('div');
+    stats.className = 'compare-stats';
+    const avg = version.alignment?.avgConfidence;
+    const low = version.alignment?.lowConfidenceCount ?? 0;
+    const wordCount = words.length;
+    stats.innerHTML = `<span>Words: <strong>${wordCount}</strong></span>` +
+      `<span>Avg: <strong>${avg != null ? (avg * 100).toFixed(0) + '%' : '—'}</strong></span>` +
+      `<span>Low confidence: <strong style="color:var(--red)">${low}</strong></span>`;
+    col.appendChild(stats);
+
+    // Word grid with chips
+    const grid = document.createElement('div');
+    grid.className = 'compare-word-grid';
+    grid.dir = 'rtl';
+
+    const chipEls = [];
+    words.forEach((w, idx) => {
+      const span = document.createElement('span');
+      const conf = typeof w.confidence === 'number' ? w.confidence : 1;
+      const level = getConfidenceLevel(conf);
+      span.className = `word-chip confidence-${level}`;
+      const wordText = w.word || w.text || '';
+      span.textContent = wordText;
+      span.title = `"${wordText}" ${(conf * 100).toFixed(0)}% | ${(w.start ?? 0).toFixed(2)}s–${(w.end ?? 0).toFixed(2)}s`;
+
+      // Confidence diff indicator vs the other column
+      if (otherWords.length > 0 && idx < otherWords.length) {
+        const otherConf = otherConfMap[idx] ?? 0;
+        const diff = conf - otherConf;
+        if (diff > 0.1) {
+          span.classList.add('confidence-improved');
+        } else if (diff < -0.1) {
+          span.classList.add('confidence-degraded');
+        }
+      }
+
+      // Click to seek audio
+      if (playerEl) {
+        span.style.cursor = 'pointer';
+        span.addEventListener('click', () => {
+          playerEl.currentTime = w.start;
+          if (playerEl.paused) playerEl.play();
+        });
+      }
+
+      grid.appendChild(span);
+      chipEls.push(span);
+    });
+
+    // Timeupdate highlight for this column
+    if (playerEl && chipEls.length > 0) {
+      let prevActive = null;
+      const onTimeUpdate = () => {
+        const t = playerEl.currentTime;
+        let activeIdx = -1;
+        for (let i = 0; i < words.length; i++) {
+          if (t >= words[i].start && t < words[i].end) { activeIdx = i; break; }
+        }
+        if (prevActive !== null && prevActive !== activeIdx) {
+          chipEls[prevActive]?.classList.remove('active');
+        }
+        if (activeIdx >= 0 && activeIdx !== prevActive) {
+          chipEls[activeIdx].classList.add('active');
+          chipEls[activeIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+        prevActive = activeIdx;
+      };
+      // Store cleanup ref
+      col._timeUpdateHandler = onTimeUpdate;
+      playerEl.addEventListener('timeupdate', onTimeUpdate);
+    }
+
+    col.appendChild(grid);
+    return col;
+  }
+
+  function rebuildColumns() {
+    // Clean up old timeupdate listeners
+    columns.querySelectorAll('.compare-column').forEach(col => {
+      if (col._timeUpdateHandler && playerEl) {
+        playerEl.removeEventListener('timeupdate', col._timeUpdateHandler);
+      }
+    });
+    columns.innerHTML = '';
+    columns.appendChild(renderColumn(0));
+    columns.appendChild(renderColumn(1));
+  }
+
+  rebuildColumns();
+  wrap.appendChild(columns);
+
+  // Legend
+  const legend = document.createElement('div');
+  legend.className = 'compare-legend';
+  legend.innerHTML = '<span class="compare-legend-item"><span class="compare-legend-dot confidence-improved"></span> Improved vs other</span>' +
+    '<span class="compare-legend-item"><span class="compare-legend-dot confidence-degraded"></span> Degraded vs other</span>' +
+    '<span class="compare-legend-item">Click any word to hear it</span>';
+  wrap.appendChild(legend);
+
+  container.appendChild(wrap);
+  // Scroll into view
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl) {
