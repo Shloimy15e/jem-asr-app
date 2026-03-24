@@ -1,4 +1,4 @@
-import { getState, getFilteredRows, getFilterCounts, getStatus, updateState } from './state.js';
+import { getState, getFilteredRows, getFilterCounts, getStatus, getVersions, updateState } from './state.js';
 import { truncateWords, formatConfidence, debounce } from './utils.js';
 import { linkMatch, getSuggestedMatches } from './mapping.js';
 
@@ -64,7 +64,8 @@ const COLUMNS = [
   { key: 'year',          label: 'Year',              sortable: true,  showWhen: () => true },
   { key: 'type',          label: 'Type',              sortable: true,  showWhen: () => true },
   { key: 'estMinutes',    label: 'Duration',          sortable: true,  showWhen: () => true },
-  { key: 'firstLine',     label: 'First 15 Words',    sortable: false, showWhen: (f) => !filterMatchesStatus(f, ['unmapped']) },
+  { key: 'firstLine',     label: 'Manual — First 15 Words', sortable: false, showWhen: (f) => !filterMatchesStatus(f, ['unmapped']) },
+  { key: 'asrFirstLine',  label: 'ASR — First 15 Words',    sortable: false, showWhen: (f) => !filterMatchesStatus(f, ['unmapped']) },
   { key: 'transcript',    label: 'Transcript Name',   sortable: true,  showWhen: (f) => !filterMatchesStatus(f, ['unmapped']) },
   { key: 'matchConf',     label: 'Match Confidence',  sortable: true,  showWhen: (f) => !filterMatchesStatus(f, ['unmapped']) },
   { key: 'cleanRate',     label: 'Clean Rate',        sortable: true,  showWhen: (f) => !filterMatchesStatus(f, ['unmapped', 'mapped']) },
@@ -119,6 +120,7 @@ function getRowData(audio) {
     type: audio.type || '',
     estMinutes: audio.estMinutes != null ? audio.estMinutes + ' min' : '',
     firstLine: transcript ? truncateWords(transcript.firstLine || '', 15) : '',
+    asrFirstLine: truncateWords(getVersions(id)?.find(v => v.type === 'asr')?.text || '', 15),
     transcript: transcript ? transcript.name : '',
     matchConf: mapping ? formatConfidence(mapping.confidence) : '',
     cleanRate: cleaning ? cleaning.cleanRate + '%' : '',
@@ -139,7 +141,8 @@ function matchesSearch(row) {
   return (
     row.name.toLowerCase().includes(term) ||
     row.transcript.toLowerCase().includes(term) ||
-    row.firstLine.toLowerCase().includes(term)
+    row.firstLine.toLowerCase().includes(term) ||
+    row.asrFirstLine.toLowerCase().includes(term)
   );
 }
 
@@ -524,6 +527,10 @@ function buildTable(rows) {
         }
         case 'firstLine':
           td.textContent = row.firstLine;
+          td.classList.add('cell-hebrew');
+          break;
+        case 'asrFirstLine':
+          td.textContent = row.asrFirstLine;
           td.classList.add('cell-hebrew');
           break;
         case 'comments': {
