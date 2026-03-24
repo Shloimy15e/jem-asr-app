@@ -2,7 +2,7 @@ import { initState, getState, getStatus, getVersions, getBestVersion, addVersion
 import { checkAuth, signOut } from './auth.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
-import { alignRow } from './alignment.js';
+import { alignRow, transcribeAudio } from './alignment.js';
 import { formatConfidence, getConfidenceLevel } from './utils.js';
 import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration } from './db.js';
 
@@ -853,6 +853,159 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
   document.body.appendChild(overlay);
 }
 
+// ── ASR Transcription Section ────────────────────────────────────────────────
+// Renders provider buttons and collapsible config. Creates/updates an 'asr' version.
+
+function renderAsrSection(audioId, state, container, pageContainer) {
+  const audio = state.audio.find(a => a.id === audioId);
+  const audioUrl = audio?.r2Link || audio?.driveLink || null;
+
+  const label = document.createElement('div');
+  label.className = 'section-sublabel';
+  label.textContent = 'ASR — generate a transcript from audio without a reference text';
+  container.appendChild(label);
+
+  const btnBar = document.createElement('div');
+  btnBar.className = 'asr-btn-bar';
+
+  const PROVIDERS = [
+    { key: 'gemini',      label: 'Gemini (fine-tuned)',  providerArg: 'gemini' },
+    { key: 'whisper',     label: 'Whisper (RunPod)',      providerArg: 'whisper' },
+    { key: 'yiddishLabs', label: 'Yiddish Labs',          providerArg: 'yiddish-labs' },
+  ];
+
+  for (const { key, label: btnLabel, providerArg } of PROVIDERS) {
+    const btn = document.createElement('button');
+    btn.className = 'action-btn';
+    btn.textContent = btnLabel;
+    btn.addEventListener('click', async () => {
+      if (!audioUrl) { alert('No audio URL for this file.'); return; }
+      btn.disabled = true;
+      btn.textContent = `${btnLabel} — transcribing…`;
+      try {
+        const providers = getState().transcribeProviders || {};
+        const providerCfg = providers[key] || {};
+        const config = { provider: providerArg, ...providerCfg };
+        const text = await transcribeAudio(audioId, audioUrl, config);
+        if (!text) throw new Error('Empty transcription returned');
+        // Replace existing asr version if present, otherwise add new
+        const versions = getVersions(audioId);
+        const existingAsr = versions.find(v => v.type === 'asr');
+        if (existingAsr) {
+          updateVersion(audioId, existingAsr.id, { text, model: key, createdAt: new Date().toISOString() });
+        } else {
+          addVersion(audioId, { type: 'asr', text, model: key, createdAt: new Date().toISOString() });
+        }
+        const s = getState();
+        renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
+      } catch (err) {
+        console.error('[ASR] transcription failed:', err);
+        btn.textContent = `${btnLabel} — failed, retry?`;
+        btn.disabled = false;
+      }
+    });
+    btnBar.appendChild(btn);
+  }
+  container.appendChild(btnBar);
+
+  // Collapsible config panel
+  const configToggle = document.createElement('button');
+  configToggle.className = 'action-btn asr-config-toggle';
+  configToggle.textContent = 'Configure ASR Providers';
+  container.appendChild(configToggle);
+
+  const configPanel = document.createElement('div');
+  configPanel.className = 'asr-provider-config';
+  configPanel.hidden = true;
+
+  const providers = getState().transcribeProviders || {};
+
+  // Gemini config — Vertex AI section + optional API key fallback
+  configPanel.appendChild(buildProviderConfig('Gemini (fine-tuned via Vertex AI)', [
+    { stateKey: 'gemini', field: 'saJson',     label: 'Service Account JSON', placeholder: 'Paste the contents of your .json key file', type: 'textarea' },
+    { stateKey: 'gemini', field: 'projectId',  label: 'GCP Project ID',       placeholder: 'fink-partnership',    type: 'text' },
+    { stateKey: 'gemini', field: 'region',     label: 'Region',               placeholder: 'us-central1',         type: 'text' },
+    { stateKey: 'gemini', field: 'endpointId', label: 'Endpoint ID',          placeholder: '5718022314876993536', type: 'text' },
+    { stateKey: 'gemini', field: 'apiKey',     label: 'API Key (alt)',         placeholder: 'AIza… — only if not using service account', type: 'password' },
+    { stateKey: 'gemini', field: 'modelId',    label: 'Model ID (alt)',        placeholder: 'gemini-2.5-flash or numeric tuned model ID',  type: 'text' },
+  ], providers));
+
+  // Whisper config (no credentials needed — uses existing align endpoint)
+  const whisperNote = document.createElement('div');
+  whisperNote.className = 'asr-provider-block';
+  const whisperTitle = document.createElement('div');
+  whisperTitle.className = 'asr-provider-title';
+  whisperTitle.textContent = 'Whisper (RunPod)';
+  const whisperDesc = document.createElement('div');
+  whisperDesc.className = 'asr-provider-note';
+  whisperDesc.textContent = 'Uses the existing alignment endpoint (align.kohnai.ai) — no additional configuration needed.';
+  whisperNote.appendChild(whisperTitle);
+  whisperNote.appendChild(whisperDesc);
+  configPanel.appendChild(whisperNote);
+
+  // Yiddish Labs config
+  configPanel.appendChild(buildProviderConfig('Yiddish Labs', [
+    { stateKey: 'yiddishLabs', field: 'apiKey',   label: 'API Key',             placeholder: 'yl_live_...',                                          type: 'password' },
+    { stateKey: 'yiddishLabs', field: 'endpoint', label: 'Endpoint (optional)', placeholder: 'https://app.yiddishlabs.com/api/v1/transcriptions/sync', type: 'text' },
+  ], providers));
+
+  configToggle.addEventListener('click', () => {
+    configPanel.hidden = !configPanel.hidden;
+    configToggle.textContent = configPanel.hidden ? 'Configure ASR Providers' : 'Hide ASR Config';
+  });
+  container.appendChild(configPanel);
+}
+
+function buildProviderConfig(title, fields, providers) {
+  const block = document.createElement('div');
+  block.className = 'asr-provider-block';
+
+  const titleEl = document.createElement('div');
+  titleEl.className = 'asr-provider-title';
+  titleEl.textContent = title;
+  block.appendChild(titleEl);
+
+  for (const { stateKey, field, label, placeholder, type } of fields) {
+    const row = document.createElement('label');
+    row.className = type === 'textarea' ? 'asr-config-row asr-config-row-tall' : 'asr-config-row';
+
+    const labelEl = document.createElement('span');
+    labelEl.className = 'asr-config-label';
+    labelEl.textContent = label;
+
+    let input;
+    if (type === 'textarea') {
+      input = document.createElement('textarea');
+      input.className = 'asr-config-input asr-config-textarea';
+      input.placeholder = placeholder;
+      input.rows = 4;
+      input.value = providers[stateKey]?.[field] || '';
+    } else {
+      input = document.createElement('input');
+      input.type = type || 'text';
+      input.className = 'asr-config-input';
+      input.placeholder = placeholder;
+      input.value = providers[stateKey]?.[field] || '';
+    }
+
+    input.addEventListener('change', () => {
+      const s = getState();
+      if (!s.transcribeProviders) s.transcribeProviders = {};
+      if (!s.transcribeProviders[stateKey]) s.transcribeProviders[stateKey] = {};
+      s.transcribeProviders[stateKey][field] = input.value.trim();
+      updateState('transcribeProviders', null, s.transcribeProviders);
+    });
+
+    row.appendChild(labelEl);
+    row.appendChild(input);
+    block.appendChild(row);
+  }
+
+  return block;
+}
+
+// ── End ASR Section ──────────────────────────────────────────────────────────
+
 function renderUnifiedWorkSection(audioId, state, container, pageContainer, playerEl, activeVersionRef) {
   const cleaning = state.cleaning[audioId];
   const alignment = state.alignments[audioId];
@@ -965,6 +1118,9 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     alignBar.appendChild(info);
   }
   container.appendChild(alignBar);
+
+  // ── ASR Transcription ──
+  renderAsrSection(audioId, state, container, pageContainer);
 
   // ── Unified Word View (diff + karaoke in one) ──
   if (cleaning || alignment) {
@@ -2013,9 +2169,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       if (sidebar._renderList) sidebar._renderList();
     } else {
       reviewedSegments.add(currentSegIdx);
-      const next = findNextUnreviewed();
-      if (next >= 0) { goToSegment(next); }
-      else { updateStats(); updateSegHeader(); if (sidebar._renderList) sidebar._renderList(); }
+      updateStats(); updateSegHeader(); if (sidebar._renderList) sidebar._renderList();
     }
   });
 

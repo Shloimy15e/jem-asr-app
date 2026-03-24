@@ -1,4 +1,4 @@
-import { syncStateKey, syncEdited } from './db.js';
+import { syncStateKey, syncEdited, syncAsr } from './db.js';
 
 const STORAGE_KEY = 'jem-asr-state';
 
@@ -17,6 +17,16 @@ export function initState(data) {
     reviews: saved.reviews || {},
     benchmarks: saved.benchmarks || {},
     asrModels: saved.asrModels || [],
+    transcribeProviders: saved.transcribeProviders || {
+      gemini: {
+        // Vertex AI (service account) — for fine-tuned models on GCP
+        saJson: '', projectId: 'fink-partnership', region: 'us-central1', endpointId: '5718022314876993536',
+        // API key fallback — for Google AI Studio models
+        apiKey: '', modelId: '',
+      },
+      whisper: {},
+      yiddishLabs: { apiKey: '', endpoint: '' },
+    },
     trims: saved.trims || {},
     audioNames: saved.audioNames || {},
   };
@@ -127,6 +137,27 @@ export function mergeSupabaseData(remote) {
     }
   }
 
+  // Restore asr versions loaded from Supabase into transcriptVersions
+  if (remote.asr) {
+    for (const [audioId, asrData] of Object.entries(remote.asr)) {
+      const versions = state.transcriptVersions[audioId];
+      if (!versions || versions.length === 0) continue;
+      const existing = versions.find(v => v.type === 'asr');
+      if (existing) {
+        existing.text = asrData.text;
+        existing.model = asrData.model;
+      } else {
+        versions.push({
+          id: `tv_${audioId}_asr_restored`,
+          type: 'asr',
+          text: asrData.text,
+          model: asrData.model,
+          createdAt: asrData.createdAt,
+        });
+      }
+    }
+  }
+
   // Re-run migration so transcriptVersions reflects the merged data
   migrateToVersions();
   saveToStorage();
@@ -208,10 +239,14 @@ export function addVersion(audioId, versionData) {
   state.transcriptVersions[audioId].push(version);
   syncLegacyKeys(audioId);
   saveToStorage();
-  // Persist edited versions to Supabase so they survive across browsers/sessions
+  // Persist edited/asr versions to Supabase so they survive across browsers/sessions
   if (versionData.type === 'edited' && versionData.text != null) {
     const audioEntry = state.audio?.find(a => a.id === audioId);
     syncEdited(audioId, versionData.text, audioEntry).catch(console.warn);
+  }
+  if (versionData.type === 'asr' && versionData.text != null) {
+    const audioEntry = state.audio?.find(a => a.id === audioId);
+    syncAsr(audioId, versionData.text, versionData.model, audioEntry).catch(console.warn);
   }
   return version;
 }
@@ -225,10 +260,14 @@ export function updateVersion(audioId, versionId, updates) {
     Object.assign(v, updates);
     syncLegacyKeys(audioId);
     saveToStorage();
-    // Sync text changes for edited versions to Supabase
+    // Sync text changes for edited/asr versions to Supabase
     if (v.type === 'edited' && updates.text != null) {
       const audioEntry = state.audio?.find(a => a.id === audioId);
       syncEdited(audioId, v.text, audioEntry).catch(console.warn);
+    }
+    if (v.type === 'asr' && updates.text != null) {
+      const audioEntry = state.audio?.find(a => a.id === audioId);
+      syncAsr(audioId, v.text, v.model, audioEntry).catch(console.warn);
     }
   }
 }

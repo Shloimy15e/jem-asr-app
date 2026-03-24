@@ -95,6 +95,22 @@ export async function syncEdited(audioId, text, audioEntry) {
   if (error) console.warn('[DB] syncEdited:', error.message);
 }
 
+export async function syncAsr(audioId, text, modelName, audioEntry) {
+  if (text == null) return;
+  await ensureAudioFile(audioEntry);
+  const { error } = await supabase.from('transcript_edits').upsert(
+    {
+      audio_id: audioId,
+      version: 'asr',
+      text,
+      created_at: new Date().toISOString(),
+      created_by: modelName || 'asr',
+    },
+    { onConflict: 'audio_id,version' },
+  );
+  if (error) console.warn('[DB] syncAsr:', error.message);
+}
+
 export async function syncAlignment(audioId, alignmentData, audioEntry) {
   if (!alignmentData) return;
   await ensureAudioFile(audioEntry);
@@ -443,7 +459,16 @@ export async function loadFromSupabase() {
       };
     });
 
-    return { audio, transcripts, mappings, alignments, reviews, cleaning, trims, edited };
+    const asr = {};
+    (editsData || []).filter(e => e.version === 'asr').forEach(e => {
+      asr[e.audio_id] = {
+        text: e.text,
+        model: e.created_by,
+        createdAt: e.created_at,
+      };
+    });
+
+    return { audio, transcripts, mappings, alignments, reviews, cleaning, trims, edited, asr };
   } catch (err) {
     console.warn('[DB] loadFromSupabase failed:', err.message);
     return null;

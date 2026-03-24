@@ -298,26 +298,85 @@ export async function batchAlign(audioIds, state, onProgress) {
   }
 }
 
-export async function transcribeAudio(audioId, audioUrl, modelConfig) {
+const TRANSCRIBE_ENDPOINT = '/api/transcribe';
+
+/**
+ * Transcribe audio using one of the supported providers.
+ *
+ * @param {string} audioId - Audio file ID (unused in request, kept for caller convenience)
+ * @param {string} audioUrl - URL of the audio file (R2 or Drive)
+ * @param {object} config - Provider config from state.transcribeProviders[provider]
+ * @param {'gemini'|'whisper'|'yiddish-labs'} config.provider
+ * @param {string} [config.apiKey]    - API key for gemini or yiddish-labs
+ * @param {string} [config.modelId]   - Gemini model ID (numeric for fine-tuned)
+ * @param {string} [config.endpoint]  - Custom endpoint for yiddish-labs (optional)
+ * @returns {Promise<string>} Transcription text
+ */
+export async function transcribeAudio(audioId, audioUrl, config) {
+  const { provider } = config;
+  if (!provider) throw new Error('transcribeAudio: missing provider in config');
+
   const audioResult = await fetchAudioForAlignment(audioUrl, 0, 0);
 
   const audioFields = audioResult.audioUrl
     ? { audio_url: audioResult.audioUrl }
     : { audio_base64: audioResult.base64, audio_format: audioResult.format || '.mp3' };
 
-  const response = await fetch(modelConfig.endpoint || ALIGN_ENDPOINT, {
+  // Whisper: route through existing align endpoint with mode:'transcribe' (no text)
+  if (provider === 'whisper') {
+    const response = await fetch(ALIGN_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'transcribe', ...audioFields, language: 'yi' }),
+    });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Whisper transcription error ${response.status}: ${errText}`);
+    }
+    const data = await response.json();
+    // stable-whisper returns { text, segments, ... }
+    return (data.text || data.full_text || data.transcription || '').trim();
+  }
+
+  // Gemini and Yiddish Labs: route through /api/transcribe CF Worker
+  let providerPayload;
+  if (provider === 'gemini') {
+    // Prefer Vertex AI (service account) when saJson is configured
+    if (config.saJson) {
+      if (!config.endpointId) throw new Error('Gemini Vertex AI requires an Endpoint ID');
+      providerPayload = {
+        gemini_sa_json: config.saJson,
+        gemini_project_id: config.projectId || '',
+        gemini_region: config.region || 'us-central1',
+        gemini_endpoint_id: config.endpointId,
+      };
+    } else {
+      // Fall back to API key path (Google AI Studio / public Gemini API)
+      if (!config.apiKey) throw new Error('Gemini transcription requires a service account JSON or API key');
+      if (!config.modelId) throw new Error('Gemini transcription requires a model ID when using API key');
+      providerPayload = { gemini_api_key: config.apiKey, gemini_model_id: config.modelId };
+    }
+  } else if (provider === 'yiddish-labs') {
+    if (!config.apiKey) throw new Error('Yiddish Labs transcription requires an API key');
+    providerPayload = {
+      yl_api_key: config.apiKey,
+      ...(config.endpoint ? { yl_endpoint: config.endpoint } : {}),
+    };
+  } else {
+    throw new Error(`Unknown transcription provider: ${provider}`);
+  }
+
+  const response = await fetch(TRANSCRIBE_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      mode: 'transcribe',
-      ...audioFields,
-      language: 'yi',
-      ...(modelConfig.requestTemplate || {}),
-    }),
+    body: JSON.stringify({ provider, ...audioFields, ...providerPayload }),
   });
 
-  if (!response.ok) throw new Error(`Transcription API error: ${response.status}`);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || `Transcription error ${response.status}`);
+  }
 
   const data = await response.json();
-  return data.full_text || data.text || '';
+  return (data.text || '').trim();
 }

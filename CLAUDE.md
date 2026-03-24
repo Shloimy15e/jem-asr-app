@@ -422,6 +422,30 @@ When 2+ versions have alignment data, a **"Compare Versions"** button appears be
 
 The intended iterative workflow: clean → align → edit → align again → compare both → repeat until all words are green.
 
+### ASR Transcription providers — three options, configured per-session in localStorage
+The detail page has a **"Configure ASR Providers"** panel (gear icon in the Processing section) that stores credentials in `state.transcribeProviders` (persisted to localStorage). Three providers:
+
+| Provider | CF Worker endpoint | Auth |
+|----------|--------------------|------|
+| **Gemini (fine-tuned)** | `POST /api/transcribe` with `provider:'gemini'` | Vertex AI service account JSON (preferred) OR Gemini API key |
+| **Whisper** | `POST /api/align` with `mode:'transcribe'` | None — proxied to `align.kohnai.ai` |
+| **Yiddish Labs** | `POST /api/transcribe` with `provider:'yiddish-labs'` | `X-API-KEY` header |
+
+**Gemini Vertex AI details** (the fine-tuned model lives on GCP, not Google AI Studio):
+- Project: `fink-partnership`, Region: `us-central1`, Endpoint ID: `5718022314876993536`
+- Auth flow in `transcribe.js`: service account JSON → RS256 JWT signed with Web Crypto API → POST `oauth2.googleapis.com/token` → Bearer access token → `{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/endpoints/{endpointId}:generateContent`
+- If `gemini_sa_json` is present in the payload the worker uses Vertex AI; if only `gemini_api_key` is present it falls back to the public Gemini API (`generativelanguage.googleapis.com/v1beta/...`)
+
+**State structure** (`state.transcribeProviders.gemini`):
+```javascript
+{ saJson: '', projectId: 'fink-partnership', region: 'us-central1', endpointId: '5718022314876993536',
+  apiKey: '',  // fallback — for Google AI Studio models only
+  modelId: '' }
+```
+
+**Yiddish Labs API key:** `yl_live_749b662b6534f5b137feb2877d75453f98cd4ae5d725452e319d385038cb85a9`
+Sync endpoint: `https://app.yiddishlabs.com/api/v1/transcriptions/sync`
+
 ### Manual version text is always loaded from the transcript, never from a stale cache
 In `renderVersionContent`, `type === 'manual'` versions skip the `version.text` check entirely and always load from `transcript.text` (or R2/Supabase if not yet in memory), caching on the `transcript` object rather than the `version` object. This ensures the Manual tab always matches "View Transcript Independently" (`detail?tid=`). Non-manual versions (`cleaned`, `edited`, etc.) still use `version.text` as before.
 
@@ -452,9 +476,10 @@ jem-asr-app/
 │   ├── detail.js               # Per-file detail page logic
 │   └── utils.js                # parseHebrewDate, normalizeYiddish, levenshtein, CSV
 ├── functions/api/
-│   ├── align.js                # CF Worker: POST proxy → align.kohnai.ai/api/align
+│   ├── align.js                # CF Worker: POST proxy → align.kohnai.ai/api/align (also handles Whisper transcription via mode:'transcribe')
 │   ├── audio.js                # CF Worker: GET proxy for R2 audio (streams, 1-day cache)
-│   └── transcript.js           # CF Worker: GET proxy for transcript text from R2
+│   ├── transcript.js           # CF Worker: GET proxy for transcript text from R2
+│   └── transcribe.js           # CF Worker: POST proxy for ASR transcription providers (Gemini Vertex AI, Yiddish Labs)
 ├── scripts/
 │   ├── seed-transcripts.mjs    # One-off: seed all transcripts + fetch 50hr text from R2
 │   └── measure-audio-duration.mjs  # One-off: measure real MP3 duration, update est_minutes

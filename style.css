@@ -2207,6 +2207,95 @@ input {
   letter-spacing: 0.04em;
 }
 
+/* ── ASR Transcription Section ── */
+.asr-btn-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 6px 0 4px;
+}
+
+.asr-config-toggle {
+  font-size: 0.8rem;
+  margin-top: 4px;
+  color: var(--text-secondary);
+}
+
+.asr-provider-config {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.asr-provider-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.asr-provider-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.asr-provider-note {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.asr-config-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.asr-config-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  min-width: 130px;
+  flex-shrink: 0;
+}
+
+.asr-config-input {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 0.82rem;
+  font-family: var(--font);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  min-width: 0;
+}
+
+.asr-config-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.asr-config-row-tall {
+  align-items: flex-start;
+}
+
+.asr-config-row-tall .asr-config-label {
+  padding-top: 6px;
+}
+
+.asr-config-textarea {
+  font-family: monospace;
+  font-size: 0.75rem;
+  resize: vertical;
+}
+
+/* ── End ASR Section ── */
+
 .word-view {
   margin-top: 12px;
   border: 1px solid var(--border);
