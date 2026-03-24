@@ -1,7 +1,7 @@
-import { initState, getState, getStatus, getFilteredRows, exportState, importState, mergeSupabaseData, getAudiosByTranscriptId, addTranscript } from './state.js';
-import { loadFromSupabase, splitTranscript } from './db.js';
+import { initState, getState, getStatus, exportState, importState, mergeSupabaseData } from './state.js';
+import { loadFromSupabase } from './db.js';
 import { renderTable, updateTable, getSelectedRows } from './table.js';
-import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
+import { renderSuggestedMatches, linkMatch, renderSearchModal } from './mapping.js';
 import { batchClean } from './cleaning.js';
 import { batchAlign } from './alignment.js';
 import { renderReviewPanel, approveAll } from './review.js';
@@ -201,7 +201,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       panel.appendChild(searchBtn);
     } else if (status === 'aligned' || status === 'approved') {
       // Show review panel
-      renderReviewPanel(panel, audioId, state, {
+      renderReviewPanel(panel, audioId, getState(), {
         onApprove: () => {
           updateTable();
           expandedRow = null;
@@ -269,9 +269,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   renderTable(tableContainer, {
     onRowExpand,
-    onRowSelect: (ids) => {
-      // Selection count is handled by table.js
-    },
   });
 
   // ── Bulk actions ────────────────────────────────────────────────
@@ -413,7 +410,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       e.preventDefault();
       document.getElementById('btn-export-csv')?.click();
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-      // Navigate rows
+      // Navigate rows — only highlight/select, don't expand
       e.preventDefault();
       const rows = tableContainer.querySelectorAll('tr.table-row');
       if (rows.length === 0) return;
@@ -428,14 +425,26 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       const nextAudioId = rows[nextIdx].getAttribute('data-audio-id');
       if (nextAudioId) {
-        onRowExpand(nextAudioId);
+        // Remove highlight from previous row
+        const prevHighlighted = tableContainer.querySelector('tr.table-row.highlighted');
+        if (prevHighlighted) prevHighlighted.classList.remove('highlighted');
+        // Highlight the new row and track it
+        rows[nextIdx].classList.add('highlighted');
+        expandedRow = nextAudioId;
         rows[nextIdx].scrollIntoView({ block: 'nearest' });
       }
     } else if (e.key === 'Enter') {
-      // Approve current expanded row
+      // If a row is highlighted, expand it; otherwise approve current expanded panel
       if (expandedRow) {
-        const approveBtn = document.querySelector('.expanded-panel .review-approve-btn');
-        if (approveBtn) approveBtn.click();
+        const existingPanel = document.querySelector('.expanded-panel-row');
+        if (!existingPanel || existingPanel.previousElementSibling?.getAttribute('data-audio-id') !== expandedRow) {
+          // No panel open for this row — expand it
+          onRowExpand(expandedRow);
+        } else {
+          // Panel is already open — try to approve
+          const approveBtn = document.querySelector('.expanded-panel .review-approve-btn');
+          if (approveBtn) approveBtn.click();
+        }
       }
     } else if (e.key === 's' && !e.ctrlKey && !e.metaKey) {
       // Skip current expanded row

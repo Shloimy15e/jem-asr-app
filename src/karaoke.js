@@ -32,11 +32,20 @@ export function renderKaraokePlayer(audioId, state) {
   const modal = document.createElement('div');
   modal.className = 'modal karaoke-modal';
 
+  // Shared close handler — removes overlay and cleans up the Escape listener
+  const onKey = (e) => {
+    if (e.key === 'Escape') closeModal();
+  };
+  function closeModal() {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  }
+
   // Close button
   const closeBtn = document.createElement('button');
   closeBtn.className = 'modal-close';
   closeBtn.textContent = '\u00D7';
-  closeBtn.addEventListener('click', () => overlay.remove());
+  closeBtn.addEventListener('click', () => closeModal());
 
   // Title
   const title = document.createElement('h3');
@@ -144,22 +153,18 @@ export function renderKaraokePlayer(audioId, state) {
   overlay.appendChild(modal);
 
   // Escape to close
-  const onKey = (e) => {
-    if (e.key === 'Escape') {
-      overlay.remove();
-      document.removeEventListener('keydown', onKey);
-    }
-  };
   document.addEventListener('keydown', onKey);
 
   // Click backdrop to close
   overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) overlay.remove();
+    if (e.target === overlay) closeModal();
   });
 
   document.body.appendChild(overlay);
 }
 
+// Note: duplicates similar logic in utils.js exportCSV. Kept here because
+// karaoke.js needs a generic download helper and consolidation is deferred.
 export function downloadFile(content, filename, mimeType) {
   const blob = new Blob([content], { type: mimeType || 'text/plain' });
   const url = URL.createObjectURL(blob);

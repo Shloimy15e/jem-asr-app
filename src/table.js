@@ -64,12 +64,12 @@ const COLUMNS = [
   { key: 'year',          label: 'Year',              sortable: true,  showWhen: () => true },
   { key: 'type',          label: 'Type',              sortable: true,  showWhen: () => true },
   { key: 'estMinutes',    label: 'Duration',          sortable: true,  showWhen: () => true },
-  { key: 'firstLine',     label: 'First 15 Words',    sortable: false, showWhen: (f) => !['unmapped'].includes(f) },
-  { key: 'transcript',    label: 'Transcript Name',   sortable: true,  showWhen: (f) => !['unmapped'].includes(f) },
-  { key: 'matchConf',     label: 'Match Confidence',  sortable: true,  showWhen: (f) => !['unmapped'].includes(f) },
-  { key: 'cleanRate',     label: 'Clean Rate',        sortable: true,  showWhen: (f) => !['unmapped', 'mapped'].includes(f) },
-  { key: 'avgConf',       label: 'Avg. Confidence',   sortable: true,  showWhen: (f) => !['unmapped', 'mapped', 'cleaned'].includes(f) },
-  { key: 'lowConfWords',  label: 'Low Conf. Words',   sortable: true,  showWhen: (f) => !['unmapped', 'mapped', 'cleaned'].includes(f) },
+  { key: 'firstLine',     label: 'First 15 Words',    sortable: false, showWhen: (f) => !filterMatchesStatus(f, ['unmapped']) },
+  { key: 'transcript',    label: 'Transcript Name',   sortable: true,  showWhen: (f) => !filterMatchesStatus(f, ['unmapped']) },
+  { key: 'matchConf',     label: 'Match Confidence',  sortable: true,  showWhen: (f) => !filterMatchesStatus(f, ['unmapped']) },
+  { key: 'cleanRate',     label: 'Clean Rate',        sortable: true,  showWhen: (f) => !filterMatchesStatus(f, ['unmapped', 'mapped']) },
+  { key: 'avgConf',       label: 'Avg. Confidence',   sortable: true,  showWhen: (f) => !filterMatchesStatus(f, ['unmapped', 'mapped', 'cleaned']) },
+  { key: 'lowConfWords',  label: 'Low Conf. Words',   sortable: true,  showWhen: (f) => !filterMatchesStatus(f, ['unmapped', 'mapped', 'cleaned']) },
   { key: 'comments',      label: 'Comments',          sortable: false, showWhen: () => true },
   { key: 'status',        label: 'Status',            sortable: true,  showWhen: () => true },
   { key: 'actions',       label: 'Actions',           sortable: false, showWhen: () => true },
@@ -77,6 +77,16 @@ const COLUMNS = [
 
 // Filter keys from HTML data-filter attributes are passed directly to state.js
 // since getFilteredRows now accepts both 'fifty-*' and '50hr-*' variants.
+
+function filterMatchesStatus(filter, statuses) {
+  // Check direct match
+  if (statuses.includes(filter)) return true;
+  // Check compound keys like 'fifty-unmapped' or '50hr-mapped'
+  const parts = filter.split('-');
+  const status = parts[parts.length - 1];
+  if ((parts[0] === 'fifty' || parts[0] === '50hr') && statuses.includes(status)) return true;
+  return false;
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -206,7 +216,6 @@ function getStatusClass(status) {
     mapped: 'status-mapped',
     cleaned: 'status-cleaned',
     aligned: 'status-aligned',
-    reviewed: 'status-reviewed',
     approved: 'status-approved',
     rejected: 'status-rejected',
   };
@@ -234,7 +243,11 @@ function openRemapModal(audioId) {
   const closeBtn = document.createElement('button');
   closeBtn.className = 'btn btn-close';
   closeBtn.textContent = '\u00D7';
-  closeBtn.addEventListener('click', () => overlay.remove());
+  function closeRemapModal() {
+    document.removeEventListener('keydown', escHandler);
+    overlay.remove();
+  }
+  closeBtn.addEventListener('click', closeRemapModal);
   header.appendChild(title);
   header.appendChild(closeBtn);
   modal.appendChild(header);
@@ -281,7 +294,7 @@ function openRemapModal(audioId) {
       selectBtn.style.flexShrink = '0';
       selectBtn.addEventListener('click', () => {
         linkMatch(audioId, s.transcriptId, s.score, s.matchReason);
-        overlay.remove();
+        closeRemapModal();
         updateTable();
       });
 
@@ -333,7 +346,7 @@ function openRemapModal(audioId) {
       selectBtn.style.flexShrink = '0';
       selectBtn.addEventListener('click', () => {
         linkMatch(audioId, t.id, 1.0, 'manual');
-        overlay.remove();
+        closeRemapModal();
         updateTable();
       });
       row.appendChild(name);
@@ -347,10 +360,11 @@ function openRemapModal(audioId) {
   modal.appendChild(results);
   overlay.appendChild(modal);
 
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-  document.addEventListener('keydown', function handler(e) {
-    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', handler); }
-  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeRemapModal(); });
+  function escHandler(e) {
+    if (e.key === 'Escape') closeRemapModal();
+  }
+  document.addEventListener('keydown', escHandler);
 
   document.body.appendChild(overlay);
   renderResults();
@@ -839,6 +853,9 @@ function updateTable() {
 
   // Apply sort
   rows = sortRows(rows);
+
+  // Stop any playing inline audio before clearing
+  stopInlinePlayer();
 
   // Clear container
   _container.innerHTML = '';

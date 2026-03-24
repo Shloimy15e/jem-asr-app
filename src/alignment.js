@@ -132,16 +132,31 @@ export async function alignRow(audioId, state, textOverride = null) {
       : { mode: 'align', audio_base64: audioResult.base64, audio_format: audioResult.format, text: alignText, language: 'yi' }
   );
 
-  // Retry logic for cold start 502/504 timeouts
+  // Retry logic for cold start 502/504 timeouts and network errors
   const MAX_RETRIES = 3;
   const RETRY_DELAY_MS = 10000;
+  const FETCH_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
   let response;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    response = await fetch(ALIGN_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: requestBody,
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      response = await fetch(ALIGN_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBody,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(timeoutId);
+      console.warn(`[Align] Network error on attempt ${attempt}/${MAX_RETRIES}: ${err.message}`);
+      if (attempt < MAX_RETRIES) {
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+        continue;
+      }
+      throw new Error(`Alignment network error after ${MAX_RETRIES} attempts: ${err.message}`);
+    }
+    clearTimeout(timeoutId);
     if (response.status === 502 || response.status === 504) {
       console.warn(`[Align] Got ${response.status} on attempt ${attempt}/${MAX_RETRIES} — retrying in ${RETRY_DELAY_MS / 1000}s...`);
       if (attempt < MAX_RETRIES) {
@@ -158,9 +173,6 @@ export async function alignRow(audioId, state, textOverride = null) {
   }
 
   const data = await response.json();
-  console.log('[Align] raw response keys:', Object.keys(data));
-  if (data.timestamps?.[0]) console.log('[Align] sample timestamp:', JSON.stringify(data.timestamps[0]));
-  if (data.segments?.[0]?.words?.[0]) console.log('[Align] sample segment word:', JSON.stringify(data.segments[0].words[0]));
 
   let rawWords = data.timestamps || [];
   if (rawWords.length === 0 && data.segments) {

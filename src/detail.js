@@ -1,13 +1,43 @@
-import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, exportState, importState, mergeSupabaseData } from './state.js';
+import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData } from './state.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
 import { alignRow } from './alignment.js';
-import { renderReviewPanel } from './review.js';
-import { renderKaraokePlayer } from './karaoke.js';
 import { formatConfidence } from './utils.js';
 import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration } from './db.js';
 
-const R2_BASE = 'https://audio.kohnai.ai';
+// Loads full transcript text using R2 first, then Supabase fallback.
+// Caches on the transcript object for the session.
+async function loadFullText(transcript) {
+  if (transcript.text) return transcript.text;
+  let text = null;
+  if (transcript.r2TranscriptLink) {
+    const res = await fetch(transcript.r2TranscriptLink).catch(() => null);
+    if (res?.ok) text = await res.text().catch(() => null);
+  }
+  if (!text && transcript.id) {
+    text = await loadTranscriptText(transcript.id);
+  }
+  if (text) transcript.text = text;
+  return text;
+}
+
+// Renders a speed-control bar for an audio player element.
+function renderSpeedBar(playerEl, speeds) {
+  const speedBar = document.createElement('div');
+  speedBar.className = 'word-view-speed-bar';
+  speeds.forEach(speed => {
+    const btn = document.createElement('button');
+    btn.className = 'speed-btn' + (speed === 1 ? ' active' : '');
+    btn.textContent = speed + 'x';
+    btn.addEventListener('click', () => {
+      playerEl.playbackRate = speed;
+      speedBar.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+    speedBar.appendChild(btn);
+  });
+  return speedBar;
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
   const params = new URLSearchParams(window.location.search);
@@ -81,7 +111,10 @@ function renderTranscriptPage(transcriptId, transcript, state, container) {
   title.textContent = transcript.name;
   title.addEventListener('blur', () => {
     const newName = title.textContent.trim();
-    if (newName && newName !== transcript.name) transcript.name = newName;
+    if (newName && newName !== transcript.name) {
+      transcript.name = newName;
+      // Note: transcript rename is display-only for this session; no Supabase sync exists for transcript names yet
+    }
   });
   title.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); title.blur(); }
@@ -133,13 +166,10 @@ function renderTranscriptPage(transcriptId, transcript, state, container) {
     textarea.value = transcript.firstLine;
   }
 
-  // Load full text from R2
-  if (transcript.r2TranscriptLink && !transcript.text) {
-    fetch(transcript.r2TranscriptLink).then(r => r.ok ? r.text() : null).then(text => {
-      if (text) {
-        transcript.text = text;
-        textarea.value = text;
-      }
+  // Load full text from R2 / Supabase
+  if (!transcript.text) {
+    loadFullText(transcript).then(text => {
+      if (text) textarea.value = text;
     }).catch(() => {});
   }
 
@@ -177,7 +207,7 @@ function renderDetailPage(audioId, audio, state, container) {
     const newName = title.textContent.trim();
     if (newName && newName !== audio.name) {
       audio.name = newName;
-      updateState('renamedFiles', audioId, newName);
+      updateState('audioNames', audioId, newName);
     }
   });
   title.addEventListener('keydown', (e) => {
@@ -226,20 +256,7 @@ function renderDetailPage(audioId, audio, state, container) {
     playerSection.content.appendChild(playerEl);
 
     // Speed Controls
-    const speedBar = document.createElement('div');
-    speedBar.className = 'word-view-speed-bar';
-    [1, 1.25, 1.5, 2].forEach(speed => {
-      const btn = document.createElement('button');
-      btn.className = 'speed-btn' + (speed === 1 ? ' active' : '');
-      btn.textContent = speed + 'x';
-      btn.addEventListener('click', () => {
-        playerEl.playbackRate = speed;
-        speedBar.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-      });
-      speedBar.appendChild(btn);
-    });
-    playerSection.content.appendChild(speedBar);
+    playerSection.content.appendChild(renderSpeedBar(playerEl, [1, 1.25, 1.5, 2]));
 
     // Trim Controls
     renderTrimControls(audioId, playerEl, playerSection.content);
@@ -350,42 +367,20 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
             textarea.value = transcript.text;
           } else if (transcript?.firstLine) {
             textarea.value = transcript.firstLine;
-            const loadFullText = async () => {
-              let text = null;
-              if (transcript.r2TranscriptLink) {
-                const res = await fetch(transcript.r2TranscriptLink).catch(() => null);
-                if (res?.ok) text = await res.text().catch(() => null);
-              }
-              if (!text && transcript.id) {
-                text = await loadTranscriptText(transcript.id);
-              }
-              if (text) {
-                transcript.text = text; // cache on transcript object, not version
-                textarea.value = text;
-              }
-            };
-            loadFullText().catch(() => {});
+            loadFullText(transcript).then(text => {
+              if (text) textarea.value = text;
+            }).catch(() => {});
           }
         } else if (version.text) {
           textarea.value = version.text;
         } else if (transcript?.firstLine) {
           textarea.value = transcript.firstLine;
-          // Try R2 first, fall back to Supabase
-          const loadFullText = async () => {
-            let text = null;
-            if (transcript.r2TranscriptLink) {
-              const res = await fetch(transcript.r2TranscriptLink).catch(() => null);
-              if (res?.ok) text = await res.text().catch(() => null);
-            }
-            if (!text && transcript.id) {
-              text = await loadTranscriptText(transcript.id);
-            }
+          loadFullText(transcript).then(text => {
             if (text && !version.text) {
               version.text = text;
               textarea.value = text;
             }
-          };
-          loadFullText().catch(() => {});
+          }).catch(() => {});
         }
 
         // Save on change (debounced) — not available for manual versions
@@ -443,14 +438,11 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
             startEditBtn.textContent = 'Loading...';
             // Ensure full text is loaded before copying
             let text = textarea.value;
-            if (!version.text && transcript) {
-              let full = null;
-              if (transcript.r2TranscriptLink) {
-                const res = await fetch(transcript.r2TranscriptLink).catch(() => null);
-                if (res?.ok) full = await res.text().catch(() => null);
-              }
-              if (!full && transcript.id) full = await loadTranscriptText(transcript.id);
-              if (full) { version.text = full; text = full; }
+            if (!transcript?.text && transcript) {
+              const full = await loadFullText(transcript);
+              if (full) { text = full; }
+            } else if (transcript?.text) {
+              text = transcript.text;
             }
             addVersion(audioId, {
               type: 'edited',
@@ -513,9 +505,9 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       textarea.dir = 'rtl';
       textarea.rows = 12;
       textarea.value = transcript.text || transcript.firstLine || '';
-      if (transcript.r2TranscriptLink && !transcript.text) {
-        fetch(transcript.r2TranscriptLink).then(r => r.ok ? r.text() : null).then(text => {
-          if (text) { transcript.text = text; textarea.value = text; }
+      if (!transcript.text) {
+        loadFullText(transcript).then(text => {
+          if (text) textarea.value = text;
         }).catch(() => {});
       }
       container.appendChild(textarea);
@@ -534,9 +526,9 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
         const s = getState();
         // Reset versions for this audio
         s.transcriptVersions[audioId] = [];
-        if (s.cleaning[audioId]) delete s.cleaning[audioId];
-        if (s.alignments[audioId]) delete s.alignments[audioId];
-        if (s.reviews[audioId]) delete s.reviews[audioId];
+        if (s.cleaning[audioId]) updateState('cleaning', audioId, null);
+        if (s.alignments[audioId]) updateState('alignments', audioId, null);
+        if (s.reviews[audioId]) updateState('reviews', audioId, null);
         const audio = s.audio.find(a => a.id === audioId);
         renderDetailPage(audioId, audio, s, pageContainer);
       });
@@ -550,9 +542,9 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       unlinkMatch(audioId);
       const s = getState();
       s.transcriptVersions[audioId] = [];
-      if (s.cleaning[audioId]) delete s.cleaning[audioId];
-      if (s.alignments[audioId]) delete s.alignments[audioId];
-      if (s.reviews[audioId]) delete s.reviews[audioId];
+      if (s.cleaning[audioId]) updateState('cleaning', audioId, null);
+      if (s.alignments[audioId]) updateState('alignments', audioId, null);
+      if (s.reviews[audioId]) updateState('reviews', audioId, null);
       const audio = s.audio.find(a => a.id === audioId);
       renderDetailPage(audioId, audio, s, pageContainer);
     });
@@ -563,7 +555,7 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
     // Unmapped: show suggestions + search
     const suggestionsDiv = document.createElement('div');
     suggestionsDiv.className = 'suggestions-container';
-    renderSuggestedMatches(audioId, suggestionsDiv, state, (aId, tId) => {
+    renderSuggestedMatches(suggestionsDiv, audioId, state, (aId, tId) => {
       linkMatch(aId, tId, 0.8, 'user selected');
       const s = getState();
       const audio = s.audio.find(a => a.id === audioId);
@@ -600,13 +592,13 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       const s = getState();
       // Create a synthetic mapping so the pipeline can proceed
       if (!s.mappings[audioId]) {
-        s.mappings[audioId] = {
+        updateState('mappings', audioId, {
           transcriptId: null,
           confidence: 1.0,
           matchReason: 'created-from-scratch',
           confirmedBy: 'user',
           confirmedAt: new Date().toISOString(),
-        };
+        });
       }
       const audio = s.audio.find(a => a.id === audioId);
       renderDetailPage(audioId, audio, s, pageContainer);
@@ -647,7 +639,7 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
   const closeBtn = document.createElement('button');
   closeBtn.className = 'btn btn-close';
   closeBtn.textContent = '\u00D7';
-  closeBtn.addEventListener('click', () => overlay.remove());
+  // closeBtn click is bound later via closeModal()
   header.appendChild(title);
   header.appendChild(closeBtn);
   modal.appendChild(header);
@@ -804,7 +796,7 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
   const cancelBtn = document.createElement('button');
   cancelBtn.className = 'action-btn';
   cancelBtn.textContent = 'Cancel';
-  cancelBtn.addEventListener('click', () => overlay.remove());
+  // cancelBtn click is bound later via closeModal()
   applyBar.appendChild(cancelBtn);
 
   const applyBtn = document.createElement('button');
@@ -819,7 +811,7 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
       cleanRate: calculateCleanRate(rawOriginal, finalText),
       cleanedAt: new Date().toISOString(),
     });
-    overlay.remove();
+    closeModal();
     const s = getState();
     renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
   });
@@ -827,10 +819,18 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
   modal.appendChild(applyBar);
 
   overlay.appendChild(modal);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-  document.addEventListener('keydown', function escHandler(e) {
-    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); }
-  });
+  function closeModal() {
+    overlay.remove();
+    document.removeEventListener('keydown', escHandler);
+  }
+  function escHandler(e) {
+    if (e.key === 'Escape') closeModal();
+  }
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+  // Re-bind close button and cancel button to use unified closeModal
+  closeBtn.addEventListener('click', closeModal);
+  cancelBtn.addEventListener('click', closeModal);
+  document.addEventListener('keydown', escHandler);
   document.body.appendChild(overlay);
 }
 
@@ -856,14 +856,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     if (!m) return '';
     const t = getState().transcripts.find(tr => tr.id === m.transcriptId);
     if (!t) return '';
-    if (t.text) return t.text;
-    let text = null;
-    if (t.r2TranscriptLink) {
-      const res = await fetch(t.r2TranscriptLink).catch(() => null);
-      if (res?.ok) text = await res.text().catch(() => null);
-    }
-    if (!text && t.id) text = await loadTranscriptText(t.id);
-    if (text) t.text = text; // cache on transcript object for this session
+    const text = await loadFullText(t);
     return text || t.firstLine || '';
   }
   async function getOriginalText() {
@@ -935,7 +928,8 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       const textForAlignment = await getCurrentText();
       await alignRow(audioId, getState(), textForAlignment);
     } catch (err) {
-      alignBtn.textContent = 'Error: ' + err.message;
+      alignBtn.textContent = 'Alignment failed — click to retry';
+      alignBtn.disabled = false;
       return;
     }
     const s = getState();
@@ -983,20 +977,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
   // Speed controls if we have audio + alignment
   if (playerEl && words.length > 0) {
-    const speedBar = document.createElement('div');
-    speedBar.className = 'word-view-speed-bar';
-    [0.5, 1, 1.25, 1.5, 2].forEach(speed => {
-      const btn = document.createElement('button');
-      btn.className = 'speed-btn' + (speed === 1 ? ' active' : '');
-      btn.textContent = speed + 'x';
-      btn.addEventListener('click', () => {
-        playerEl.playbackRate = speed;
-        speedBar.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-      });
-      speedBar.appendChild(btn);
-    });
-    viewer.appendChild(speedBar);
+    viewer.appendChild(renderSpeedBar(playerEl, [0.5, 1, 1.25, 1.5, 2]));
   }
 
   // Word grid
@@ -1018,22 +999,13 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
   if (hasWordText) {
     // We have alignment — show word chips with confidence + diff
-    const removedWords = new Set();
-    if (cleaning && origText !== cleanText) {
-      // Find words that were in original but not in cleaned
-      const origTokens = origText.split(/\s+/).filter(Boolean);
-      const cleanTokens = new Set(cleanText.split(/\s+/).filter(Boolean));
-      origTokens.forEach(w => { if (!cleanTokens.has(w)) removedWords.add(w); });
-    }
-
-    if (words.length > 0) console.log('[WordView] sample words:', words.slice(0, 5));
     words.forEach((w, idx) => {
       const span = document.createElement('span');
       const conf = typeof w.confidence === 'number' ? w.confidence : 1;
       const level = conf >= 0.8 ? 'high' : conf >= 0.4 ? 'mid' : 'low';
       span.className = `word-chip confidence-${level}`;
       const wordText = w.word || w.text || '';
-      span.title = `"${wordText}" ${(conf * 100).toFixed(0)}% | ${w.start.toFixed(2)}s–${w.end.toFixed(2)}s`;
+      span.title = `"${wordText}" ${(conf * 100).toFixed(0)}% | ${(w.start ?? 0).toFixed(2)}s–${(w.end ?? 0).toFixed(2)}s`;
       span.textContent = wordText;
       span.dataset.idx = idx;
 
@@ -1049,8 +1021,11 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       chipEls.push(span);
     });
 
-    // Timeupdate highlight
+    // Timeupdate highlight — remove any previous handler to prevent stacking
     if (playerEl) {
+      if (playerEl._wordViewTimeUpdate) {
+        playerEl.removeEventListener('timeupdate', playerEl._wordViewTimeUpdate);
+      }
       let prevActive = null;
       const onTimeUpdate = () => {
         const t = playerEl.currentTime;
@@ -1067,6 +1042,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
         }
         prevActive = activeIdx;
       };
+      playerEl._wordViewTimeUpdate = onTimeUpdate;
       playerEl.addEventListener('timeupdate', onTimeUpdate);
     }
 
@@ -1660,198 +1636,3 @@ function wordDiffTokens(origLine, cleanLine) {
   return result;
 }
 
-function renderCleaningDiffViewer(audioId, cleaning, container, pageContainer) {
-  const origLines = (cleaning.originalText || '').split('\n');
-  const cleanLines = (cleaning.cleanedText || '').split('\n');
-  const maxLen = Math.max(origLines.length, cleanLines.length);
-
-  const rows = [];
-  for (let i = 0; i < maxLen; i++) {
-    const orig = origLines[i] || '';
-    const clean = cleanLines[i] || '';
-    const changed = orig !== clean;
-    rows.push({ lineNum: i + 1, orig, clean, changed, accepted: true, editedClean: clean });
-  }
-
-  const changedCount = rows.filter(r => r.changed).length;
-  if (changedCount === 0) return;
-
-  const viewer = document.createElement('div');
-  viewer.className = 'diff-viewer';
-
-  // Header
-  const header = document.createElement('div');
-  header.className = 'diff-header';
-  header.innerHTML = '<strong>Cleaning Diff</strong> — ' +
-    '<span class="diff-legend-orig">Red strikethrough = removed</span> &nbsp; ' +
-    'Remaining text stays. Click cleaned text to edit inline.';
-  viewer.appendChild(header);
-
-  // Action bar
-  const actions = document.createElement('div');
-  actions.className = 'diff-actions';
-
-  const countLabel = document.createElement('span');
-  countLabel.className = 'text-secondary';
-  countLabel.textContent = changedCount + ' line' + (changedCount !== 1 ? 's' : '') + ' changed';
-  actions.appendChild(countLabel);
-
-  const acceptAllBtn = document.createElement('button');
-  acceptAllBtn.className = 'action-btn';
-  acceptAllBtn.textContent = 'Accept All';
-  acceptAllBtn.addEventListener('click', () => {
-    rows.forEach(r => { if (r.changed) r.accepted = true; });
-    viewer.querySelectorAll('.diff-row-checkbox').forEach(cb => { cb.checked = true; });
-  });
-  actions.appendChild(acceptAllBtn);
-
-  const rejectAllBtn = document.createElement('button');
-  rejectAllBtn.className = 'action-btn action-btn-danger';
-  rejectAllBtn.textContent = 'Reject All';
-  rejectAllBtn.addEventListener('click', () => {
-    rows.forEach(r => { if (r.changed) r.accepted = false; });
-    viewer.querySelectorAll('.diff-row-checkbox').forEach(cb => { cb.checked = false; });
-  });
-  actions.appendChild(rejectAllBtn);
-
-  const showOnlyChanged = document.createElement('label');
-  showOnlyChanged.className = 'diff-filter-label';
-  const showOnlyCb = document.createElement('input');
-  showOnlyCb.type = 'checkbox';
-  showOnlyChanged.appendChild(showOnlyCb);
-  showOnlyChanged.appendChild(document.createTextNode(' Changed only'));
-  actions.appendChild(showOnlyChanged);
-
-  viewer.appendChild(actions);
-
-  // Rows
-  const rowsContainer = document.createElement('div');
-  rowsContainer.className = 'diff-rows-container';
-
-  const rowEls = [];
-  rows.forEach((row) => {
-    const rowEl = document.createElement('div');
-    rowEl.className = 'diff-row' + (row.changed ? ' diff-row-changed' : '');
-
-    const lineNum = document.createElement('span');
-    lineNum.className = 'diff-row-linenum';
-    lineNum.textContent = row.lineNum;
-    rowEl.appendChild(lineNum);
-
-    if (row.changed) {
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.className = 'diff-row-checkbox';
-      cb.checked = row.accepted;
-      cb.title = 'Accept this change';
-      cb.addEventListener('change', () => {
-        row.accepted = cb.checked;
-        rowEl.classList.toggle('diff-row-rejected', !cb.checked);
-      });
-      rowEl.appendChild(cb);
-
-      // Word-level diff display: show original with removed words struck through
-      const diffContent = document.createElement('div');
-      diffContent.className = 'diff-word-content';
-      diffContent.dir = 'rtl';
-
-      const tokens = wordDiffTokens(row.orig, row.clean);
-      tokens.forEach(tok => {
-        if (tok.isSpace) {
-          diffContent.appendChild(document.createTextNode(tok.text));
-          return;
-        }
-        const span = document.createElement('span');
-        span.textContent = tok.text;
-        if (tok.removed) span.className = 'diff-word-removed';
-        else if (tok.added) span.className = 'diff-word-added';
-        diffContent.appendChild(span);
-      });
-
-      // If entire line was removed
-      if (!row.clean.trim() && row.orig.trim()) {
-        diffContent.innerHTML = '';
-        const allRemoved = document.createElement('span');
-        allRemoved.className = 'diff-word-removed';
-        allRemoved.textContent = row.orig;
-        diffContent.appendChild(allRemoved);
-      }
-
-      rowEl.appendChild(diffContent);
-
-      // Editable cleaned text below
-      if (row.clean.trim()) {
-        const editRow = document.createElement('div');
-        editRow.className = 'diff-edit-row';
-        editRow.dir = 'rtl';
-        editRow.contentEditable = 'true';
-        editRow.textContent = row.clean;
-        editRow.title = 'Edit cleaned text';
-        editRow.addEventListener('blur', () => {
-          row.editedClean = editRow.textContent;
-        });
-        rowEl.appendChild(editRow);
-      }
-    } else {
-      const spacer = document.createElement('span');
-      spacer.className = 'diff-row-checkbox-spacer';
-      rowEl.appendChild(spacer);
-
-      const unchanged = document.createElement('span');
-      unchanged.className = 'diff-unchanged';
-      unchanged.dir = 'rtl';
-      unchanged.textContent = row.orig;
-      rowEl.appendChild(unchanged);
-    }
-
-    rowsContainer.appendChild(rowEl);
-    rowEls.push({ el: rowEl, changed: row.changed });
-  });
-
-  showOnlyCb.addEventListener('change', () => {
-    rowEls.forEach(r => {
-      if (!r.changed) r.el.style.display = showOnlyCb.checked ? 'none' : '';
-    });
-  });
-
-  viewer.appendChild(rowsContainer);
-
-  // Bottom bar
-  const applyBar = document.createElement('div');
-  applyBar.className = 'diff-apply-bar';
-
-  const cancelBtn = document.createElement('button');
-  cancelBtn.className = 'action-btn';
-  cancelBtn.textContent = 'Cancel';
-  cancelBtn.addEventListener('click', () => { viewer.remove(); });
-  applyBar.appendChild(cancelBtn);
-
-  const applyInfo = document.createElement('span');
-  applyInfo.className = 'text-secondary';
-  applyInfo.style.fontSize = '0.82rem';
-  applyInfo.textContent = 'Creates a new "Edited" version in Transcript Mapping tabs';
-  applyBar.appendChild(applyInfo);
-
-  const applyBtn = document.createElement('button');
-  applyBtn.className = 'btn btn-secondary';
-  applyBtn.textContent = 'Save as Edited Version';
-  applyBtn.addEventListener('click', () => {
-    const finalLines = rows.map(r => {
-      if (!r.changed) return r.orig;
-      return r.accepted ? r.editedClean : r.orig;
-    });
-    const finalText = finalLines.join('\n');
-    addVersion(audioId, {
-      type: 'edited',
-      text: finalText,
-      createdBy: 'user-diff-review',
-    });
-    const s = getState();
-    const audio = s.audio.find(a => a.id === audioId);
-    renderDetailPage(audioId, audio, s, pageContainer);
-  });
-  applyBar.appendChild(applyBtn);
-  viewer.appendChild(applyBar);
-
-  container.appendChild(viewer);
-}

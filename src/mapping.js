@@ -141,16 +141,12 @@ export function unlinkMatch(audioId) {
   const state = getState();
   if (!state) return;
   if (state.mappings && state.mappings[audioId]) {
-    const mappings = { ...state.mappings };
-    delete mappings[audioId];
-    updateState('mappings', null, mappings);
+    delete state.mappings[audioId];
     // Remove from Supabase so the deletion persists across sessions
     deleteMapping(audioId).catch(console.warn);
   }
   if (state.transcriptVersions && state.transcriptVersions[audioId]) {
-    const versions = { ...state.transcriptVersions };
-    delete versions[audioId];
-    updateState('transcriptVersions', null, versions);
+    delete state.transcriptVersions[audioId];
   }
 }
 
@@ -167,10 +163,19 @@ export function renderSearchModal(container, state, onSelect) {
   headerTitle.textContent = 'Search Transcripts';
   header.appendChild(headerTitle);
 
+  // Shared close handler — removes overlay and cleans up the Escape listener
+  const onKey = (e) => {
+    if (e.key === 'Escape') closeModal();
+  };
+  function closeModal() {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  }
+
   const closeBtn = document.createElement('button');
   closeBtn.className = 'btn btn-close';
   closeBtn.textContent = '\u00D7';
-  closeBtn.addEventListener('click', () => overlay.remove());
+  closeBtn.addEventListener('click', () => closeModal());
   header.appendChild(closeBtn);
 
   const filters = document.createElement('div');
@@ -256,7 +261,8 @@ export function renderSearchModal(container, state, onSelect) {
           expanded.textContent = t.text;
         } else if (t.r2TranscriptLink) {
           try {
-            const resp = await fetch(t.r2TranscriptLink);
+            const filename = t.r2TranscriptLink.split('/').pop();
+            const resp = await fetch('/api/transcript?name=' + encodeURIComponent(filename));
             if (resp.ok) {
               t.text = await resp.text();
               expanded.textContent = t.text;
@@ -278,7 +284,7 @@ export function renderSearchModal(container, state, onSelect) {
       selectBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         onSelect(t.id);
-        overlay.remove();
+        closeModal();
       });
 
       row.appendChild(name);
@@ -301,15 +307,10 @@ export function renderSearchModal(container, state, onSelect) {
   overlay.appendChild(modal);
 
   overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) overlay.remove();
+    if (e.target === overlay) closeModal();
   });
 
-  document.addEventListener('keydown', function handler(e) {
-    if (e.key === 'Escape') {
-      overlay.remove();
-      document.removeEventListener('keydown', handler);
-    }
-  });
+  document.addEventListener('keydown', onKey);
 
   container.appendChild(overlay);
   renderResults();

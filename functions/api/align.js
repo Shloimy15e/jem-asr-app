@@ -32,6 +32,23 @@ export async function onRequestPost(context) {
     // This keeps the browser→CF request tiny (just a URL string) while still
     // sending audio_base64 to RunPod in the format it already understands.
     if (payload.audio_url) {
+      // Validate hostname to prevent SSRF — only allow our R2 bucket
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(payload.audio_url);
+      } catch {
+        return new Response(
+          JSON.stringify({ error: 'Invalid audio_url' }),
+          { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
+        );
+      }
+      if (parsedUrl.hostname !== 'audio.kohnai.ai') {
+        return new Response(
+          JSON.stringify({ error: 'audio_url must point to audio.kohnai.ai' }),
+          { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
+        );
+      }
+
       const audioResp = await fetch(payload.audio_url);
       if (!audioResp.ok) {
         return new Response(

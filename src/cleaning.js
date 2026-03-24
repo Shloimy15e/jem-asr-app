@@ -18,6 +18,39 @@ export function cleanSectionMarkers(text) {
   return t;
 }
 
+export function cleanSurroundingQuotes(text) {
+  // Remove surrounding quotation marks (Hebrew/English: "", «», ״״, "", '')
+  let t = text;
+  t = t.replace(/^[""\u201C\u201D\u00AB\u00BB\u05F4\u2018\u2019']+/gm, '');
+  t = t.replace(/[""\u201C\u201D\u00AB\u00BB\u05F4\u2018\u2019']+$/gm, '');
+  return t;
+}
+
+export function cleanHyphens(text) {
+  // Normalize em-dashes, en-dashes, multiple hyphens to a single space
+  let t = text;
+  t = t.replace(/[\u2014\u2013]/g, ' ');   // em-dash, en-dash → space
+  t = t.replace(/-{2,}/g, ' ');            // multiple hyphens → space
+  t = t.replace(/\s*-\s*-\s*/g, ' ');      // spaced double hyphens
+  return t;
+}
+
+export function cleanQuestionMarks(text) {
+  // Collapse multiple question marks and remove isolated/misplaced ones
+  let t = text;
+  t = t.replace(/\?{2,}/g, '?');           // ??? → ?
+  t = t.replace(/^\s*\?\s*$/gm, '');       // lines that are just a ?
+  return t;
+}
+
+export function cleanEllipsis(text) {
+  // Remove ellipsis patterns (multiple dots, Unicode ellipsis character)
+  let t = text;
+  t = t.replace(/\u2026/g, '');            // Unicode ellipsis …
+  t = t.replace(/\.{2,}/g, '');            // two or more dots
+  return t;
+}
+
 export function cleanSymbols(text) {
   // Remove punctuation/symbols that aren't part of Hebrew words
   let t = text;
@@ -49,10 +82,6 @@ export function cleanText(rawText) {
   return text;
 }
 
-export function cleanRate(rawText, cleanedText) {
-  return calculateCleanRate(rawText, cleanedText);
-}
-
 export function calculateCleanRate(rawText, cleanedText) {
   if (!rawText) return 100;
   const rawWords = rawText.split(/\s+/).filter(Boolean);
@@ -61,6 +90,8 @@ export function calculateCleanRate(rawText, cleanedText) {
   return Math.round((cleanedWords.length / rawWords.length) * 100);
 }
 
+// TODO: This duplicates transcript-fetching logic found in detail.js and db.js.
+// Should eventually be replaced with a shared helper (e.g., loadTranscriptText in db.js).
 async function fetchTranscriptText(transcript) {
   if (transcript.text) return transcript.text;
   if (!transcript.r2TranscriptLink) return transcript.firstLine || '';

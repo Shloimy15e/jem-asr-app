@@ -116,10 +116,14 @@ Matching score (0–1.0):
 - firstLine contains matching content type keyword → +0.05
 
 ### 2. Cleaning — *"Strip the editor's notes, keep only the spoken words"*
-Transcripts were prepared by human editors who added notes, section headers, and markers. Five regex passes remove all of that:
+Transcripts were prepared by human editors who added notes, section headers, and markers. Nine cleaning passes remove all of that:
 - `[brackets]` → removed
 - `(parenthetical notes)` → removed
 - Section markers like `סעיף א׳` and `* * *` → removed
+- Surrounding quotation marks (Hebrew/English/French) → stripped
+- Hyphens/dashes (em-dash, en-dash, multiples) → normalized
+- Question mark artifacts (multiple ???) → collapsed
+- Ellipsis patterns (... and …) → removed
 - Zero-width characters, smart quotes → normalized
 - Extra whitespace and blank lines → collapsed
 
@@ -253,7 +257,7 @@ These files have verified-perfect transcripts and are used only for measuring mo
 2925--5742-Kislev 19 Sicha 1.mp3
 ```
 
-The app enforces: no "Approve" button on these rows, never included in training exports, always shown with a purple "Benchmark" badge. `is_benchmark=true` and `is_selected_50hr=false` in Supabase.
+The app enforces: no "Approve" button on these rows (both UI and `approveAll()` skip them), never included in training exports, always shown with a purple "Benchmark" badge. `is_benchmark=true` and `is_selected_50hr=false` in Supabase.
 
 ---
 
@@ -261,8 +265,8 @@ The app enforces: no "Approve" button on these rows, never included in training 
 
 | Key | What it does |
 |-----|-------------|
-| `↑` / `↓` | Move between rows |
-| `Enter` | Approve the current row |
+| `↑` / `↓` | Highlight/select rows (does NOT open or navigate) |
+| `Enter` | Expand/navigate the highlighted row (or approve if review panel is open) |
 | `S` | Skip (decide later) |
 | `R` | Reject (needs re-cleaning) |
 | `E` | Toggle word edit mode |
@@ -301,7 +305,7 @@ The app enforces: no "Approve" button on these rows, never included in training 
 - `transcripts` fetched without `text` column — full text loaded on demand in the detail page
 - `alignments` fetched without `words` column — word array loaded on demand in the detail page
 
-`loadAlignmentWords(audioId)` and `loadTranscriptText(transcriptId)` in `db.js` are the lazy loaders. `detail.js` calls these when opening a file. `cleaning.js` `batchClean()` calls `loadTranscriptText` as fallback when R2 fetch fails.
+`loadAlignmentWords(audioId)` and `loadTranscriptText(transcriptId)` in `db.js` are the lazy loaders. `detail.js` calls these when opening a file. `detail.js` also has a shared `loadFullText(transcript)` helper that tries R2 first, then falls back to `loadTranscriptText` from `db.js`. `cleaning.js` `batchClean()` has its own `fetchTranscriptText()` that fetches R2 directly.
 
 **Do not add `text` or `words` back to the startup queries** — it would fetch megabytes for 4,669 files on every page load.
 
@@ -328,7 +332,9 @@ Renamed via migration `20260323000000_rename_est_minutes.sql`. All app code uses
 Added via migration `20260323000001_add_audio_comments.sql`. Editable inline in the table; syncs to Supabase on blur via `updateState('audioComments', id, value)` → `syncAudioComment()`.
 
 ### Audio name edits sync to Supabase
-Editing a name in the table calls `updateState('audioNames', id, newName)` → `syncStateKey` → `UPDATE audio_files SET name = ? WHERE id = ?`. The `name_history` trigger on `audio_files` automatically records the old name. `state.audio[n].name` is also updated in memory so filters/search reflect the change immediately.
+Editing a name in the table or detail page calls `updateState('audioNames', id, newName)` → `syncStateKey` → `syncAudioField(audioId, 'name', value)` → `UPDATE audio_files SET name = ? WHERE id = ?`. The `name_history` trigger on `audio_files` automatically records the old name. `state.audio[n].name` is also updated in memory so filters/search reflect the change immediately.
+
+**Important:** Always use state key `'audioNames'` (not `'renamedFiles'`). The detail page and table both use this key.
 
 ### Manual transcript tab is read-only
 In `detail.js`, versions with `type === 'manual'` render the textarea with `readOnly = true` — no save handlers are attached, and a 🔒 badge is shown. A **"Start Editing"** button appears below the read-only area; clicking it fetches the full text (R2 → Supabase fallback), creates an `edited` version via `addVersion()`, and re-renders the detail page with that version active. This means every mapped file can immediately start editing without running cleaning tools first.
@@ -345,18 +351,18 @@ In `detail.js`, versions with `type === 'manual'` render the textarea with `read
 `getCurrentText()` in `detail.js` is async — it fetches the full transcript text from R2 or Supabase if no cleaning data exists yet (startup optimization means `transcript.text` is null). Pass buttons show "Loading…" while fetching, then open the diff preview. Always `await getCurrentText()` before running a pass.
 
 ### wordDiffTokens emits both removed and added tokens
-`wordDiffTokens(origLine, cleanLine)` returns tokens of three kinds: `{ text, isSpace }` (unchanged), `{ text, removed: true }` (struck-through red), and `{ text, added: true }` (green replacement). When a word is removed, the function peeks at the next clean word — if it doesn't appear later in orig, it's treated as a replacement and emitted as `added`. CSS: `.diff-word-added { background: rgba(74,222,128,0.15); color: var(--green); }`. All three token-rendering sites in `detail.js` must handle `tok.added`.
+`wordDiffTokens(origLine, cleanLine)` returns tokens of three kinds: `{ text, isSpace }` (unchanged), `{ text, removed: true }` (struck-through red), and `{ text, added: true }` (green replacement). When a word is removed, the function peeks at the next clean word — if it doesn't appear later in orig, it's treated as a replacement and emitted as `added`. CSS classes in `style.css`: `.diff-word-added` (green background) and `.diff-row-rejected` (opacity 0.38 + strikethrough). All three token-rendering sites in `detail.js` must handle `tok.added`.
 
 ### Rejected diff rows have visual feedback
 `.diff-row-rejected` class sets `opacity: 0.38` and strikes through child text. Applied by checkbox `change` handler and the "Reject All" button. "Accept All" removes it from all rows.
 
 ### Audio playback speed controls
 Speed buttons appear in three places, all using the `.speed-btn` / `.word-view-speed-bar` CSS classes:
-- **Main audio player** (detail page) — rendered immediately below the `<audio>` element; speeds: 1x, 1.25x, 1.5x, 2x. Uses `.word-view-speed-bar` class.
-- **Word view** (`renderWordView()` in `detail.js`) — shown only when alignment words exist; speeds: 0.5x, 1x, 1.25x, 1.5x, 2x.
-- **Karaoke player** (`karaoke.js`) — speeds: 0.5x, 1x, 1.25x, 1.5x, 2x. Uses `.karaoke-speed-bar` class.
+- **Main audio player** (detail page) — speeds: 1x, 1.25x, 1.5x, 2x.
+- **Word view** (`renderWordView()` in `detail.js`) — speeds: 0.5x, 1x, 1.25x, 1.5x, 2x.
+- **Karaoke player** (`karaoke.js`) — speeds: 0.5x, 1x, 1.25x, 1.5x, 2x.
 
-All three set `audioElement.playbackRate` and toggle the `.active` class on the clicked button.
+The main player and word view use a shared `renderSpeedBar(playerEl, speeds)` helper in `detail.js`. All three set `audioElement.playbackRate` and toggle the `.active` class on the clicked button.
 
 ### Karaoke inline word editing
 In `detail.js` `renderWordView()`, an **"Edit Words"** toggle button switches between play mode and edit mode:
@@ -368,14 +374,19 @@ In `detail.js` `renderWordView()`, an **"Edit Words"** toggle button switches be
 ### Mobile card view opens detail page
 At ≤480px the table switches to card view (`buildCardView` in `table.js`). Each card has an **"Open"** button and the card itself is clickable — both navigate to `detail.html?id=<audioId>` in a new tab. The old inline-expand behavior is removed.
 
-### Row click behavior by status
+### Row click and keyboard behavior by status
 Clicking a table row calls `onRowExpand(audioId)` in `app.js`, which dispatches based on status:
 - `unmapped` → expands inline to show mapping suggestions + Search Transcripts button
 - `mapped` / `cleaned` → navigates directly to `detail.html?id=` in a new tab (no inline panel)
 - `aligned` / `approved` → expands inline to show the review panel + Karaoke button
 - `benchmark` → expands inline to show benchmark tools
 
+**Arrow keys** (`↑`/`↓`) only highlight/select rows — they do NOT trigger expansion or navigation. Only `Enter` or a click expands/navigates.
+
 The inline mapping bar (Linked to / Unlink / Change Transcript / Split Transcript) has been removed from all expanded panels — those controls are on the detail page.
+
+### Table column visibility handles compound filter keys
+Column `showWhen` functions use `filterMatchesStatus(filter, statuses)` which extracts the status portion from compound keys like `'fifty-unmapped'` or `'50hr-mapped'`. This ensures columns like `firstLine` correctly show/hide when viewing 50hr sub-filters.
 
 ### Audio name inline editing stops propagation on the input
 In `table.js` `case 'name'`, clicking the `nameSpan` replaces it with an `<input>` and calls `e.stopPropagation()`. The `<input>` itself also has a click handler calling `e.stopPropagation()` — without this, clicking inside the input to reposition the cursor would bubble to the `<tr>` click handler and trigger row navigation.
@@ -398,7 +409,7 @@ In `renderVersionContent`, `type === 'manual'` versions skip the `version.text` 
 jem-asr-app/
 ├── index.html                  # Single page shell
 ├── detail.html                 # Per-file detail page
-├── style.css                   # Dark theme, RTL, responsive
+├── style.css                   # Light theme, RTL, responsive
 ├── .env                        # VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY (build-time)
 ├── src/
 │   ├── app.js                  # Entry: load catalog from Supabase, init state, wire everything
@@ -465,6 +476,8 @@ else                                                  → 'unmapped'
 
 Falls back to legacy keys if `transcriptVersions` is empty.
 
+`'rejected'` is a valid pipeline status — files can be filtered by it via `getFilteredRows('rejected', ...)`.
+
 ## Module Exports
 
 ### state.js
@@ -472,26 +485,34 @@ Falls back to legacy keys if `transcriptVersions` is empty.
 initState(data), getState(), updateState(key, audioId, value)
 getStatus(audioId), getVersions(audioId), getVersionsByType(audioId, type)
 getBestVersion(audioId), addVersion(audioId, data), updateVersion(audioId, versionId, updates)
+getAudiosByTranscriptId(transcriptId), addTranscript(transcript)
 getFilteredRows(filter, searchTerm, sortCol, sortDir, yearFilter, monthFilter, typeFilter)
-getFilterCounts()         // returns counts for all filter pill keys
-mergeSupabaseData(remote) // merge Supabase work data (mappings/cleaning/alignments/reviews) into state
-exportState(), importState(json)
+getFilterCounts()         // returns counts for all filter pill keys (including 'rejected')
+mergeSupabaseData(remote) // REPLACES (not merges) Supabase-authoritative keys: mappings, cleaning, alignments, reviews
+exportState(), importState(file)
 ```
+
+`mergeSupabaseData` replaces `state.mappings`, `state.cleaning`, `state.alignments`, and `state.reviews` entirely with remote data so that deletions in Supabase are properly reflected locally.
 
 ### db.js
 ```javascript
-// PRIMARY: returns { audio[], transcripts[], mappings, alignments, reviews, cleaning }
+// PRIMARY: returns { audio[], transcripts[], mappings, alignments, reviews, cleaning, trims, edited }
 // audio[] and transcripts[] are full catalog arrays sorted by numeric ID.
 loadFromSupabase()
 
 syncStateKey(key, audioId, value, audioEntry)  // dispatch upsert for the changed key
-// Handled keys: 'audioNames' → audio_files.name, 'audioComments' → audio_files.comments,
-//               'mappings', 'cleaning', 'alignments', 'reviews'
+// Handled keys: 'audioNames', 'audioComments', 'mappings', 'cleaning', 'alignments',
+//               'reviews', 'edited', 'trims'
 syncMapping(audioId, mapping, audioEntry)
 syncCleaning(audioId, cleaningData, audioEntry)
+syncEdited(audioId, text, audioEntry)
 syncAlignment(audioId, alignmentData, audioEntry)
 syncReview(audioId, reviewData, audioEntry)
+syncAudioDuration(audioId, durationMinutes)
 deleteMapping(audioId)
+loadAlignmentWords(audioId)      // lazy loader for alignment word arrays
+loadTranscriptText(transcriptId) // lazy loader for full transcript text
+splitTranscript(originalId)
 
 // Bulk seed helpers (used by scripts, not the app itself)
 bulkSyncAudioFiles(audioArray)
@@ -499,13 +520,20 @@ bulkSyncTranscripts(transcriptArray)
 bulkSyncMappings(mappingsObj)   // ignoreDuplicates — won't overwrite user-confirmed
 ```
 
-`ensureAudioFile(audio)` is called internally before any write that has a FK → `audio_files.id`.
+`ensureAudioFile(audio)` is called internally before any write that has a FK → `audio_files.id`. It uses `toAudioRow(audio)` to map camelCase fields to snake_case DB columns. **`ensureAudioFile` does NOT write `duration_minutes`** — duration is managed exclusively by `syncAudioDuration()` to avoid overwriting corrected values with stale estimates.
 
 **Actual DB column names** (important — these differ from the camelCase app fields):
 - `mappings.created_at` (not `confirmed_at` — that column doesn't exist)
 - `reviews.edited_text` (added via migration)
 - `transcript_edits.version` is TEXT (was mistakenly INTEGER at creation; fixed via migration)
 - `transcript_edits.text` (added via migration — stores the cleaned text content)
+
+### table.js
+```javascript
+renderTable(container, options)    // options: { onRowExpand, onFilterChange }
+updateTable()                      // rebuilds table DOM; calls stopInlinePlayer() first
+getSelectedRows()                  // → array of selected audioIds
+```
 
 ### mapping.js
 ```javascript
@@ -521,26 +549,26 @@ Scoring includes `firstLine` bonus: +0.05 if transcript has firstLine, +0.05 mor
 ### cleaning.js
 ```javascript
 cleanBrackets(text), cleanParentheses(text), cleanSectionMarkers(text)
+cleanSurroundingQuotes(text), cleanHyphens(text), cleanQuestionMarks(text), cleanEllipsis(text)
 cleanSymbols(text), cleanWhitespace(text)
-cleanText(raw)        // all 5 passes in sequence
-cleanRate(raw, cleaned)   // = calculateCleanRate (both exported, equivalent)
-batchClean(audioIds, state)
+cleanText(raw)              // all passes in sequence
+calculateCleanRate(raw, cleaned)
+batchClean(audioIds, state, onProgress)
 ```
 
 ### review.js
 ```javascript
 renderReviewPanel(container, audioId, state, callbacks)  // container is FIRST param
-approveAll(selectedIds, state)
-setupKeyboardNav(callbacks)
+approveAll(audioIds, state)   // skips benchmark files automatically
 ```
 
-Confidence chip classes: `.confidence-high` (≥0.8), `.confidence-mid` (≥0.4), `.confidence-low` (<0.4)
+Confidence chip classes: `.confidence-high` (≥0.8), `.confidence-mid` (≥0.4), `.confidence-low` (<0.4). Thresholds defined in `getConfidenceLevel()` in `utils.js`.
 
 ### alignment.js
 ```javascript
-alignRow(audioId, state)              // retries 3× on 502/504 with 10s delay
+alignRow(audioId, state, textOverride = null)  // retries 3× on 502/504/network errors with 10s delay, 5-min timeout
 batchAlign(audioIds, state, onProgress)
-transcribeAudio(audioId, audioUrl, modelConfig)
+transcribeAudio(audioId, audioUrl, modelConfig)  // not yet used in the app — placeholder for step 7
 ```
 
 Request to `/api/align`:
@@ -569,6 +597,11 @@ Data flow: `Browser → CF Worker: { audio_url, text }` (tiny) → `CF Worker �
 
 **Do NOT remove the Worker-side conversion** — the RunPod Docker image is a pre-built image that only accepts `audio_base64`. The Worker is the translation layer.
 
+**SSRF protection:** The Worker validates that `audio_url` hostname is exactly `audio.kohnai.ai` before fetching. Any other hostname returns 400.
+
+### Alignment retry and timeout
+`alignRow` retries 3 times on 502/504 HTTP errors AND network-level errors (connection refused, DNS failure) with a 10-second delay between attempts. Each fetch has a 5-minute `AbortController` timeout. If the alignment button fails, it re-enables with a "click to retry" message rather than staying disabled.
+
 ### karaoke.js
 ```javascript
 renderKaraokePlayer(audioId, state)   // appends modal to document.body
@@ -589,10 +622,13 @@ API keys (`asrModels[].apiKey`) are **never exported** in state JSON.
 parseHebrewDate(filename)           // → { year, month, day }
 normalizeYiddish(text)              // strip nikkud U+0591-U+05C7, punct, lowercase
 levenshtein(refWords, hypWords)     // → { distance, operations: [{type:'S'|'I'|'D', ref, hyp}] }
+levenshteinDistance(a, b)           // distance-only, two-row DP, O(min(n,m)) space — used for CER
 calculateWER(reference, hypothesis) // → { wer, cer, substitutions, insertions, deletions, total }
+getConfidenceLevel(conf)            // → 'high' (≥0.8), 'mid' (≥0.4), 'low' (<0.4)
 generateSRT(words)                  // group on gap>0.5s or every ~10 words
 generateVTT(words)
 exportCSV(rows, columns)            // triggers download
+downloadFile(content, filename, mimeType)  // generic blob download helper
 truncateWords(text, n)
 formatConfidence(score)             // 0.85 → "85%", null → "—" (em dash)
 debounce(fn, ms)
@@ -604,7 +640,7 @@ Both formats work: `'fifty'` = `'50hr'`, `'fifty-unmapped'` = `'50hr-unmapped'`,
 
 The `'fifty'` view shows all 200 `is_selected_50hr` files — no type filtering is applied.
 
-Valid keys: `fifty`, `fifty-unmapped`, `fifty-mapped`, `fifty-cleaned`, `fifty-aligned`, `fifty-approved`, `all`, `unmapped`, `mapped`, `cleaned`, `benchmark`, `needs-review`, `approved`
+Valid keys: `fifty`, `fifty-unmapped`, `fifty-mapped`, `fifty-cleaned`, `fifty-aligned`, `fifty-approved`, `all`, `unmapped`, `mapped`, `cleaned`, `benchmark`, `needs-review`, `approved`, `rejected`
 
 ## R2 URL Patterns
 
@@ -620,19 +656,25 @@ App proxies alignment via:     /api/align  (POST)
 
 ## Visual Design
 
+Light theme:
+
 ```css
---bg:             #0a0a0f   /* page background */
---surface:        #16162a   /* cards, panels */
---text:           #e8e8f0   /* primary text */
---text-secondary: #8888aa   /* muted */
---accent:         #00d4ff   /* links, active */
---green:          #4ade80   /* high confidence, approved */
---orange:         #fb923c   /* medium confidence */
---red:            #f87171   /* low confidence, rejected */
---purple:         #b366ff   /* benchmark */
+--bg:             #f5f7fa   /* page background */
+--surface:        #ffffff   /* cards, panels */
+--surface-hover:  #f0f2f5   /* hover states */
+--border:         #e1e5ea   /* borders */
+--text:           #1a1a2e   /* primary text */
+--text-secondary: #5a6070   /* muted */
+--accent:         #2563eb   /* links, active */
+--green:          #16a34a   /* high confidence, approved */
+--orange:         #ea580c   /* medium confidence */
+--red:            #dc2626   /* low confidence, rejected */
+--purple:         #7c3aed   /* benchmark */
 ```
 
-RTL: `.hebrew-text { direction: rtl; text-align: right; unicode-bidi: embed; }`
+Each color has a `-dim` variant (10% opacity) for backgrounds. Additional tokens: `--radius`, `--radius-lg`, `--shadow`, `--font`.
+
+RTL: `.hebrew-text { direction: rtl; text-align: right; }` `.cell-hebrew` uses `unicode-bidi: isolate` for correct mixed RTL/LTR rendering.
 
 Responsive breakpoints: 1200px (full) / 768px (compact) / 480px (card view)
 
@@ -640,12 +682,14 @@ Responsive breakpoints: 1200px (full) / 768px (compact) / 480px (card view)
 
 ```
 WER         = (S + I + D) / N      (N = reference word count)
-CER         = (S + I + D) / C      (at character level)
-Custom WER  = (I + D + critical_S) / N
+CER         = (S + I + D) / C      (at character level, uses levenshteinDistance for O(n) space)
+Custom WER  = (I + D + critical_S) / N   (not yet implemented — currently equals WER)
 
 Normalization before comparison:
   Strip nikkud U+0591–U+05C7 → strip punctuation → lowercase Latin → collapse whitespace
 ```
+
+CER uses `levenshteinDistance()` (two-row DP, distance only) instead of the full `levenshtein()` with operation tracking, to avoid O(n*m) memory on long texts.
 
 ## Deploy
 

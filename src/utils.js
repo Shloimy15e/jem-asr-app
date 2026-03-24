@@ -81,14 +81,43 @@ export function levenshtein(refWords, hypWords) {
   return { distance: dp[n][m], operations };
 }
 
+// Distance-only Levenshtein using two-row DP — O(min(n,m)) space, no operation tracking.
+// Used for CER where character arrays can be very large.
+export function levenshteinDistance(a, b) {
+  // Ensure we iterate over the shorter dimension for space efficiency
+  if (a.length < b.length) { const t = a; a = b; b = t; }
+  const m = b.length;
+  let prev = new Array(m + 1);
+  let curr = new Array(m + 1);
+  for (let j = 0; j <= m; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= m; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        curr[j] = prev[j - 1];
+      } else {
+        curr[j] = 1 + Math.min(prev[j - 1], prev[j], curr[j - 1]);
+      }
+    }
+    const tmp = prev; prev = curr; curr = tmp;
+  }
+  return prev[m];
+}
+
 export function calculateWER(reference, hypothesis) {
   const refNorm = normalizeYiddish(reference);
   const hypNorm = normalizeYiddish(hypothesis);
   const refWords = refNorm.split(/\s+/).filter(Boolean);
   const hypWords = hypNorm.split(/\s+/).filter(Boolean);
 
+  // CER: character-level using distance-only Levenshtein (fast, O(min(n,m)) space)
+  const refChars = refNorm.replace(/\s/g, '');
+  const hypChars = hypNorm.replace(/\s/g, '');
+  const charDist = levenshteinDistance(refChars.split(''), hypChars.split(''));
+  const cer = refChars.length > 0 ? charDist / refChars.length : (hypChars.length > 0 ? 1 : 0);
+
   if (refWords.length === 0) {
-    return { wer: hypWords.length > 0 ? 1 : 0, cer: 0, substitutions: 0, insertions: hypWords.length, deletions: 0, total: 0 };
+    return { wer: hypWords.length > 0 ? 1 : 0, cer, substitutions: 0, insertions: hypWords.length, deletions: 0, total: 0 };
   }
 
   const { distance, operations } = levenshtein(refWords, hypWords);
@@ -96,12 +125,6 @@ export function calculateWER(reference, hypothesis) {
   const insertions = operations.filter(o => o.type === 'I').length;
   const deletions = operations.filter(o => o.type === 'D').length;
   const wer = distance / refWords.length;
-
-  // CER: character-level
-  const refChars = refNorm.replace(/\s/g, '').split('');
-  const hypChars = hypNorm.replace(/\s/g, '').split('');
-  const charResult = levenshtein(refChars, hypChars);
-  const cer = refChars.length > 0 ? charResult.distance / refChars.length : 0;
 
   return { wer, cer, substitutions, insertions, deletions, total: refWords.length };
 }
@@ -155,20 +178,20 @@ function groupWordSegments(words) {
   return segments;
 }
 
-function formatSRTTime(seconds) {
+function formatSubtitleTime(seconds, separator) {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
   const ms = Math.min(Math.round((seconds % 1) * 1000), 999);
-  return `${pad(h)}:${pad(m)}:${pad(s)},${String(ms).padStart(3, '0')}`;
+  return `${pad(h)}:${pad(m)}:${pad(s)}${separator}${String(ms).padStart(3, '0')}`;
+}
+
+function formatSRTTime(seconds) {
+  return formatSubtitleTime(seconds, ',');
 }
 
 function formatVTTTime(seconds) {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  const ms = Math.min(Math.round((seconds % 1) * 1000), 999);
-  return `${pad(h)}:${pad(m)}:${pad(s)}.${String(ms).padStart(3, '0')}`;
+  return formatSubtitleTime(seconds, '.');
 }
 
 function pad(n) {
@@ -212,4 +235,18 @@ export function debounce(fn, ms) {
     clearTimeout(timer);
     timer = setTimeout(() => fn.apply(this, args), ms);
   };
+}
+
+export function getConfidenceLevel(conf) {
+  return conf >= 0.8 ? 'high' : conf >= 0.4 ? 'mid' : 'low';
+}
+
+export function downloadFile(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType || 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
