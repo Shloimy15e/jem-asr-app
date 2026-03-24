@@ -8,7 +8,8 @@ export function cleanBrackets(text) {
 }
 
 export function cleanParentheses(text) {
-  return text.replace(/\([^()]*(?:\([^()]*\)[^()]*)*\)/g, '');
+  // Strip the parentheses characters but keep the words inside
+  return text.replace(/\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g, '$1');
 }
 
 export function cleanSectionMarkers(text) {
