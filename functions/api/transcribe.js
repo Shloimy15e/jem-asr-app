@@ -163,17 +163,16 @@ function extractGeminiText(data) {
  * Gemini via Vertex AI endpoint (service account auth).
  * Used for fine-tuned models deployed on GCP Vertex AI.
  */
-async function handleGeminiVertex(audio, payload) {
-  const { gemini_sa_json, gemini_project_id, gemini_region, gemini_endpoint_id } = payload;
-  if (!gemini_sa_json) throw { status: 400, message: 'Missing gemini_sa_json' };
-  if (!gemini_endpoint_id) throw { status: 400, message: 'Missing gemini_endpoint_id' };
+async function handleGeminiVertex(audio, payload, saJson) {
+  const { gemini_project_id, gemini_region, gemini_endpoint_id } = payload;
+  if (!gemini_endpoint_id) throw { status: 500, message: 'Missing gemini_endpoint_id — set it in ASR Settings' };
 
-  const sa = typeof gemini_sa_json === 'string' ? JSON.parse(gemini_sa_json) : gemini_sa_json;
+  const sa = typeof saJson === 'string' ? JSON.parse(saJson) : saJson;
   const projectId = gemini_project_id || sa.project_id;
   const region = gemini_region || 'us-central1';
   if (!projectId) throw { status: 400, message: 'Missing gemini_project_id (and not found in service account JSON)' };
 
-  const accessToken = await getVertexAccessToken(sa);
+  const accessToken = await getVertexAccessToken(saJson);
 
   const url = `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/endpoints/${gemini_endpoint_id}:generateContent`;
 
@@ -219,17 +218,21 @@ async function handleGeminiApiKey(audio, payload) {
   return extractGeminiText(data);
 }
 
-async function handleGemini(audio, payload) {
-  // Prefer Vertex AI (service account) when SA JSON is provided
-  if (payload.gemini_sa_json) {
-    return handleGeminiVertex(audio, payload);
+async function handleGemini(audio, payload, env) {
+  // Secrets come from Cloudflare Worker env, never from the request payload
+  if (env.GEMINI_SA_JSON) {
+    return handleGeminiVertex(audio, payload, env.GEMINI_SA_JSON);
   }
-  return handleGeminiApiKey(audio, payload);
+  if (env.GEMINI_API_KEY) {
+    return handleGeminiApiKey(audio, { ...payload, gemini_api_key: env.GEMINI_API_KEY });
+  }
+  throw { status: 500, message: 'Gemini credentials not configured — set GEMINI_SA_JSON (or GEMINI_API_KEY) as a Cloudflare Worker secret' };
 }
 
-async function handleYiddishLabs(audio, payload) {
-  const { yl_api_key, yl_endpoint } = payload;
-  if (!yl_api_key) throw { status: 400, message: 'Missing yl_api_key' };
+async function handleYiddishLabs(audio, payload, env) {
+  const yl_api_key = env.YL_API_KEY;
+  if (!yl_api_key) throw { status: 500, message: 'Yiddish Labs API key not configured — set YL_API_KEY as a Cloudflare Worker secret' };
+  const { yl_endpoint } = payload;
 
   // Sync endpoint handles files up to 5 minutes; longer files use the async endpoint.
   const endpoint = yl_endpoint || 'https://app.yiddishlabs.com/api/v1/transcriptions/sync';
@@ -281,6 +284,7 @@ export async function onRequestPost(context) {
   try {
     const payload = await context.request.json();
     const { provider } = payload;
+    const env = context.env;
 
     if (!provider) return errorResponse(400, 'Missing provider');
 
@@ -288,9 +292,9 @@ export async function onRequestPost(context) {
 
     let text;
     if (provider === 'gemini') {
-      text = await handleGemini(audio, payload);
+      text = await handleGemini(audio, payload, env);
     } else if (provider === 'yiddish-labs') {
-      text = await handleYiddishLabs(audio, payload);
+      text = await handleYiddishLabs(audio, payload, env);
     } else {
       return errorResponse(400, `Unknown provider: ${provider}. Use gemini or yiddish-labs.`);
     }

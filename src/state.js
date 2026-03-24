@@ -18,14 +18,11 @@ export function initState(data) {
     benchmarks: saved.benchmarks || {},
     asrModels: saved.asrModels || [],
     transcribeProviders: saved.transcribeProviders || {
-      gemini: {
-        // Vertex AI (service account) — for fine-tuned models on GCP
-        saJson: '', projectId: 'fink-partnership', region: 'us-central1', endpointId: '5718022314876993536',
-        // API key fallback — for Google AI Studio models
-        apiKey: '', modelId: '',
-      },
+      // Secrets (SA JSON, API keys) are Cloudflare Worker secrets — not stored here.
+      // Only non-sensitive config lives in state.
+      gemini: { projectId: 'fink-partnership', region: 'us-central1', endpointId: '5718022314876993536' },
       whisper: {},
-      yiddishLabs: { apiKey: '', endpoint: '' },
+      yiddishLabs: { endpoint: '' },
     },
     trims: saved.trims || {},
     audioNames: saved.audioNames || {},

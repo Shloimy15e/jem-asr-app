@@ -339,27 +339,18 @@ export async function transcribeAudio(audioId, audioUrl, config) {
   }
 
   // Gemini and Yiddish Labs: route through /api/transcribe CF Worker
+  // Secrets (SA JSON, API keys) live in Cloudflare Worker env — never sent from the browser.
+  // Only non-sensitive config is included in the payload.
   let providerPayload;
   if (provider === 'gemini') {
-    // Prefer Vertex AI (service account) when saJson is configured
-    if (config.saJson) {
-      if (!config.endpointId) throw new Error('Gemini Vertex AI requires an Endpoint ID');
-      providerPayload = {
-        gemini_sa_json: config.saJson,
-        gemini_project_id: config.projectId || '',
-        gemini_region: config.region || 'us-central1',
-        gemini_endpoint_id: config.endpointId,
-      };
-    } else {
-      // Fall back to API key path (Google AI Studio / public Gemini API)
-      if (!config.apiKey) throw new Error('Gemini transcription requires a service account JSON or API key');
-      if (!config.modelId) throw new Error('Gemini transcription requires a model ID when using API key');
-      providerPayload = { gemini_api_key: config.apiKey, gemini_model_id: config.modelId };
-    }
-  } else if (provider === 'yiddish-labs') {
-    if (!config.apiKey) throw new Error('Yiddish Labs transcription requires an API key');
+    if (!config.endpointId) throw new Error('Gemini requires an Endpoint ID — set it in ASR Settings');
     providerPayload = {
-      yl_api_key: config.apiKey,
+      gemini_project_id: config.projectId || '',
+      gemini_region: config.region || 'us-central1',
+      gemini_endpoint_id: config.endpointId,
+    };
+  } else if (provider === 'yiddish-labs') {
+    providerPayload = {
       ...(config.endpoint ? { yl_endpoint: config.endpoint } : {}),
     };
   } else {

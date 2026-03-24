@@ -56,30 +56,53 @@ function buildProviderBlock(title, fields) {
  * Renders the full ASR provider config panel into `container`.
  * Reads current values from state and saves changes back on input change.
  */
+function secretsNote(text) {
+  const note = document.createElement('div');
+  note.className = 'asr-provider-note asr-provider-note-secrets';
+  note.textContent = text;
+  return note;
+}
+
 export function buildAsrConfigPanel(container) {
-  container.appendChild(buildProviderBlock('Gemini (fine-tuned via Vertex AI)', [
-    { stateKey: 'gemini', field: 'saJson',     label: 'Service Account JSON', placeholder: 'Paste the contents of your .json key file', type: 'textarea' },
-    { stateKey: 'gemini', field: 'projectId',  label: 'GCP Project ID',       placeholder: 'fink-partnership',    type: 'text' },
-    { stateKey: 'gemini', field: 'region',     label: 'Region',               placeholder: 'us-central1',         type: 'text' },
-    { stateKey: 'gemini', field: 'endpointId', label: 'Endpoint ID',          placeholder: '5718022314876993536', type: 'text' },
-    { stateKey: 'gemini', field: 'apiKey',     label: 'API Key (alt)',         placeholder: 'AIza… — only if not using service account', type: 'password' },
-    { stateKey: 'gemini', field: 'modelId',    label: 'Model ID (alt)',        placeholder: 'gemini-2.5-flash or numeric tuned model ID', type: 'text' },
+  // ── Gemini ──
+  const geminiBlock = document.createElement('div');
+  geminiBlock.className = 'asr-provider-block';
+  const geminiTitle = document.createElement('div');
+  geminiTitle.className = 'asr-provider-title';
+  geminiTitle.textContent = 'Gemini (fine-tuned via Vertex AI)';
+  geminiBlock.appendChild(geminiTitle);
+  geminiBlock.appendChild(secretsNote('🔒 SA JSON stored as Cloudflare Worker secret GEMINI_SA_JSON — set via CLI, not here.'));
+  container.appendChild(geminiBlock);
+
+  // Non-secret Gemini config
+  container.appendChild(buildProviderBlock('Gemini — endpoint config', [
+    { stateKey: 'gemini', field: 'projectId',  label: 'GCP Project ID', placeholder: 'fink-partnership',    type: 'text' },
+    { stateKey: 'gemini', field: 'region',     label: 'Region',         placeholder: 'us-central1',         type: 'text' },
+    { stateKey: 'gemini', field: 'endpointId', label: 'Endpoint ID',    placeholder: '5718022314876993536', type: 'text' },
   ]));
 
+  // ── Whisper ──
   const whisperBlock = document.createElement('div');
   whisperBlock.className = 'asr-provider-block';
   const whisperTitle = document.createElement('div');
   whisperTitle.className = 'asr-provider-title';
   whisperTitle.textContent = 'Whisper (RunPod)';
-  const whisperNote = document.createElement('div');
-  whisperNote.className = 'asr-provider-note';
-  whisperNote.textContent = 'Uses the existing alignment endpoint (align.kohnai.ai) — no additional configuration needed.';
   whisperBlock.appendChild(whisperTitle);
-  whisperBlock.appendChild(whisperNote);
+  whisperBlock.appendChild(secretsNote('No credentials needed — uses the existing align.kohnai.ai endpoint.'));
   container.appendChild(whisperBlock);
 
-  container.appendChild(buildProviderBlock('Yiddish Labs', [
-    { stateKey: 'yiddishLabs', field: 'apiKey',   label: 'API Key',             placeholder: 'yl_live_...',                                           type: 'password' },
+  // ── Yiddish Labs ──
+  const ylBlock = document.createElement('div');
+  ylBlock.className = 'asr-provider-block';
+  const ylTitle = document.createElement('div');
+  ylTitle.className = 'asr-provider-title';
+  ylTitle.textContent = 'Yiddish Labs';
+  ylBlock.appendChild(ylTitle);
+  ylBlock.appendChild(secretsNote('🔒 API key stored as Cloudflare Worker secret YL_API_KEY — set via CLI, not here.'));
+  container.appendChild(ylBlock);
+
+  // Optional custom endpoint (not a secret)
+  container.appendChild(buildProviderBlock('Yiddish Labs — endpoint config', [
     { stateKey: 'yiddishLabs', field: 'endpoint', label: 'Endpoint (optional)', placeholder: 'https://app.yiddishlabs.com/api/v1/transcriptions/sync', type: 'text' },
   ]));
 }
