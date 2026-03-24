@@ -273,7 +273,10 @@ function syncLegacyKeys(audioId) {
       cleanedAt: cleaned.createdAt,
     };
   }
-  const withAlignment = versions.find(v => v.alignment);
+  // Use same priority as getBestVersion (edited > cleaned > asr > manual)
+  // so the legacy key always reflects the most-relevant aligned version.
+  const withAlignment = ['edited', 'cleaned', 'asr', 'manual']
+    .reduce((found, type) => found || versions.find(v => v.type === type && v.alignment), null);
   if (withAlignment) {
     state.alignments[audioId] = withAlignment.alignment;
   }
