@@ -1,4 +1,4 @@
-import { updateState } from './state.js';
+import { updateState, setVersionAlignment } from './state.js';
 
 const ALIGN_ENDPOINT = '/api/align';
 
@@ -111,7 +111,7 @@ function blobToBase64(blob) {
   });
 }
 
-export async function alignRow(audioId, state, textOverride = null) {
+export async function alignRow(audioId, state, textOverride = null, versionId = null) {
   const url = getAudioUrl(audioId, state);
   if (!url) throw new Error(`No audio URL for ${audioId}`);
 
@@ -200,6 +200,10 @@ export async function alignRow(audioId, state, textOverride = null) {
   };
 
   updateState('alignments', audioId, alignment);
+  // Also store on the specific version if provided
+  if (versionId) {
+    setVersionAlignment(audioId, versionId, alignment);
+  }
   return alignment;
 }
 
