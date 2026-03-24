@@ -374,7 +374,11 @@ The app uses Supabase Auth (email + password). `src/auth.js` exports `checkAuth(
 The `timeupdate` handler in `renderWordView` calls `scrollIntoView` on the active word chip **only if** the word view container is currently in the viewport (`container.getBoundingClientRect()`). This prevents the top audio player from dragging the page down to the word chips while the user is viewing the player section.
 
 ### Segment auto-advance is disabled
-The word view does NOT auto-advance to the next segment when the audio playhead passes the end of the current segment. The user must click **Mark Reviewed** to advance. Do not re-add auto-advance — it was intentionally removed.
+The word view does NOT auto-advance to the next segment when the audio playhead passes the end of the current segment. The user must click **Mark Reviewed** (or use `‹`/`›`) to navigate. Do not re-add auto-advance — it was intentionally removed because users listen at 3x speed and the segment would jump before they finished.
+
+Two places in `detail.js` were cleaned up to achieve this:
+1. **`timeupdate` listener** — removed the block that called `goToSegment(next)` when `currentTime > segment.end`.
+2. **Mark Reviewed button handler** — removed the `goToSegment(next)` call after adding to `reviewedSegments`. Now it only calls `updateStats()`, `updateSegHeader()`, and re-renders the sidebar list — the segment stays put.
 
 ### Trim slider drag requires `user-select: none`
 `renderTrimControls` sets `document.body.style.userSelect = 'none'` on `mousedown` and clears it on `mouseup`. Without this, the browser treats the drag as text selection and interrupts it. Always restore `userSelect` in the `onEnd` handler.
