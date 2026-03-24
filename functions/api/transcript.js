@@ -2,6 +2,16 @@
 // GET /api/transcript?name=filename.txt
 const R2_BASE = 'https://audio.kohnai.ai/transcripts-txt/';
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+export async function onRequestOptions() {
+  return new Response(null, { headers: CORS_HEADERS });
+}
+
 export async function onRequestGet(context) {
   const url = new URL(context.request.url);
   const name = url.searchParams.get('name');

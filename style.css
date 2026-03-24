@@ -380,21 +380,6 @@ input {
   color: var(--red);
 }
 
-.confidence-high-bg {
-  background: var(--green-dim);
-  color: var(--green);
-}
-
-.confidence-mid-bg {
-  background: var(--orange-dim);
-  color: var(--orange);
-}
-
-.confidence-low-bg {
-  background: var(--red-dim);
-  color: var(--red);
-}
-
 /* === Word Chips (karaoke, review) === */
 .word-chip,
 .karaoke-word {
@@ -561,16 +546,6 @@ input {
   direction: rtl;
   line-height: 1.8;
   font-family: 'SBL Hebrew', 'David Libre', 'Noto Serif Hebrew', 'Times New Roman', serif;
-}
-
-.review-diff-col-label {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 8px;
-  direction: ltr;
-  text-align: left;
 }
 
 .review-actions {
@@ -813,37 +788,6 @@ input {
 }
 
 /* === Suggested Match Dropdown === */
-.suggestion-list {
-  position: absolute;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  z-index: 60;
-  max-height: 240px;
-  overflow-y: auto;
-  min-width: 320px;
-}
-
-.suggestion-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  cursor: pointer;
-  transition: background 0.1s ease;
-  font-size: 0.8rem;
-}
-
-.suggestion-item:hover {
-  background: var(--surface-hover);
-}
-
-.suggestion-confidence {
-  font-weight: 600;
-  min-width: 40px;
-}
-
 .suggestion-name {
   color: var(--text);
   white-space: nowrap;
@@ -885,13 +829,6 @@ input {
 
 /* === Responsive: Tablet (<=1200px) === */
 @media (max-width: 1200px) {
-  .data-table .col-duration,
-  .data-table .col-type,
-  .data-table .col-clean-rate,
-  .data-table .col-low-conf {
-    display: none;
-  }
-
   .filter-bar {
     padding: 10px 16px;
   }
@@ -920,13 +857,6 @@ input {
   .filter-pill {
     padding: 5px 10px;
     font-size: 0.75rem;
-  }
-
-  .data-table .col-match-conf,
-  .data-table .col-avg-conf,
-  .data-table .col-transcript,
-  .data-table .col-year {
-    display: none;
   }
 
   .review-diff {
