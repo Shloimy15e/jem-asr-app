@@ -72,6 +72,22 @@ export async function syncCleaning(audioId, cleaningData, audioEntry) {
   if (error) console.warn('[DB] syncCleaning:', error.message);
 }
 
+export async function syncEdited(audioId, text, audioEntry) {
+  if (text == null) return;
+  await ensureAudioFile(audioEntry);
+  const { error } = await supabase.from('transcript_edits').upsert(
+    {
+      audio_id: audioId,
+      version: 'edited',
+      text,
+      created_at: new Date().toISOString(),
+      created_by: 'user',
+    },
+    { onConflict: 'audio_id,version' },
+  );
+  if (error) console.warn('[DB] syncEdited:', error.message);
+}
+
 export async function syncAlignment(audioId, alignmentData, audioEntry) {
   if (!alignmentData) return;
   await ensureAudioFile(audioEntry);
@@ -154,6 +170,9 @@ export function syncStateKey(key, audioId, value, audioEntry) {
       break;
     case 'cleaning':
       syncCleaning(audioId, value, audioEntry).catch(console.warn);
+      break;
+    case 'edited':
+      syncEdited(audioId, value, audioEntry).catch(console.warn);
       break;
     case 'alignments':
       syncAlignment(audioId, value, audioEntry).catch(console.warn);
@@ -417,7 +436,15 @@ export async function loadFromSupabase() {
       };
     });
 
-    return { audio, transcripts, mappings, alignments, reviews, cleaning, trims };
+    const edited = {};
+    (editsData || []).filter(e => e.version === 'edited').forEach(e => {
+      edited[e.audio_id] = {
+        text: e.text,
+        createdAt: e.created_at,
+      };
+    });
+
+    return { audio, transcripts, mappings, alignments, reviews, cleaning, trims, edited };
   } catch (err) {
     console.warn('[DB] loadFromSupabase failed:', err.message);
     return null;

@@ -1,6 +1,10 @@
 // Proxy alignment requests to avoid CORS issues
 // POST /api/align -> https://align.kohnai.ai/api/align
 // Streams response body to avoid CF worker timeout on large responses
+//
+// If the request contains audio_url, the Worker fetches the audio itself and
+// converts it to audio_base64 before forwarding — this avoids the ~25 MB
+// Cloudflare Pages inbound body limit (the browser only sends a small URL).
 
 const ALIGN_ENDPOINT = 'https://align.kohnai.ai/api/align';
 
@@ -10,14 +14,47 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const CHUNK = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
 export async function onRequestPost(context) {
   try {
-    const body = context.request.body;
+    const payload = await context.request.json();
+
+    // If the client sent audio_url, resolve it to base64 here in the Worker.
+    // This keeps the browser→CF request tiny (just a URL string) while still
+    // sending audio_base64 to RunPod in the format it already understands.
+    if (payload.audio_url) {
+      const audioResp = await fetch(payload.audio_url);
+      if (!audioResp.ok) {
+        return new Response(
+          JSON.stringify({ error: `Failed to fetch audio: ${audioResp.status}` }),
+          { status: 502, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
+        );
+      }
+      const audioBuffer = await audioResp.arrayBuffer();
+      const base64 = arrayBufferToBase64(audioBuffer);
+
+      // Detect format from URL extension, default to .mp3
+      const urlPath = new URL(payload.audio_url).pathname;
+      const ext = urlPath.match(/(\.\w+)$/)?.[1] || '.mp3';
+
+      delete payload.audio_url;
+      payload.audio_base64 = base64;
+      payload.audio_format = ext;
+    }
 
     const resp = await fetch(ALIGN_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body,
+      body: JSON.stringify(payload),
       cf: { cacheTtl: 0 },
     });
 

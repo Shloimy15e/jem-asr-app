@@ -1,4 +1,4 @@
-import { syncStateKey } from './db.js';
+import { syncStateKey, syncEdited } from './db.js';
 
 const STORAGE_KEY = 'jem-asr-state';
 
@@ -102,6 +102,30 @@ export function mergeSupabaseData(remote) {
   if (remote.cleaning)   Object.assign(state.cleaning, remote.cleaning);
   if (remote.alignments) Object.assign(state.alignments, remote.alignments);
   if (remote.reviews)    Object.assign(state.reviews, remote.reviews);
+  if (remote.trims)      Object.assign(state.trims, remote.trims);
+
+  // Restore edited versions loaded from Supabase into transcriptVersions
+  if (remote.edited) {
+    for (const [audioId, editedData] of Object.entries(remote.edited)) {
+      const versions = state.transcriptVersions[audioId];
+      if (!versions || versions.length === 0) continue;
+      const existing = versions.find(v => v.type === 'edited');
+      if (existing) {
+        existing.text = editedData.text;
+      } else {
+        const manual = versions.find(v => v.type === 'manual');
+        versions.push({
+          id: `tv_${audioId}_edited_restored`,
+          type: 'edited',
+          parentVersionId: manual?.id,
+          sourceTranscriptId: manual?.sourceTranscriptId,
+          text: editedData.text,
+          createdAt: editedData.createdAt,
+          createdBy: 'user',
+        });
+      }
+    }
+  }
 
   // Re-run migration so transcriptVersions reflects the merged data
   migrateToVersions();
@@ -184,6 +208,11 @@ export function addVersion(audioId, versionData) {
   state.transcriptVersions[audioId].push(version);
   syncLegacyKeys(audioId);
   saveToStorage();
+  // Persist edited versions to Supabase so they survive across browsers/sessions
+  if (versionData.type === 'edited' && versionData.text != null) {
+    const audioEntry = state.audio?.find(a => a.id === audioId);
+    syncEdited(audioId, versionData.text, audioEntry).catch(console.warn);
+  }
   return version;
 }
 
@@ -196,6 +225,11 @@ export function updateVersion(audioId, versionId, updates) {
     Object.assign(v, updates);
     syncLegacyKeys(audioId);
     saveToStorage();
+    // Sync text changes for edited versions to Supabase
+    if (v.type === 'edited' && updates.text != null) {
+      const audioEntry = state.audio?.find(a => a.id === audioId);
+      syncEdited(audioId, v.text, audioEntry).catch(console.warn);
+    }
   }
 }
 

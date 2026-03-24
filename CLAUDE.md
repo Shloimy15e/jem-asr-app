@@ -202,7 +202,7 @@ stateDiagram-v2
 | `mappings` | `audio_id` | Audio → transcript links. Columns: `transcript_id`, `confidence`, `match_reason`, `confirmed_by`, `created_at` |
 | `alignments` | `audio_id` | Word timestamps + confidence scores |
 | `reviews` | `audio_id` | Approval status + `edited_text` (user's corrected text) + `reviewed_at` |
-| `transcript_edits` | `(audio_id, version)` | Cleaned transcript text. `version` is TEXT (e.g. `'cleaned'`). Columns: `text`, `original_text`, `clean_rate`, `created_at`, `created_by` |
+| `transcript_edits` | `(audio_id, version)` | Versioned transcript text. `version` is TEXT: `'cleaned'` (from cleaning passes) or `'edited'` (user-edited text saved from the detail page). Columns: `text`, `original_text`, `clean_rate`, `created_at`, `created_by` |
 | `asr_models` | `id` | ASR model configurations |
 | `benchmark_results` | `id` | WER/CER benchmark run results |
 
@@ -332,6 +332,14 @@ Editing a name in the table calls `updateState('audioNames', id, newName)` → `
 
 ### Manual transcript tab is read-only
 In `detail.js`, versions with `type === 'manual'` render the textarea with `readOnly = true` — no save handlers are attached, and a 🔒 badge is shown. A **"Start Editing"** button appears below the read-only area; clicking it fetches the full text (R2 → Supabase fallback), creates an `edited` version via `addVersion()`, and re-renders the detail page with that version active. This means every mapped file can immediately start editing without running cleaning tools first.
+
+### Edited versions persist to Supabase
+`edited` type versions are saved to the `transcript_edits` table (`version='edited'`) so they survive across browsers and sessions. Three sync points:
+- `addVersion()` in `state.js` calls `syncEdited()` when `versionData.type === 'edited'`
+- `updateVersion()` in `state.js` calls `syncEdited()` when `updates.text` changes on an edited version (covers the 800ms auto-save debounce in the textarea)
+- `mergeSupabaseData()` in `state.js` restores edited versions from Supabase into `transcriptVersions` on startup — if a version already exists it updates its text, otherwise it creates a restored version entry
+
+`syncEdited(audioId, text, audioEntry)` in `db.js` upserts to `transcript_edits` with `onConflict: 'audio_id,version'` — so there is always exactly one `edited` row per audio file (the latest edit). `loadFromSupabase()` extracts `version='edited'` rows into an `edited` key alongside `cleaning` and returns them to `mergeSupabaseData()`.
 
 ### Cleaning pass buttons are async
 `getCurrentText()` in `detail.js` is async — it fetches the full transcript text from R2 or Supabase if no cleaning data exists yet (startup optimization means `transcript.text` is null). Pass buttons show "Loading…" while fetching, then open the diff preview. Always `await getCurrentText()` before running a pass.
@@ -536,12 +544,22 @@ Request to `/api/align`:
 { "mode": "align", "audio_base64": "...", "audio_format": ".wav", "text": "...", "language": "yi" }
 ```
 
-**GPU server must support `audio_url`** — when present, the server fetches the audio from that URL itself. The R2 bucket is publicly accessible so no auth is needed. `audio_base64` still works for trimmed/non-R2 audio.
+**GPU server only ever receives `audio_base64`** — the Cloudflare Worker at `/api/align` transparently converts any `audio_url` request to `audio_base64` before forwarding. The RunPod server requires no changes.
 
 Response parsing: `data.timestamps[]` first, fallback to `data.segments[].words[]`. Confidence field: `confidence → probability → score`.
 
-### Alignment 413 Payload Too Large
-Cloudflare Pages rejects request bodies over ~25 MB. A 20-minute MP3 at 128 kbps base64-encodes to ~25 MB — longer files will 413. Fix: for untrimmed R2 audio, `alignment.js` sends `audio_url` instead of fetching and encoding the file. For trimmed audio, the crop is downsampled to 16 kHz mono WAV (~6× smaller than stereo 44.1 kHz) before encoding. The GPU server at `align.kohnai.ai` must accept `audio_url` and fetch the audio itself.
+### Alignment 413 Payload Too Large — solved in the Cloudflare Worker
+Cloudflare Pages rejects request bodies over ~25 MB. A 20-minute MP3 at 128 kbps base64-encodes to ~25 MB — longer files will 413.
+
+**How the full fix works (two layers):**
+
+1. **`alignment.js` (client)** — for untrimmed R2 audio, sends `audio_url` instead of base64 so the browser→CF request is tiny (~200 bytes). For trimmed audio, crops and downsamples to 16 kHz mono WAV (~6× smaller) before base64-encoding.
+
+2. **`functions/api/align.js` (Cloudflare Worker)** — intercepts any request containing `audio_url`, fetches the audio from R2 directly inside the Worker (no inbound size limit on Worker outbound fetches), base64-encodes it with a chunked `arrayBufferToBase64` helper, then forwards `audio_base64` + `audio_format` to RunPod in the format it has always expected. RunPod never sees `audio_url` and requires no changes.
+
+Data flow: `Browser → CF Worker: { audio_url, text }` (tiny) → `CF Worker → R2: GET audio` (~20 MB response) → `CF Worker → RunPod: { audio_base64, text }` (original format).
+
+**Do NOT remove the Worker-side conversion** — the RunPod Docker image is a pre-built image that only accepts `audio_base64`. The Worker is the translation layer.
 
 ### karaoke.js
 ```javascript
