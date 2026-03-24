@@ -1,10 +1,11 @@
 import { initState, getState, getStatus, exportState, importState, mergeSupabaseData } from './state.js';
+import { checkAuth, signOut } from './auth.js';
 import { loadFromSupabase } from './db.js';
 import { renderTable, updateTable, getSelectedRows } from './table.js';
 import { renderSuggestedMatches, linkMatch, renderSearchModal } from './mapping.js';
 import { batchClean } from './cleaning.js';
 import { batchAlign } from './alignment.js';
-import { renderReviewPanel, approveAll } from './review.js';
+import { approveAll } from './review.js';
 
 import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark.js';
 import { exportCSV } from './utils.js';
@@ -12,6 +13,10 @@ import { exportCSV } from './utils.js';
 // ── App init ────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
+  if (!await checkAuth()) return;
+
+  document.getElementById('btn-logout')?.addEventListener('click', signOut);
+
   const tableContainer = document.getElementById('table-container');
   tableContainer.innerHTML = '<div style="padding:3rem;text-align:center;color:var(--text-secondary,#8888aa)">Loading from Supabase…</div>';
 
@@ -69,8 +74,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const status = getStatus(audioId);
 
-    // For mapped/cleaned rows, just open the detail page — no useful inline action
-    if (status === 'mapped' || status === 'cleaned') {
+    // Navigate to detail page for all non-unmapped, non-benchmark rows
+    if (status === 'mapped' || status === 'cleaned' || status === 'aligned' || status === 'approved') {
       expandedRow = null;
       window.open(`/detail.html?id=${encodeURIComponent(audioId)}`, '_blank');
       return;
@@ -199,36 +204,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       panel.appendChild(suggestionsDiv);
       panel.appendChild(searchBtn);
-    } else if (status === 'aligned' || status === 'approved') {
-      // Show review panel
-      renderReviewPanel(panel, audioId, getState(), {
-        onApprove: () => {
-          updateTable();
-          expandedRow = null;
-        },
-        onReject: () => {
-          updateTable();
-          expandedRow = null;
-        },
-        onSkip: () => {
-          expandedRow = null;
-          const existingRow = document.querySelector('.expanded-panel-row');
-          if (existingRow) { existingRow.remove(); return; }
-          const existing = document.querySelector('.expanded-panel');
-          if (existing) existing.remove();
-        },
-      });
-
-      // Open detail page button for aligned rows
-      if (state.alignments[audioId]) {
-        const detailBtn = document.createElement('button');
-        detailBtn.className = 'bulk-btn';
-        detailBtn.textContent = 'Open Detail Page';
-        detailBtn.addEventListener('click', () => {
-          window.open(`detail.html?id=${encodeURIComponent(audioId)}`, '_blank');
-        });
-        panel.appendChild(detailBtn);
-      }
     }
 
 

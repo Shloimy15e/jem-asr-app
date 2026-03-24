@@ -318,7 +318,7 @@ npx wrangler pages deploy dist/ --project-name jem-asr-app
 ```
 
 ### DB column: `duration_minutes` not `est_minutes`
-Renamed via migration `20260323000000_rename_est_minutes.sql`. All app code uses `duration_minutes`.
+Renamed via migration `20260323000000_rename_est_minutes.sql`. The DB column is `duration_minutes`, but the JS field on the audio object in state is **`estMinutes`** (set by `db.js` line: `estMinutes: a.duration_minutes`). Always use `audio.estMinutes` in JS code — never `audio.durationMinutes` (that field does not exist and silently returns `undefined`).
 
 ### Real audio duration auto-corrects via detail page
 `audio_files.duration_minutes` was originally seeded from estimated values. When a detail page loads, the audio player's `loadedmetadata` event fires and gives the real duration. `detail.js` compares it against `audio.estMinutes` — if different, it calls `syncAudioDuration(audioId, realMin)` in `db.js` to update `audio_files.duration_minutes` in Supabase. The table Duration column self-corrects for any file once its detail page has been visited.
@@ -364,6 +364,20 @@ In `detail.js` `renderWordView()`, an **"Edit Words"** toggle button switches be
 - A bulk RTL textarea shows all words space-joined; "Apply Text to Words" maps back by position (warns on count mismatch)
 - "Save Word Edits" calls `updateState('alignments', audioId, { ...alignment, words: editModeWords })` AND `setVersionAlignment()` to sync the active version's alignment
 - Seek-click handlers are stored as `chip._seekHandler` and disabled/restored on mode toggle
+
+### Authentication — all pages require login
+The app uses Supabase Auth (email + password). `src/auth.js` exports `checkAuth()`, `signIn()`, `signOut()`. Both `app.js` and `detail.js` call `await checkAuth()` at the very top of their `DOMContentLoaded` handler — this redirects to `/login.html` if there is no active session. `login.html` + `src/login.js` handle the login form. Supabase RLS on all tables requires the `authenticated` role (migration `20260324000000_require_auth.sql`); the anon key alone cannot read any data. To add a new user: POST to `/auth/v1/admin/users` with the service role key, then trigger `/auth/v1/recover` to send a password-reset email.
+
+`vite.config.js` has three entry points: `main` (index.html), `detail` (detail.html), `login` (login.html). If you add a new top-level HTML page you must add it here.
+
+### Word view karaoke scroll only fires when word view is visible
+The `timeupdate` handler in `renderWordView` calls `scrollIntoView` on the active word chip **only if** the word view container is currently in the viewport (`container.getBoundingClientRect()`). This prevents the top audio player from dragging the page down to the word chips while the user is viewing the player section.
+
+### Segment auto-advance is disabled
+The word view does NOT auto-advance to the next segment when the audio playhead passes the end of the current segment. The user must click **Mark Reviewed** to advance. Do not re-add auto-advance — it was intentionally removed.
+
+### Trim slider drag requires `user-select: none`
+`renderTrimControls` sets `document.body.style.userSelect = 'none'` on `mousedown` and clears it on `mouseup`. Without this, the browser treats the drag as text selection and interrupts it. Always restore `userSelect` in the `onEnd` handler.
 
 ### Mobile card view opens detail page
 At ≤480px the table switches to card view (`buildCardView` in `table.js`). Each card has an **"Open"** button and the card itself is clickable — both navigate to `detail.html?id=<audioId>` in a new tab. The old inline-expand behavior is removed.

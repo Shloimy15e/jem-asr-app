@@ -55,7 +55,7 @@ export async function onRequestPost(context) {
         );
       }
 
-      const audioResp = await fetch(payload.audio_url);
+      const audioResp = await fetch(parsedUrl.href);
       if (!audioResp.ok) {
         return new Response(
           JSON.stringify({ error: `Failed to fetch audio: ${audioResp.status}` }),

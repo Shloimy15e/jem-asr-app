@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign In — JEM ASR Workbench</title>
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: var(--bg, #f5f7fa);
+    }
+    .login-card {
+      background: var(--surface, #fff);
+      border: 1px solid var(--border, #e1e5ea);
+      border-radius: var(--radius-lg, 10px);
+      box-shadow: var(--shadow, 0 2px 8px rgba(0,0,0,.08));
+      padding: 2.5rem 2rem;
+      width: 100%;
+      max-width: 360px;
+    }
+    .login-title {
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: var(--text, #1a1a2e);
+      margin: 0 0 1.75rem;
+      text-align: center;
+    }
+    .login-field {
+      display: flex;
+      flex-direction: column;
+      gap: .35rem;
+      margin-bottom: 1rem;
+    }
+    .login-field label {
+      font-size: .8rem;
+      font-weight: 500;
+      color: var(--text-secondary, #5a6070);
+    }
+    .login-field input {
+      padding: .55rem .75rem;
+      border: 1px solid var(--border, #e1e5ea);
+      border-radius: var(--radius, 6px);
+      font-size: .95rem;
+      color: var(--text, #1a1a2e);
+      background: var(--surface, #fff);
+      outline: none;
+      transition: border-color .15s;
+    }
+    .login-field input:focus {
+      border-color: var(--accent, #2563eb);
+    }
+    .login-submit {
+      width: 100%;
+      margin-top: .5rem;
+      padding: .6rem;
+      background: var(--accent, #2563eb);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius, 6px);
+      font-size: .95rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity .15s;
+    }
+    .login-submit:disabled { opacity: .6; cursor: default; }
+    .login-error {
+      margin-top: .75rem;
+      font-size: .85rem;
+      color: var(--red, #dc2626);
+      text-align: center;
+      min-height: 1.2em;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-title">JEM ASR Workbench</div>
+    <form id="login-form">
+      <div class="login-field">
+        <label for="login-email">Email</label>
+        <input type="email" id="login-email" autocomplete="email" required />
+      </div>
+      <div class="login-field">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" autocomplete="current-password" required />
+      </div>
+      <button type="submit" class="login-submit" id="login-submit">Sign In</button>
+      <div class="login-error" id="login-error"></div>
+    </form>
+  </div>
+  <script type="module" src="/src/login.js"></script>
+</body>
+</html>

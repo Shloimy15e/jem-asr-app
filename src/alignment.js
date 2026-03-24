@@ -122,9 +122,23 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const trimEnd = trim.end || 0;
 
   const audioEntry = state.audio.find(a => a.id === audioId);
-  const audioDuration = (audioEntry?.durationMinutes || 0) * 60;
+  const audioDuration = (audioEntry?.estMinutes || 0) * 60;
 
   const audioResult = await fetchAudioForAlignment(url, trimStart, trimEnd, audioDuration);
+
+  // Cap text to avoid RunPod timeout/rejection on very long transcripts.
+  // RunPod rejects requests with text >~18K chars. Yiddish speech runs ~15 chars/second.
+  // Hard cap at 17000 to stay safely under RunPod's limit regardless of audio duration.
+  const RUNPOD_TEXT_LIMIT = 17000;
+  const estimatedMaxChars = audioDuration > 0 ? Math.ceil(audioDuration * 15) + 2000 : 12000;
+  const maxChars = Math.min(estimatedMaxChars, RUNPOD_TEXT_LIMIT);
+  const lastSpace = alignText.lastIndexOf(' ', maxChars);
+  const boundedText = alignText.length > maxChars
+    ? alignText.slice(0, lastSpace > 0 ? lastSpace : maxChars)
+    : alignText;
+  if (boundedText.length < alignText.length) {
+    console.warn(`[Align] Text truncated from ${alignText.length} to ${boundedText.length} chars (audio ~${Math.round(audioDuration)}s)`);
+  }
 
   const requestBody = JSON.stringify(
     audioResult.audioUrl
@@ -134,10 +148,10 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
           ...(audioResult.trimStart > 0 ? { trim_start: audioResult.trimStart } : {}),
           ...(audioResult.trimEnd > 0 ? { trim_end: audioResult.trimEnd } : {}),
           ...(audioResult.audioDuration ? { audio_duration: audioResult.audioDuration } : {}),
-          text: alignText,
+          text: boundedText,
           language: 'yi',
         }
-      : { mode: 'align', audio_base64: audioResult.base64, audio_format: audioResult.format, text: alignText, language: 'yi' }
+      : { mode: 'align', audio_base64: audioResult.base64, audio_format: audioResult.format, text: boundedText, language: 'yi' }
   );
 
   // Retry logic for cold start 502/504 timeouts and network errors
