@@ -350,6 +350,14 @@ In `detail.js`, versions with `type === 'manual'` render the textarea with `read
 ### Rejected diff rows have visual feedback
 `.diff-row-rejected` class sets `opacity: 0.38` and strikes through child text. Applied by checkbox `change` handler and the "Reject All" button. "Accept All" removes it from all rows.
 
+### Audio playback speed controls
+Speed buttons appear in three places, all using the `.speed-btn` / `.word-view-speed-bar` CSS classes:
+- **Main audio player** (detail page) — rendered immediately below the `<audio>` element; speeds: 1x, 1.25x, 1.5x, 2x. Uses `.word-view-speed-bar` class.
+- **Word view** (`renderWordView()` in `detail.js`) — shown only when alignment words exist; speeds: 0.5x, 1x, 1.25x, 1.5x, 2x.
+- **Karaoke player** (`karaoke.js`) — speeds: 0.5x, 1x, 1.25x, 1.5x, 2x. Uses `.karaoke-speed-bar` class.
+
+All three set `audioElement.playbackRate` and toggle the `.active` class on the clicked button.
+
 ### Karaoke inline word editing
 In `detail.js` `renderWordView()`, an **"Edit Words"** toggle button switches between play mode and edit mode:
 - Edit mode: clicking a chip opens an inline `<input>`; Tab advances to next word; Enter/Escape commits/cancels
