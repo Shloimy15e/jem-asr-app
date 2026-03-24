@@ -409,6 +409,7 @@ export function getFilterCounts() {
     mapped: statusCounts.mapped,
     benchmark: benchmarkCount,
     'needs-review': statusCounts.aligned,
+    cleaned: statusCounts.cleaned || 0,
     approved: statusCounts.approved,
     rejected: statusCounts.rejected,
     'fifty': fiftyCount,

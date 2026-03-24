@@ -436,15 +436,15 @@ input {
 }
 
 .word-chip.confidence-high:hover {
-  background: rgba(74, 222, 128, 0.3);
+  background: var(--green-dim);
 }
 
 .word-chip.confidence-mid:hover {
-  background: rgba(251, 146, 60, 0.3);
+  background: var(--orange-dim);
 }
 
 .word-chip.confidence-low:hover {
-  background: rgba(248, 113, 113, 0.3);
+  background: var(--red-dim);
 }
 
 .karaoke-word.confidence-high:hover { background: rgba(22, 163, 74, 0.25); }
@@ -486,7 +486,7 @@ input {
 
 .diff-word-added {
   background: rgba(74, 222, 128, 0.15);
-  color: #16a34a;
+  color: var(--green);
 }
 
 .diff-row-rejected {
@@ -796,12 +796,6 @@ input {
 }
 
 /* === Karaoke Player === */
-.karaoke-player {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
 .karaoke-audio-controls {
   display: flex;
   align-items: center;
