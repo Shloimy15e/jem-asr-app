@@ -302,6 +302,8 @@ The app enforces: no "Approve" button on these rows (both UI and `approveAll()` 
 
 **Do not add `text` or `words` back to the startup queries** — it would fetch megabytes for 4,669 files on every page load.
 
+**`alignment.words` is undefined at startup even when `alignment` is truthy.** The alignment object loaded at startup has `avgConfidence`, `lowConfidenceCount`, `alignedAt` but NOT `words`. Any code that reads `alignment.words` must use `alignment?.words ?? []` — never `alignment ? alignment.words : []`, which evaluates to `undefined` when the object exists but `.words` hasn't been lazy-loaded yet.
+
 ### Supabase row limit — use fetchAll(), not .limit()
 `supabase.from(...).select(...).limit(10000)` does NOT work — Supabase's server-side `max_rows` caps responses at 1,000 rows regardless of the client-side `.limit()` call. All startup queries use `fetchAll(table, columns)` defined in `db.js`, which paginates in 1,000-row chunks via `.range(from, from+999)` until all records are returned. Never replace this with `.limit()`.
 
@@ -472,6 +474,8 @@ Version priority (getBestVersion): `edited > cleaned > asr > manual`
 `syncLegacyKeys(audioId)` keeps these flat objects in sync from `transcriptVersions`:
 `state.mappings`, `state.cleaning`, `state.alignments`, `state.reviews`
 
+`state.alignments[audioId]` is set to the highest-priority aligned version using the same order as `getBestVersion` (edited > cleaned > asr > manual). Do NOT use `versions.find(v => v.alignment)` — that returns the first match (usually `cleaned`) and ignores a higher-priority `edited` version aligned later.
+
 Direct writes via `updateState()` still work. Legacy keys exist for simpler reads.
 
 ### getStatus state machine
@@ -598,15 +602,15 @@ Request to `/api/align`:
 Response parsing: `data.timestamps[]` first, fallback to `data.segments[].words[]`. Confidence field: `confidence → probability → score`.
 
 ### Alignment 413 Payload Too Large — solved in the Cloudflare Worker
-Cloudflare Pages rejects request bodies over ~25 MB. A 20-minute MP3 at 128 kbps base64-encodes to ~25 MB — longer files will 413.
+Cloudflare Pages rejects request bodies over ~25 MB. A 20-minute MP3 base64-encoded as 16 kHz mono WAV is ~51 MB — well over the limit.
 
 **How the full fix works (two layers):**
 
-1. **`alignment.js` (client)** — for untrimmed R2 audio, sends `audio_url` instead of base64 so the browser→CF request is tiny (~200 bytes). For trimmed audio, crops and downsamples to 16 kHz mono WAV (~6× smaller) before base64-encoding.
+1. **`alignment.js` (client)** — for ALL R2 audio (trimmed or untrimmed), sends `audio_url` instead of base64. For trimmed R2 audio, also sends `trim_start`, `trim_end`, and `audio_duration` (seconds) so the Worker can trim server-side. The browser→CF request stays at ~10 KB regardless of audio length. Browser-side WAV decode/resample is only used for non-R2 URLs (e.g. Google Drive).
 
-2. **`functions/api/align.js` (Cloudflare Worker)** — intercepts any request containing `audio_url`, fetches the audio from R2 directly inside the Worker (no inbound size limit on Worker outbound fetches), base64-encodes it with a chunked `arrayBufferToBase64` helper, then forwards `audio_base64` + `audio_format` to RunPod in the format it has always expected. RunPod never sees `audio_url` and requires no changes.
+2. **`functions/api/align.js` (Cloudflare Worker)** — fetches the audio from R2 (no inbound size limit), applies a byte-proportional trim if `trim_start`/`trim_end`/`audio_duration` are present, base64-encodes the result, strips the trim params, then forwards `audio_base64` + `audio_format` to RunPod. RunPod never sees `audio_url` or trim params and requires no changes.
 
-Data flow: `Browser → CF Worker: { audio_url, text }` (tiny) → `CF Worker → R2: GET audio` (~20 MB response) → `CF Worker → RunPod: { audio_base64, text }` (original format).
+Data flow (trimmed): `Browser → CF Worker: { audio_url, trim_start, trim_end, audio_duration, text }` (~10 KB) → `CF Worker → R2: GET audio` → trim bytes → `CF Worker → RunPod: { audio_base64, text }`.
 
 **Do NOT remove the Worker-side conversion** — the RunPod Docker image is a pre-built image that only accepts `audio_base64`. The Worker is the translation layer.
 
