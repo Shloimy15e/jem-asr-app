@@ -3,7 +3,7 @@ import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } fro
 import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
 import { alignRow } from './alignment.js';
 import { formatConfidence } from './utils.js';
-import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration, deleteMapping } from './db.js';
+import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration } from './db.js';
 
 // Loads full transcript text using R2 first, then Supabase fallback.
 // Caches on the transcript object for the session.
