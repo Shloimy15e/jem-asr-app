@@ -8,6 +8,7 @@ import { batchAlign } from './alignment.js';
 import { approveAll } from './review.js';
 
 import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark.js';
+import { buildAsrConfigPanel } from './asr-config.js';
 import { exportCSV } from './utils.js';
 
 // ── App init ────────────────────────────────────────────────────────
@@ -277,6 +278,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // ── Export / Import ─────────────────────────────────────────────
+
+  document.getElementById('btn-asr-settings').addEventListener('click', () => {
+    modalContent.innerHTML = '';
+    const heading = document.createElement('h3');
+    heading.textContent = 'ASR Provider Settings';
+    heading.style.marginBottom = '12px';
+    modalContent.appendChild(heading);
+    buildAsrConfigPanel(modalContent);
+    openModal();
+  });
 
   document.getElementById('btn-export-state').addEventListener('click', () => {
     exportState();
