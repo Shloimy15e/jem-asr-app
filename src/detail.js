@@ -2,7 +2,7 @@ import { initState, getState, getStatus, getVersions, getBestVersion, addVersion
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
 import { alignRow } from './alignment.js';
-import { formatConfidence } from './utils.js';
+import { formatConfidence, getConfidenceLevel } from './utils.js';
 import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration } from './db.js';
 
 // Loads full transcript text using R2 first, then Supabase fallback.
@@ -11,7 +11,8 @@ async function loadFullText(transcript) {
   if (transcript.text) return transcript.text;
   let text = null;
   if (transcript.r2TranscriptLink) {
-    const res = await fetch(transcript.r2TranscriptLink).catch(() => null);
+    const filename = transcript.r2TranscriptLink.split('/').pop();
+    const res = await fetch('/api/transcript?name=' + encodeURIComponent(filename)).catch(() => null);
     if (res?.ok) text = await res.text().catch(() => null);
   }
   if (!text && transcript.id) {
@@ -526,9 +527,13 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
         const s = getState();
         // Reset versions for this audio
         s.transcriptVersions[audioId] = [];
+        // TODO: updateState with null does not delete Supabase rows — sync functions
+        // bail on null values. Needs db.js delete helpers for cleaning/alignments/reviews.
         if (s.cleaning[audioId]) updateState('cleaning', audioId, null);
         if (s.alignments[audioId]) updateState('alignments', audioId, null);
         if (s.reviews[audioId]) updateState('reviews', audioId, null);
+        // Ensure transcriptVersions reset is persisted even if no updateState fired above
+        updateState('transcriptVersions', null, s.transcriptVersions);
         const audio = s.audio.find(a => a.id === audioId);
         renderDetailPage(audioId, audio, s, pageContainer);
       });
@@ -542,9 +547,13 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       unlinkMatch(audioId);
       const s = getState();
       s.transcriptVersions[audioId] = [];
+      // TODO: updateState with null does not delete Supabase rows — sync functions
+      // bail on null values. Needs db.js delete helpers for cleaning/alignments/reviews.
       if (s.cleaning[audioId]) updateState('cleaning', audioId, null);
       if (s.alignments[audioId]) updateState('alignments', audioId, null);
       if (s.reviews[audioId]) updateState('reviews', audioId, null);
+      // Ensure transcriptVersions reset is persisted even if no updateState fired above
+      updateState('transcriptVersions', null, s.transcriptVersions);
       const audio = s.audio.find(a => a.id === audioId);
       renderDetailPage(audioId, audio, s, pageContainer);
     });
@@ -1002,7 +1011,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     words.forEach((w, idx) => {
       const span = document.createElement('span');
       const conf = typeof w.confidence === 'number' ? w.confidence : 1;
-      const level = conf >= 0.8 ? 'high' : conf >= 0.4 ? 'mid' : 'low';
+      const level = getConfidenceLevel(conf);
       span.className = `word-chip confidence-${level}`;
       const wordText = w.word || w.text || '';
       span.title = `"${wordText}" ${(conf * 100).toFixed(0)}% | ${(w.start ?? 0).toFixed(2)}s–${(w.end ?? 0).toFixed(2)}s`;
@@ -1106,7 +1115,9 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       chip.appendChild(input);
       input.focus();
       input.select();
+      let cancelled = false;
       const commit = () => {
+        if (cancelled) return;
         const val = input.value.trim() || origText;
         editModeWords[idx] = { ...editModeWords[idx], word: val };
         chip.textContent = val;
@@ -1116,7 +1127,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       input.addEventListener('blur', commit);
       input.addEventListener('keydown', e => {
         if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-        if (e.key === 'Escape') { chip.textContent = origText; }
+        if (e.key === 'Escape') { cancelled = true; chip.textContent = origText; }
         if (e.key === 'Tab') {
           e.preventDefault();
           commit();
