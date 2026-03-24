@@ -597,10 +597,15 @@ Confidence chip classes: `.confidence-high` (≥0.8), `.confidence-mid` (≥0.4)
 
 ### alignment.js
 ```javascript
-alignRow(audioId, state, textOverride = null, versionId = null)  // retries 3×; stores alignment on version if versionId provided
+alignRow(audioId, state, textOverride = null, versionId = null)  // auto-chunks long text; retries 3× per chunk; stores alignment on version if versionId provided
 batchAlign(audioIds, state, onProgress)
 transcribeAudio(audioId, audioUrl, modelConfig)  // not yet used in the app — placeholder for step 7
 ```
+
+Internal helpers (not exported):
+- `splitTextIntoChunks(text)` — splits at `CHUNK_LIMIT = 15000` chars on word boundaries
+- `doAlignRequest(requestBody, chunkLabel)` — retry loop (3×, 10s delay, 5min timeout) for one HTTP call
+- `buildRequestBody(audioResult, chunkText)` — builds the JSON payload for one chunk
 
 Request to `/api/align`:
 ```json
@@ -630,8 +635,20 @@ Data flow (trimmed): `Browser → CF Worker: { audio_url, trim_start, trim_end, 
 
 **SSRF protection:** The Worker validates that `audio_url` hostname is exactly `audio.kohnai.ai` before fetching. Any other hostname returns 400.
 
+### Alignment chunking for long transcripts
+RunPod rejects text longer than ~18K chars with `{"error":"Provide 'audio_base64' or 'audio_url'"}`. `alignRow` automatically splits long transcripts into chunks of `CHUNK_LIMIT = 15000` chars (split at word boundaries) and aligns each chunk against its corresponding portion of the audio, then merges all words into one alignment.
+
+**Chunk audio time windows:**
+- Chunk 1: `trimStart` → estimated end (`chunkLength / totalTextLength * effectiveDuration * 1.3`, 30% buffer)
+- Each subsequent chunk: starts from the actual `end` timestamp of the last word of the previous chunk (more accurate than pure proportion)
+- Last chunk: from previous chunk's last word end → `trimEnd` (or 0 = audio end)
+
+All word timestamps are offset by the chunk's audio start time so they represent absolute positions in the original audio. The merged alignment is saved identically to a single-chunk alignment — callers see no difference.
+
+A 52-minute file with 31K chars produces 2 chunks and takes ~5 min on a cold GPU. Console logs `[Align] Text too long (N chars) — splitting into X chunks`.
+
 ### Alignment retry and timeout
-`alignRow` retries 3 times on 502/504 HTTP errors AND network-level errors (connection refused, DNS failure) with a 10-second delay between attempts. Each fetch has a 5-minute `AbortController` timeout. If the alignment button fails, it re-enables with a "click to retry" message rather than staying disabled.
+Each chunk retries 3 times on 502/504 HTTP errors AND network-level errors (connection refused, DNS failure) with a 10-second delay between attempts. Each fetch has a 5-minute `AbortController` timeout. If the alignment button fails, it re-enables with a "click to retry" message rather than staying disabled.
 
 ### benchmark.js
 ```javascript

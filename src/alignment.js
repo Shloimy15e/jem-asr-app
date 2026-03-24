@@ -2,6 +2,9 @@ import { updateState, setVersionAlignment } from './state.js';
 
 const ALIGN_ENDPOINT = '/api/align';
 
+// RunPod rejects text longer than ~18K chars. Stay safely under that.
+const CHUNK_LIMIT = 15000;
+
 function getAudioUrl(audioId, state) {
   const entry = state.audio.find(a => a.id === audioId);
   if (!entry) return null;
@@ -108,53 +111,29 @@ function blobToBase64(blob) {
   });
 }
 
-export async function alignRow(audioId, state, textOverride = null, versionId = null) {
-  const url = getAudioUrl(audioId, state);
-  if (!url) throw new Error(`No audio URL for ${audioId}`);
-
-  const alignText = textOverride || state.cleaning[audioId]?.cleanedText;
-  if (!alignText) {
-    throw new Error(`No text for alignment for ${audioId}`);
+// Split text into chunks of at most CHUNK_LIMIT chars, splitting at word boundaries.
+function splitTextIntoChunks(text) {
+  if (text.length <= CHUNK_LIMIT) return [text];
+  const chunks = [];
+  let pos = 0;
+  while (pos < text.length) {
+    const end = pos + CHUNK_LIMIT;
+    if (end >= text.length) {
+      chunks.push(text.slice(pos));
+      break;
+    }
+    // Split at the last space before the limit
+    const splitAt = text.lastIndexOf(' ', end);
+    const chunkEnd = splitAt > pos ? splitAt : end;
+    chunks.push(text.slice(pos, chunkEnd));
+    pos = chunkEnd + 1;
   }
+  return chunks;
+}
 
-  const trim = state.trims?.[audioId] || {};
-  const trimStart = trim.start || 0;
-  const trimEnd = trim.end || 0;
-
-  const audioEntry = state.audio.find(a => a.id === audioId);
-  const audioDuration = (audioEntry?.estMinutes || 0) * 60;
-
-  const audioResult = await fetchAudioForAlignment(url, trimStart, trimEnd, audioDuration);
-
-  // Cap text to avoid RunPod timeout/rejection on very long transcripts.
-  // RunPod rejects requests with text >~18K chars. Yiddish speech runs ~15 chars/second.
-  // Hard cap at 17000 to stay safely under RunPod's limit regardless of audio duration.
-  const RUNPOD_TEXT_LIMIT = 17000;
-  const estimatedMaxChars = audioDuration > 0 ? Math.ceil(audioDuration * 15) + 2000 : 12000;
-  const maxChars = Math.min(estimatedMaxChars, RUNPOD_TEXT_LIMIT);
-  const lastSpace = alignText.lastIndexOf(' ', maxChars);
-  const boundedText = alignText.length > maxChars
-    ? alignText.slice(0, lastSpace > 0 ? lastSpace : maxChars)
-    : alignText;
-  if (boundedText.length < alignText.length) {
-    console.warn(`[Align] Text truncated from ${alignText.length} to ${boundedText.length} chars (audio ~${Math.round(audioDuration)}s)`);
-  }
-
-  const requestBody = JSON.stringify(
-    audioResult.audioUrl
-      ? {
-          mode: 'align',
-          audio_url: audioResult.audioUrl,
-          ...(audioResult.trimStart > 0 ? { trim_start: audioResult.trimStart } : {}),
-          ...(audioResult.trimEnd > 0 ? { trim_end: audioResult.trimEnd } : {}),
-          ...(audioResult.audioDuration ? { audio_duration: audioResult.audioDuration } : {}),
-          text: boundedText,
-          language: 'yi',
-        }
-      : { mode: 'align', audio_base64: audioResult.base64, audio_format: audioResult.format, text: boundedText, language: 'yi' }
-  );
-
-  // Retry logic for cold start 502/504 timeouts and network errors
+// Send one alignment request to the CF Worker with retry logic.
+// Returns the parsed response data object.
+async function doAlignRequest(requestBody, chunkLabel) {
   const MAX_RETRIES = 3;
   const RETRY_DELAY_MS = 10000;
   const FETCH_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -171,7 +150,7 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
       });
     } catch (err) {
       clearTimeout(timeoutId);
-      console.warn(`[Align] Network error on attempt ${attempt}/${MAX_RETRIES}: ${err.message}`);
+      console.warn(`[Align${chunkLabel}] Network error on attempt ${attempt}/${MAX_RETRIES}: ${err.message}`);
       if (attempt < MAX_RETRIES) {
         await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
         continue;
@@ -180,7 +159,7 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
     }
     clearTimeout(timeoutId);
     if (response.status === 502 || response.status === 504) {
-      console.warn(`[Align] Got ${response.status} on attempt ${attempt}/${MAX_RETRIES} — retrying in ${RETRY_DELAY_MS / 1000}s...`);
+      console.warn(`[Align${chunkLabel}] Got ${response.status} on attempt ${attempt}/${MAX_RETRIES} — retrying in ${RETRY_DELAY_MS / 1000}s...`);
       if (attempt < MAX_RETRIES) {
         await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
         continue;
@@ -188,32 +167,107 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
     }
     break;
   }
-
   if (!response.ok) {
     const errText = await response.text().catch(() => '');
     throw new Error(`Alignment API error ${response.status}: ${errText}`);
   }
+  return response.json();
+}
 
-  const data = await response.json();
+// Build the JSON request body for one alignment chunk.
+function buildRequestBody(audioResult, chunkText) {
+  return JSON.stringify(
+    audioResult.audioUrl
+      ? {
+          mode: 'align',
+          audio_url: audioResult.audioUrl,
+          ...(audioResult.trimStart > 0 ? { trim_start: audioResult.trimStart } : {}),
+          ...(audioResult.trimEnd > 0 ? { trim_end: audioResult.trimEnd } : {}),
+          ...(audioResult.audioDuration ? { audio_duration: audioResult.audioDuration } : {}),
+          text: chunkText,
+          language: 'yi',
+        }
+      : { mode: 'align', audio_base64: audioResult.base64, audio_format: audioResult.format, text: chunkText, language: 'yi' }
+  );
+}
 
-  let rawWords = data.timestamps || [];
-  if (rawWords.length === 0 && data.segments) {
-    rawWords = data.segments.flatMap(seg => seg.words || []);
+export async function alignRow(audioId, state, textOverride = null, versionId = null) {
+  const url = getAudioUrl(audioId, state);
+  if (!url) throw new Error(`No audio URL for ${audioId}`);
+
+  const alignText = textOverride || state.cleaning[audioId]?.cleanedText;
+  if (!alignText) {
+    throw new Error(`No text for alignment for ${audioId}`);
   }
 
-  const words = rawWords.map(t => ({
-    word: t.word || t.text || '',
-    start: (t.start || 0) + trimStart, // offset to absolute time in original audio
-    end: (t.end || 0) + trimStart,
-    confidence: t.confidence ?? t.probability ?? t.score ?? 0,
-  }));
+  const trim = state.trims?.[audioId] || {};
+  const trimStart = trim.start || 0;
+  const trimEnd = trim.end || 0;
 
-  const totalConf = words.reduce((sum, w) => sum + (w.confidence || 0), 0);
-  const avgConfidence = words.length > 0 ? totalConf / words.length : 0;
-  const lowConfidenceCount = words.filter(w => (w.confidence || 0) < 0.4).length;
+  const audioEntry = state.audio.find(a => a.id === audioId);
+  const audioDuration = (audioEntry?.estMinutes || 0) * 60;
+
+  const chunks = splitTextIntoChunks(alignText);
+
+  if (chunks.length > 1) {
+    console.log(`[Align] Text too long (${alignText.length} chars) — splitting into ${chunks.length} chunks (audio ~${Math.round(audioDuration)}s)`);
+  }
+
+  const effectiveEnd = trimEnd > 0 ? trimEnd : audioDuration;
+
+  let allWords = [];
+  let chunkAudioStart = trimStart;
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const isLast = i === chunks.length - 1;
+    const chunkLabel = chunks.length > 1 ? ` chunk ${i + 1}/${chunks.length}` : '';
+
+    // For the last chunk, use the remaining audio. For intermediate chunks,
+    // estimate the end proportionally from the remaining text/audio with a 30% buffer.
+    let chunkAudioEnd;
+    if (isLast) {
+      chunkAudioEnd = trimEnd; // 0 = go to end of audio
+    } else {
+      const charsLeft = alignText.length - chunks.slice(0, i).reduce((s, c) => s + c.length + 1, 0);
+      const fraction = chunk.length / charsLeft;
+      const audioLeft = effectiveEnd - chunkAudioStart;
+      chunkAudioEnd = Math.min(chunkAudioStart + audioLeft * fraction * 1.3, effectiveEnd);
+    }
+
+    const audioResult = await fetchAudioForAlignment(url, chunkAudioStart, chunkAudioEnd, audioDuration);
+    const requestBody = buildRequestBody(audioResult, chunk);
+    const data = await doAlignRequest(requestBody, chunkLabel);
+
+    let rawWords = data.timestamps || [];
+    if (rawWords.length === 0 && data.segments) {
+      rawWords = data.segments.flatMap(seg => seg.words || []);
+    }
+
+    const chunkWords = rawWords.map(t => ({
+      word: t.word || t.text || '',
+      start: (t.start || 0) + chunkAudioStart,
+      end: (t.end || 0) + chunkAudioStart,
+      confidence: t.confidence ?? t.probability ?? t.score ?? 0,
+    }));
+
+    allWords = allWords.concat(chunkWords);
+
+    // Use the actual last aligned word's end time as the next chunk's audio start.
+    // This is more accurate than a proportional estimate.
+    if (chunkWords.length > 0) {
+      chunkAudioStart = chunkWords[chunkWords.length - 1].end;
+    } else {
+      chunkAudioStart = chunkAudioEnd || effectiveEnd;
+    }
+  }
+
+  const totalConf = allWords.reduce((sum, w) => sum + (w.confidence || 0), 0);
+  const avgConfidence = allWords.length > 0 ? totalConf / allWords.length : 0;
+  const lowConfidenceCount = allWords.filter(w => (w.confidence || 0) < 0.4).length;
 
   const alignment = {
-    words,
+    words: allWords,
     avgConfidence,
     lowConfidenceCount,
     alignedAt: new Date().toISOString(),
@@ -222,7 +276,6 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   };
 
   updateState('alignments', audioId, alignment);
-  // Also store on the specific version if provided
   if (versionId) {
     setVersionAlignment(audioId, versionId, alignment);
   }
