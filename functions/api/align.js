@@ -62,7 +62,23 @@ export async function onRequestPost(context) {
           { status: 502, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
         );
       }
-      const audioBuffer = await audioResp.arrayBuffer();
+      let audioBuffer = await audioResp.arrayBuffer();
+
+      // Apply byte-proportional trim if requested — keeps browser→CF request tiny
+      // (the browser sends just a URL + trim params, not the full audio base64)
+      if (payload.trim_start != null || payload.trim_end != null) {
+        const totalBytes = audioBuffer.byteLength;
+        const totalDuration = payload.audio_duration || 1;
+        const trimStart = payload.trim_start || 0;
+        const trimEnd = (payload.trim_end > 0) ? payload.trim_end : totalDuration;
+        const startByte = Math.floor(trimStart / totalDuration * totalBytes);
+        const endByte = Math.min(Math.floor(trimEnd / totalDuration * totalBytes), totalBytes);
+        audioBuffer = audioBuffer.slice(startByte, endByte);
+      }
+      delete payload.trim_start;
+      delete payload.trim_end;
+      delete payload.audio_duration;
+
       const base64 = arrayBufferToBase64(audioBuffer);
 
       // Detect format from URL extension, default to .mp3

@@ -46,23 +46,21 @@ function audioBufferToWavBlob(buffer) {
   return new Blob([ab], { type: 'audio/wav' });
 }
 
-// Fetch audio and return { base64, format } or { audioUrl } for untrimmed R2 audio.
-// Untrimmed R2 audio returns the URL so the GPU server can fetch it directly —
+// Fetch audio and return { base64, format } or { audioUrl, trimStart, trimEnd, audioDuration }.
+// R2 audio (trimmed or not) returns the URL so the CF Worker fetches it server-side —
 // avoids base64-encoding large files through the Cloudflare proxy (413 limit).
-// Trimmed audio is cropped, downsampled to 16 kHz mono, and returned as WAV base64.
-async function fetchAudioForAlignment(url, trimStart, trimEnd) {
+// The CF Worker applies byte-level trimming when trimStart/trimEnd are provided.
+// Only non-R2 URLs (e.g. Google Drive) fall back to browser-side fetch + base64.
+async function fetchAudioForAlignment(url, trimStart, trimEnd, audioDuration) {
   const hasTrim = (trimStart > 0) || (trimEnd > 0);
 
-  // For untrimmed audio from R2, skip the fetch entirely — pass the URL to the GPU server.
-  if (!hasTrim && url.includes('audio.kohnai.ai')) {
-    return { audioUrl: url };
+  // For all R2 audio (trimmed or not), pass the URL to the CF Worker.
+  // The Worker fetches from R2 with no inbound size limit and handles trimming server-side.
+  if (url.includes('audio.kohnai.ai')) {
+    return { audioUrl: url, trimStart: hasTrim ? trimStart : undefined, trimEnd: hasTrim ? trimEnd : undefined, audioDuration: hasTrim ? audioDuration : undefined };
   }
 
-  const fetchUrl = url.includes('audio.kohnai.ai')
-    ? `/api/audio?url=${encodeURIComponent(url)}`
-    : url;
-
-  const res = await fetch(fetchUrl);
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch audio: ${res.status}`);
   const blob = await res.blob();
 
@@ -72,7 +70,7 @@ async function fetchAudioForAlignment(url, trimStart, trimEnd) {
     return { base64, format: '.mp3' };
   }
 
-  // Crop via Web Audio API, then downsample to 16 kHz mono (Whisper only needs this).
+  // Non-R2 trimmed audio — crop + downsample to 16 kHz mono in the browser.
   const arrayBuffer = await blob.arrayBuffer();
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   const decoded = await audioCtx.decodeAudioData(arrayBuffer);
@@ -83,7 +81,6 @@ async function fetchAudioForAlignment(url, trimStart, trimEnd) {
   const endSample = trimEnd > 0 ? Math.floor(trimEnd * sr) : decoded.length;
   const trimLength = Math.max(1, endSample - startSample);
 
-  // Resample to 16 kHz mono via OfflineAudioContext — reduces WAV size ~6× vs stereo 44.1 kHz.
   const TARGET_SR = 16000;
   const targetLength = Math.ceil(trimLength / sr * TARGET_SR);
   const offCtx = new OfflineAudioContext(1, targetLength, TARGET_SR);
@@ -124,11 +121,22 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const trimStart = trim.start || 0;
   const trimEnd = trim.end || 0;
 
-  const audioResult = await fetchAudioForAlignment(url, trimStart, trimEnd);
+  const audioEntry = state.audio.find(a => a.id === audioId);
+  const audioDuration = (audioEntry?.durationMinutes || 0) * 60;
+
+  const audioResult = await fetchAudioForAlignment(url, trimStart, trimEnd, audioDuration);
 
   const requestBody = JSON.stringify(
     audioResult.audioUrl
-      ? { mode: 'align', audio_url: audioResult.audioUrl, text: alignText, language: 'yi' }
+      ? {
+          mode: 'align',
+          audio_url: audioResult.audioUrl,
+          ...(audioResult.trimStart > 0 ? { trim_start: audioResult.trimStart } : {}),
+          ...(audioResult.trimEnd > 0 ? { trim_end: audioResult.trimEnd } : {}),
+          ...(audioResult.audioDuration ? { audio_duration: audioResult.audioDuration } : {}),
+          text: alignText,
+          language: 'yi',
+        }
       : { mode: 'align', audio_base64: audioResult.base64, audio_format: audioResult.format, text: alignText, language: 'yi' }
   );
 
