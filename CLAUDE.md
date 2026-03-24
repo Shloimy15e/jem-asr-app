@@ -392,7 +392,24 @@ Column `showWhen` functions use `filterMatchesStatus(filter, statuses)` which ex
 In `table.js` `case 'name'`, clicking the `nameSpan` replaces it with an `<input>` and calls `e.stopPropagation()`. The `<input>` itself also has a click handler calling `e.stopPropagation()` — without this, clicking inside the input to reposition the cursor would bubble to the `<tr>` click handler and trigger row navigation.
 
 ### Cleaning passes and alignment use the selected version tab's text
-`renderDetailPage` creates a shared `activeVersionRef = { id }` object and passes it to both `renderMappingSection` and `renderUnifiedWorkSection`. Whenever the user clicks a version tab, `activeVersionRef.id` is updated. `getCurrentText()` in `renderUnifiedWorkSection` reads from the selected version's `.text` for non-manual versions, or falls back to loading the raw transcript from R2/Supabase for the manual version. The alignment button calls `getCurrentText()` and passes the result as `textOverride` to `alignRow(audioId, state, textOverride)` — so alignment always runs on whatever version is currently displayed.
+`renderDetailPage` creates a shared `activeVersionRef = { id }` object and passes it to both `renderMappingSection` and `renderUnifiedWorkSection`. Whenever the user clicks a version tab, `activeVersionRef.id` is updated. `getCurrentText()` in `renderUnifiedWorkSection` reads from the selected version's `.text` for non-manual versions, or falls back to loading the raw transcript from R2/Supabase for the manual version. The alignment button calls `getCurrentText()` and passes the result as `textOverride` to `alignRow(audioId, state, textOverride, currentVersionId)` — so alignment always runs on whatever version is currently displayed, and the result is stored on that specific version.
+
+### Per-version alignment storage
+Alignment data is stored both in the legacy flat `state.alignments[audioId]` key (for backward compat) AND on the individual version object as `version.alignment`. When the Align button is clicked, the active version's ID is passed to `alignRow()`, which calls `setVersionAlignment(audioId, versionId, alignment)` to attach the alignment to that version. This means each edit-then-realign cycle preserves its own alignment data independently.
+
+`getAlignedVersions(audioId)` returns all versions that have `.alignment.words` attached — used by the Compare Versions UI to know when comparison is possible.
+
+### Compare Versions view
+When 2+ versions have alignment data, a **"Compare Versions"** button appears below the word view in the Processing section. Clicking it opens `renderCompareView()` which builds:
+- **Two-column layout** with dropdown selectors to pick any two aligned versions (shows type, avg confidence %, alignment date)
+- **Word chips** on both sides with confidence coloring (green/orange/red) and click-to-seek audio playback
+- **Karaoke highlighting** — both columns independently track the audio playhead via `timeupdate` listeners and highlight the active word with `.active` class
+- **Confidence diff indicators** — `box-shadow: inset 0 -3px 0 0 var(--green)` (`.confidence-improved`) for words with >10% better confidence than the same position in the other column, red (`.confidence-degraded`) for >10% worse
+- **Legend bar** explaining the visual indicators
+- Columns stack vertically on screens ≤768px
+- Old `timeupdate` listeners are cleaned up when columns are rebuilt via selector changes
+
+The intended iterative workflow: clean → align → edit → align again → compare both → repeat until all words are green.
 
 ### Manual version text is always loaded from the transcript, never from a stale cache
 In `renderVersionContent`, `type === 'manual'` versions skip the `version.text` check entirely and always load from `transcript.text` (or R2/Supabase if not yet in memory), caching on the `transcript` object rather than the `version` object. This ensures the Manual tab always matches "View Transcript Independently" (`detail?tid=`). Non-manual versions (`cleaned`, `edited`, etc.) still use `version.text` as before.
@@ -485,6 +502,8 @@ Falls back to legacy keys if `transcriptVersions` is empty.
 initState(data), getState(), updateState(key, audioId, value)
 getStatus(audioId), getVersions(audioId), getVersionsByType(audioId, type)
 getBestVersion(audioId), addVersion(audioId, data), updateVersion(audioId, versionId, updates)
+setVersionAlignment(audioId, versionId, alignment)  // store alignment on a specific version + sync legacy key
+getAlignedVersions(audioId)                          // → versions with .alignment.words attached
 getAudiosByTranscriptId(transcriptId), addTranscript(transcript)
 getFilteredRows(filter, searchTerm, sortCol, sortDir, yearFilter, monthFilter, typeFilter)
 getFilterCounts()         // returns counts for all filter pill keys (including 'rejected')
@@ -566,7 +585,7 @@ Confidence chip classes: `.confidence-high` (≥0.8), `.confidence-mid` (≥0.4)
 
 ### alignment.js
 ```javascript
-alignRow(audioId, state, textOverride = null)  // retries 3× on 502/504/network errors with 10s delay, 5-min timeout
+alignRow(audioId, state, textOverride = null, versionId = null)  // retries 3×; stores alignment on version if versionId provided
 batchAlign(audioIds, state, onProgress)
 transcribeAudio(audioId, audioUrl, modelConfig)  // not yet used in the app — placeholder for step 7
 ```
