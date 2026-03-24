@@ -229,22 +229,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         panel.appendChild(karaokeBtn);
       }
-    } else {
-      // mapped or cleaned: show basic info + karaoke if aligned
-      const info = document.createElement('div');
-      info.className = 'expanded-info';
-      info.textContent = `Status: ${status}`;
-      panel.appendChild(info);
-
-      if (state.alignments[audioId]) {
-        const karaokeBtn = document.createElement('button');
-        karaokeBtn.className = 'bulk-btn';
-        karaokeBtn.textContent = 'Karaoke Player';
-        karaokeBtn.addEventListener('click', () => {
-          renderKaraokePlayer(audioId, getState());
-        });
-        panel.appendChild(karaokeBtn);
-      }
     }
 
 
@@ -467,20 +451,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (e.key === ' ') {
       // Space = play/pause audio
       e.preventDefault();
-      const audioEl = document.querySelector('.expanded-panel audio, .karaoke-player audio');
+      const audioEl = document.querySelector('.expanded-panel audio, .karaoke-modal audio');
       if (audioEl) {
         if (audioEl.paused) audioEl.play();
         else audioEl.pause();
       }
     } else if (e.key === 'ArrowLeft') {
       // Seek -5s
-      const audioEl = document.querySelector('.expanded-panel audio, .karaoke-player audio');
+      const audioEl = document.querySelector('.expanded-panel audio, .karaoke-modal audio');
       if (audioEl) {
         audioEl.currentTime = Math.max(0, audioEl.currentTime - 5);
       }
     } else if (e.key === 'ArrowRight') {
       // Seek +5s
-      const audioEl = document.querySelector('.expanded-panel audio, .karaoke-player audio');
+      const audioEl = document.querySelector('.expanded-panel audio, .karaoke-modal audio');
       if (audioEl) {
         audioEl.currentTime = Math.min(audioEl.duration || 0, audioEl.currentTime + 5);
       }

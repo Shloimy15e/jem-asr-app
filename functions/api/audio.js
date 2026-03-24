@@ -1,6 +1,16 @@
 // Proxy audio from R2 to avoid CORS issues
 // GET /api/audio?url=<encoded-r2-url>
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+export async function onRequestOptions() {
+  return new Response(null, { headers: CORS_HEADERS });
+}
+
 export async function onRequestGet(context) {
   const reqUrl = new URL(context.request.url);
   const url = reqUrl.searchParams.get('url');
@@ -14,6 +24,9 @@ export async function onRequestGet(context) {
     const parsed = new URL(url);
     if (parsed.hostname !== 'audio.kohnai.ai') {
       return new Response('Forbidden: only audio.kohnai.ai URLs allowed', { status: 403 });
+    }
+    if (parsed.protocol !== 'https:') {
+      return new Response('Forbidden: only https URLs allowed', { status: 400 });
     }
   } catch {
     return new Response('Invalid URL', { status: 400 });

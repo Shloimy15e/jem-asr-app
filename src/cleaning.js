@@ -43,6 +43,8 @@ export function cleanQuestionMarks(text) {
   return t;
 }
 
+// Note: cleanEllipsis overlaps with cleanSymbols (which already removes `…` and `..`).
+// Kept as a standalone pass for the detail page's individual pass buttons.
 export function cleanEllipsis(text) {
   // Remove ellipsis patterns (multiple dots, Unicode ellipsis character)
   let t = text;
@@ -96,7 +98,8 @@ async function fetchTranscriptText(transcript) {
   if (transcript.text) return transcript.text;
   if (!transcript.r2TranscriptLink) return transcript.firstLine || '';
   try {
-    const resp = await fetch(transcript.r2TranscriptLink);
+    const filename = transcript.r2TranscriptLink.split('/').pop();
+    const resp = await fetch('/api/transcript?name=' + encodeURIComponent(filename));
     if (!resp.ok) return transcript.firstLine || '';
     const text = await resp.text();
     if (text && text.trim()) {

@@ -1,4 +1,4 @@
-import { generateSRT, generateVTT } from './utils.js';
+import { generateSRT, generateVTT, getConfidenceLevel, downloadFile } from './utils.js';
 
 export function renderKaraokePlayer(audioId, state) {
   const entry = state.audio.find(a => a.id === audioId);
@@ -106,7 +106,7 @@ export function renderKaraokePlayer(audioId, state) {
   words.forEach((w, idx) => {
     const span = document.createElement('span');
     const conf = typeof w.confidence === 'number' ? w.confidence : 1;
-    const level = conf >= 0.8 ? 'high' : conf >= 0.4 ? 'mid' : 'low';
+    const level = getConfidenceLevel(conf);
     span.className = `karaoke-word word-chip confidence-${level}`;
     span.title = `${(conf * 100).toFixed(0)}% confidence`;
     span.textContent = w.word;
@@ -163,14 +163,3 @@ export function renderKaraokePlayer(audioId, state) {
   document.body.appendChild(overlay);
 }
 
-// Note: duplicates similar logic in utils.js exportCSV. Kept here because
-// karaoke.js needs a generic download helper and consolidation is deferred.
-export function downloadFile(content, filename, mimeType) {
-  const blob = new Blob([content], { type: mimeType || 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}

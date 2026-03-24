@@ -48,6 +48,12 @@ export async function onRequestPost(context) {
           { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
         );
       }
+      if (parsedUrl.protocol !== 'https:') {
+        return new Response(
+          JSON.stringify({ error: 'audio_url must use https' }),
+          { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
+        );
+      }
 
       const audioResp = await fetch(payload.audio_url);
       if (!audioResp.ok) {

@@ -148,6 +148,21 @@ export function unlinkMatch(audioId) {
   if (state.transcriptVersions && state.transcriptVersions[audioId]) {
     delete state.transcriptVersions[audioId];
   }
+  // Persist deletions to localStorage (direct mutations above bypass updateState/saveToStorage)
+  try {
+    const persist = {
+      transcriptVersions: state.transcriptVersions,
+      mappings: state.mappings,
+      cleaning: state.cleaning,
+      alignments: state.alignments,
+      reviews: state.reviews,
+      benchmarks: state.benchmarks,
+      asrModels: state.asrModels,
+      trims: state.trims,
+      audioNames: state.audioNames,
+    };
+    localStorage.setItem('jem-asr-state', JSON.stringify(persist));
+  } catch(e) { /* ignore quota/serialization errors */ }
 }
 
 export function renderSearchModal(container, state, onSelect) {
