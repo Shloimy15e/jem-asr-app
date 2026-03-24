@@ -440,15 +440,23 @@ The detail page has a **"Configure ASR Providers"** panel (gear icon in the Proc
 - Auth flow in `transcribe.js`: service account JSON → RS256 JWT signed with Web Crypto API → POST `oauth2.googleapis.com/token` → Bearer access token → `{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/endpoints/{endpointId}:generateContent`
 - If `gemini_sa_json` is present in the payload the worker uses Vertex AI; if only `gemini_api_key` is present it falls back to the public Gemini API (`generativelanguage.googleapis.com/v1beta/...`)
 
-**State structure** (`state.transcribeProviders.gemini`):
+**Secrets are stored as Cloudflare Worker secrets — never in localStorage or request payloads:**
+```bash
+npx wrangler pages secret put GEMINI_SA_JSON --project-name jem-asr-app   # full SA JSON from vertex-service-account.json
+npx wrangler pages secret put YL_API_KEY     --project-name jem-asr-app   # Yiddish Labs API key
+```
+The worker reads `context.env.GEMINI_SA_JSON` and `context.env.YL_API_KEY`. The browser only sends non-sensitive config (projectId, region, endpointId, optional yl_endpoint).
+
+**State structure** (`state.transcribeProviders`) — secrets not stored here:
 ```javascript
-{ saJson: '', projectId: 'fink-partnership', region: 'us-central1', endpointId: '5718022314876993536',
-  apiKey: '',  // fallback — for Google AI Studio models only
-  modelId: '' }
+{
+  gemini:      { projectId: 'fink-partnership', region: 'us-central1', endpointId: '5718022314876993536' },
+  whisper:     {},
+  yiddishLabs: { endpoint: '' },  // endpoint optional, defaults to sync API
+}
 ```
 
-**Yiddish Labs API key:** `yl_live_749b662b6534f5b137feb2877d75453f98cd4ae5d725452e319d385038cb85a9`
-Sync endpoint: `https://app.yiddishlabs.com/api/v1/transcriptions/sync`
+**ASR Settings UI** — global toolbar button on the main page (not per-file). Opens the existing modal. Only shows non-secret endpoint config fields + an informational note pointing to CLI for secrets.
 
 ### Manual version text is always loaded from the transcript, never from a stale cache
 In `renderVersionContent`, `type === 'manual'` versions skip the `version.text` check entirely and always load from `transcript.text` (or R2/Supabase if not yet in memory), caching on the `transcript` object rather than the `version` object. This ensures the Manual tab always matches "View Transcript Independently" (`detail?tid=`). Non-manual versions (`cleaned`, `edited`, etc.) still use `version.text` as before.
