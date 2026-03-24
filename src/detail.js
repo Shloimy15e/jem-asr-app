@@ -856,14 +856,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     if (!m) return '';
     const t = getState().transcripts.find(tr => tr.id === m.transcriptId);
     if (!t) return '';
-    if (t.text) return t.text;
-    let text = null;
-    if (t.r2TranscriptLink) {
-      const res = await fetch(t.r2TranscriptLink).catch(() => null);
-      if (res?.ok) text = await res.text().catch(() => null);
-    }
-    if (!text && t.id) text = await loadTranscriptText(t.id);
-    if (text) t.text = text; // cache on transcript object for this session
+    const text = await loadFullText(t);
     return text || t.firstLine || '';
   }
   async function getOriginalText() {
@@ -935,7 +928,8 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       const textForAlignment = await getCurrentText();
       await alignRow(audioId, getState(), textForAlignment);
     } catch (err) {
-      alignBtn.textContent = 'Error: ' + err.message;
+      alignBtn.textContent = 'Alignment failed — click to retry';
+      alignBtn.disabled = false;
       return;
     }
     const s = getState();
@@ -983,20 +977,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
   // Speed controls if we have audio + alignment
   if (playerEl && words.length > 0) {
-    const speedBar = document.createElement('div');
-    speedBar.className = 'word-view-speed-bar';
-    [0.5, 1, 1.25, 1.5, 2].forEach(speed => {
-      const btn = document.createElement('button');
-      btn.className = 'speed-btn' + (speed === 1 ? ' active' : '');
-      btn.textContent = speed + 'x';
-      btn.addEventListener('click', () => {
-        playerEl.playbackRate = speed;
-        speedBar.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-      });
-      speedBar.appendChild(btn);
-    });
-    viewer.appendChild(speedBar);
+    viewer.appendChild(renderSpeedBar(playerEl, [0.5, 1, 1.25, 1.5, 2]));
   }
 
   // Word grid
@@ -1018,22 +999,13 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
   if (hasWordText) {
     // We have alignment — show word chips with confidence + diff
-    const removedWords = new Set();
-    if (cleaning && origText !== cleanText) {
-      // Find words that were in original but not in cleaned
-      const origTokens = origText.split(/\s+/).filter(Boolean);
-      const cleanTokens = new Set(cleanText.split(/\s+/).filter(Boolean));
-      origTokens.forEach(w => { if (!cleanTokens.has(w)) removedWords.add(w); });
-    }
-
-    if (words.length > 0) console.log('[WordView] sample words:', words.slice(0, 5));
     words.forEach((w, idx) => {
       const span = document.createElement('span');
       const conf = typeof w.confidence === 'number' ? w.confidence : 1;
       const level = conf >= 0.8 ? 'high' : conf >= 0.4 ? 'mid' : 'low';
       span.className = `word-chip confidence-${level}`;
       const wordText = w.word || w.text || '';
-      span.title = `"${wordText}" ${(conf * 100).toFixed(0)}% | ${w.start.toFixed(2)}s–${w.end.toFixed(2)}s`;
+      span.title = `"${wordText}" ${(conf * 100).toFixed(0)}% | ${(w.start ?? 0).toFixed(2)}s–${(w.end ?? 0).toFixed(2)}s`;
       span.textContent = wordText;
       span.dataset.idx = idx;
 
@@ -1049,8 +1021,11 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       chipEls.push(span);
     });
 
-    // Timeupdate highlight
+    // Timeupdate highlight — remove any previous handler to prevent stacking
     if (playerEl) {
+      if (playerEl._wordViewTimeUpdate) {
+        playerEl.removeEventListener('timeupdate', playerEl._wordViewTimeUpdate);
+      }
       let prevActive = null;
       const onTimeUpdate = () => {
         const t = playerEl.currentTime;
@@ -1067,6 +1042,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
         }
         prevActive = activeIdx;
       };
+      playerEl._wordViewTimeUpdate = onTimeUpdate;
       playerEl.addEventListener('timeupdate', onTimeUpdate);
     }
 
