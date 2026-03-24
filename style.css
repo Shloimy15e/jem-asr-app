@@ -644,23 +644,11 @@ input {
 
 /* === Modal Overlay === */
 .modal-overlay,
-.karaoke-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 200;
-}
-
 .modal-overlay[hidden] {
   display: none;
 }
 
-.modal,
-.karaoke-modal {
+.modal {
   position: relative;
   width: 90%;
   max-width: 900px;
@@ -1104,50 +1092,6 @@ input {
 }
 
 /* === Karaoke Modal Styles === */
-.karaoke-modal {
-  padding: 24px;
-}
-
-.karaoke-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 12px;
-}
-
-.karaoke-audio {
-  width: 100%;
-  height: 42px;
-  border-radius: var(--radius);
-  margin-bottom: 12px;
-}
-
-.karaoke-speed-bar {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
-.karaoke-export-bar {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
-  justify-content: flex-end;
-}
-
-.karaoke-word-grid {
-  display: flex;
-  flex-wrap: wrap;
-  direction: rtl;
-  gap: 4px;
-  padding: 16px;
-  background: var(--bg);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  max-height: 400px;
-  overflow-y: auto;
-  line-height: 2;
-}
 
 /* === Suggestions (mapping.js) === */
 .suggestions-container {
