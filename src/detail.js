@@ -974,10 +974,10 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
         const fullAlignment = words ? { ...alignment, words } : alignment;
         if (words) updateState('alignments', audioId, fullAlignment);
         placeholder.remove();
-        renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl);
+        renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl, activeVersionRef);
       });
     } else {
-      renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl);
+      renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef);
     }
   }
 
@@ -1178,7 +1178,7 @@ function renderCompareView(audioId, alignedVersions, container, pageContainer, p
   wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl) {
+function renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef) {
   const origText = cleaning?.originalText || '';
   const cleanText = cleaning?.cleanedText || origText;
   const words = alignment?.words || [];
@@ -1395,7 +1395,13 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       if (openInput) openInput.blur();
       const currentState = getState();
       const currentAlignment = currentState.alignments?.[audioId] || alignment;
-      updateState('alignments', audioId, { ...currentAlignment, words: editModeWords });
+      const updatedAlignment = { ...currentAlignment, words: editModeWords };
+      updateState('alignments', audioId, updatedAlignment);
+      // Also update the active version's alignment so Compare Versions stays in sync
+      const versionId = activeVersionRef?.id;
+      if (versionId) {
+        setVersionAlignment(audioId, versionId, updatedAlignment);
+      }
       exitEditMode();
       editStatus.textContent = 'Saved';
       setTimeout(() => { editStatus.textContent = ''; }, 2500);
