@@ -529,10 +529,19 @@ transcribeAudio(audioId, audioUrl, modelConfig)
 
 Request to `/api/align`:
 ```json
-{ "mode": "align", "audio_base64": "...", "audio_format": ".mp3", "text": "...", "language": "yi" }
+// Untrimmed R2 audio — URL passed directly (avoids 413 Cloudflare body-size limit):
+{ "mode": "align", "audio_url": "https://audio.kohnai.ai/training/...", "text": "...", "language": "yi" }
+
+// Trimmed audio or non-R2 sources — base64 WAV downsampled to 16 kHz mono:
+{ "mode": "align", "audio_base64": "...", "audio_format": ".wav", "text": "...", "language": "yi" }
 ```
 
+**GPU server must support `audio_url`** — when present, the server fetches the audio from that URL itself. The R2 bucket is publicly accessible so no auth is needed. `audio_base64` still works for trimmed/non-R2 audio.
+
 Response parsing: `data.timestamps[]` first, fallback to `data.segments[].words[]`. Confidence field: `confidence → probability → score`.
+
+### Alignment 413 Payload Too Large
+Cloudflare Pages rejects request bodies over ~25 MB. A 20-minute MP3 at 128 kbps base64-encodes to ~25 MB — longer files will 413. Fix: for untrimmed R2 audio, `alignment.js` sends `audio_url` instead of fetching and encoding the file. For trimmed audio, the crop is downsampled to 16 kHz mono WAV (~6× smaller than stereo 44.1 kHz) before encoding. The GPU server at `align.kohnai.ai` must accept `audio_url` and fetch the audio itself.
 
 ### karaoke.js
 ```javascript
