@@ -2039,6 +2039,17 @@ input {
   background: var(--orange-dim);
 }
 
+.diff-row-rejected {
+  opacity: 0.38;
+  background: transparent !important;
+}
+
+.diff-row-rejected .diff-word-content,
+.diff-row-rejected .diff-edit-row {
+  text-decoration: line-through;
+  color: var(--text-secondary);
+}
+
 .diff-row-linenum {
   min-width: 28px;
   color: var(--text-muted);
@@ -2087,6 +2098,13 @@ input {
   border-radius: 2px;
 }
 
+.diff-word-added {
+  background: rgba(74, 222, 128, 0.15);
+  color: var(--green);
+  padding: 1px 2px;
+  border-radius: 2px;
+}
+
 /* Editable cleaned row below */
 .diff-edit-row {
   flex-basis: 100%;
@@ -2107,6 +2125,48 @@ input {
   border-color: var(--accent);
   background: var(--surface);
   color: var(--text);
+}
+
+/* Pass preview modal — wide diff view */
+.pass-preview-modal {
+  width: 92%;
+  max-width: 1100px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.pass-preview-modal .modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.pass-preview-modal .modal-header h2 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.pass-preview-modal .diff-actions {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.pass-preview-modal .diff-rows-container {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+}
+
+.pass-preview-modal .diff-apply-bar {
+  flex-shrink: 0;
 }
 
 /* Cleaning button bar */

@@ -1,6 +1,8 @@
 import { updateState } from './state.js';
+import { loadTranscriptText } from './db.js';
 
 // Individual cleaning passes
+
 export function cleanBrackets(text) {
   return text.replace(/\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]/g, '');
 }
@@ -18,49 +20,57 @@ export function cleanSectionMarkers(text) {
   return t;
 }
 
+// Remove surrounding quotation marks from words, preserving Hebrew abbreviation
+// marks that appear between two Hebrew letters (e.g., בס"ד, כ"ח, ה'תשנ"ב).
 export function cleanSurroundingQuotes(text) {
-  // Remove surrounding quotation marks (Hebrew/English: "", «», ״״, "", '')
   let t = text;
-  t = t.replace(/^[""\u201C\u201D\u00AB\u00BB\u05F4\u2018\u2019']+/gm, '');
-  t = t.replace(/[""\u201C\u201D\u00AB\u00BB\u05F4\u2018\u2019']+$/gm, '');
+  // Normalize smart double quotes to ASCII "
+  t = t.replace(/[\u201C\u201D]/g, '"');
+  // Protect abbreviation marks: " between two Hebrew letters (like בס"ד)
+  t = t.replace(/([\u05D0-\u05EA])"([\u05D0-\u05EA])/g, '$1\x00$2');
+  // Protect ״ (U+05F4 gershayim) between two Hebrew letters
+  t = t.replace(/([\u05D0-\u05EA])\u05F4([\u05D0-\u05EA])/g, '$1\x01$2');
+  // Remove all remaining " and ״
+  t = t.replace(/["״]/g, '');
+  // Restore protected abbreviation marks
+  t = t.replace(/\x00/g, '"');
+  t = t.replace(/\x01/g, '\u05F4');
   return t;
 }
 
+// Remove dash/hyphen characters used as separators.
+// Keeps hyphens inside compound words (e.g., ראשי-תיבות).
 export function cleanHyphens(text) {
-  // Normalize em-dashes, en-dashes, multiple hyphens to a single space
   let t = text;
-  t = t.replace(/[\u2014\u2013]/g, ' ');   // em-dash, en-dash → space
-  t = t.replace(/-{2,}/g, ' ');            // multiple hyphens → space
-  t = t.replace(/\s*-\s*-\s*/g, ' ');      // spaced double hyphens
+  // Remove en dash, em dash, horizontal bar (always separators)
+  t = t.replace(/[–—\u2012\u2014\u2015]/g, '');
+  // Remove hyphen at beginning of line (list marker: "- item")
+  t = t.replace(/^(\s*)-+\s*/gm, '$1');
+  // Remove hyphen surrounded by spaces (word separator: "a - b")
+  t = t.replace(/\s+-\s+/g, ' ');
+  // Remove hyphen at end of line preceded by space
+  t = t.replace(/\s+-\s*$/gm, '');
   return t;
 }
 
+// Remove question mark characters
 export function cleanQuestionMarks(text) {
-  // Collapse multiple question marks and remove isolated/misplaced ones
-  let t = text;
-  t = t.replace(/\?{2,}/g, '?');           // ??? → ?
-  t = t.replace(/^\s*\?\s*$/gm, '');       // lines that are just a ?
-  return t;
+  return text.replace(/\?/g, '');
 }
 
-// Note: cleanEllipsis overlaps with cleanSymbols (which already removes `…` and `..`).
-// Kept as a standalone pass for the detail page's individual pass buttons.
+// Remove sequences of 2 or more consecutive dots (ellipsis)
 export function cleanEllipsis(text) {
-  // Remove ellipsis patterns (multiple dots, Unicode ellipsis character)
-  let t = text;
-  t = t.replace(/\u2026/g, '');            // Unicode ellipsis …
-  t = t.replace(/\.{2,}/g, '');            // two or more dots
-  return t;
+  return text.replace(/\.{2,}/g, '');
 }
 
 export function cleanSymbols(text) {
-  // Remove punctuation/symbols that aren't part of Hebrew words
   let t = text;
-  t = t.replace(/[\u200B-\u200F\uFEFF]/g, '');
-  t = t.replace(/[\u2018\u2019]/g, "'");
-  t = t.replace(/[\u201C\u201D]/g, '"');
-  t = t.replace(/[!?;:\-–—…"״]+/g, '');
-  t = t.replace(/\.{2,}/g, '');
+  t = t.replace(/[\u200B-\u200F\uFEFF]/g, ''); // zero-width chars
+  t = t.replace(/[\u2018\u2019]/g, "'");        // smart single quotes → '
+  t = cleanSurroundingQuotes(t);
+  t = cleanHyphens(t);
+  t = cleanQuestionMarks(t);
+  t = cleanEllipsis(t);
   return t;
 }
 
@@ -96,18 +106,20 @@ export function calculateCleanRate(rawText, cleanedText) {
 // Should eventually be replaced with a shared helper (e.g., loadTranscriptText in db.js).
 async function fetchTranscriptText(transcript) {
   if (transcript.text) return transcript.text;
-  if (!transcript.r2TranscriptLink) return transcript.firstLine || '';
-  try {
-    const filename = transcript.r2TranscriptLink.split('/').pop();
-    const resp = await fetch('/api/transcript?name=' + encodeURIComponent(filename));
-    if (!resp.ok) return transcript.firstLine || '';
-    const text = await resp.text();
-    if (text && text.trim()) {
-      transcript.text = text;
-      return text;
-    }
-  } catch {
-    // CORS or network error — fall back to firstLine
+  let text = null;
+  if (transcript.r2TranscriptLink) {
+    try {
+      const filename = transcript.r2TranscriptLink.split('/').pop();
+      const resp = await fetch('/api/transcript?name=' + encodeURIComponent(filename));
+      if (resp.ok) text = await resp.text();
+    } catch { /* network error */ }
+  }
+  if (!text && transcript.id) {
+    text = await loadTranscriptText(transcript.id);
+  }
+  if (text?.trim()) {
+    transcript.text = text; // cache for session
+    return text;
   }
   return transcript.firstLine || '';
 }
@@ -130,8 +142,10 @@ export async function batchClean(audioIds, state, onProgress) {
     const cleanedText = cleanText(rawText);
     const cleanRate = calculateCleanRate(rawText, cleanedText);
 
+    // Preserve the original raw text — only set originalText if not already stored
+    const existing = state.cleaning && state.cleaning[audioId];
     updateState('cleaning', audioId, {
-      originalText: rawText,
+      originalText: existing?.originalText || rawText,
       cleanedText,
       cleanRate,
       cleanedAt: new Date().toISOString(),
