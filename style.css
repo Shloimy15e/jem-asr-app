@@ -644,23 +644,11 @@ input {
 
 /* === Modal Overlay === */
 .modal-overlay,
-.karaoke-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 200;
-}
-
 .modal-overlay[hidden] {
   display: none;
 }
 
-.modal,
-.karaoke-modal {
+.modal {
   position: relative;
   width: 90%;
   max-width: 900px;
@@ -1104,50 +1092,6 @@ input {
 }
 
 /* === Karaoke Modal Styles === */
-.karaoke-modal {
-  padding: 24px;
-}
-
-.karaoke-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 12px;
-}
-
-.karaoke-audio {
-  width: 100%;
-  height: 42px;
-  border-radius: var(--radius);
-  margin-bottom: 12px;
-}
-
-.karaoke-speed-bar {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
-.karaoke-export-bar {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
-  justify-content: flex-end;
-}
-
-.karaoke-word-grid {
-  display: flex;
-  flex-wrap: wrap;
-  direction: rtl;
-  gap: 4px;
-  padding: 16px;
-  background: var(--bg);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  max-height: 400px;
-  overflow-y: auto;
-  line-height: 2;
-}
 
 /* === Suggestions (mapping.js) === */
 .suggestions-container {
@@ -2045,7 +1989,9 @@ input {
 }
 
 .diff-row-rejected .diff-word-content,
-.diff-row-rejected .diff-edit-row {
+.diff-row-rejected .diff-edit-row,
+.diff-row-rejected .diff-line-removed,
+.diff-row-rejected .diff-line-added {
   text-decoration: line-through;
   color: var(--text-secondary);
 }
@@ -2103,6 +2049,38 @@ input {
   color: var(--green);
   padding: 1px 2px;
   border-radius: 2px;
+}
+
+/* Row-level diff lines */
+.diff-line-removed {
+  background: var(--red-dim);
+  color: var(--red);
+  text-decoration: line-through;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-family: 'SBL Hebrew', 'David Libre', 'Noto Serif Hebrew', serif;
+  word-break: break-word;
+  font-size: 0.85rem;
+  line-height: 1.8;
+}
+
+.diff-line-added {
+  background: var(--green-dim);
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-family: 'SBL Hebrew', 'David Libre', 'Noto Serif Hebrew', serif;
+  word-break: break-word;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  outline: none;
+  border: 1px dashed transparent;
+  line-height: 1.8;
+}
+
+.diff-line-added:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+  color: var(--text);
 }
 
 /* Editable cleaned row below */

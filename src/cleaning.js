@@ -1,4 +1,4 @@
-import { updateState } from './state.js';
+import { updateState, getVersions, addVersion, updateVersion } from './state.js';
 import { loadTranscriptText } from './db.js';
 
 // Individual cleaning passes
@@ -144,12 +144,31 @@ export async function batchClean(audioIds, state, onProgress) {
 
     // Preserve the original raw text — only set originalText if not already stored
     const existing = state.cleaning && state.cleaning[audioId];
+    const originalText = existing?.originalText || rawText;
     updateState('cleaning', audioId, {
-      originalText: existing?.originalText || rawText,
+      originalText,
       cleanedText,
       cleanRate,
       cleanedAt: new Date().toISOString(),
     });
+    // Create or update a cleaned version so version tabs stay in sync
+    const versions = getVersions(audioId);
+    const existingCleaned = versions.find(v => v.type === 'cleaned');
+    if (existingCleaned) {
+      updateVersion(audioId, existingCleaned.id, {
+        text: cleanedText,
+        originalText,
+        cleanRate,
+      });
+    } else {
+      addVersion(audioId, {
+        type: 'cleaned',
+        text: cleanedText,
+        originalText,
+        cleanRate,
+        createdBy: 'system',
+      });
+    }
 
     if (onProgress) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);

@@ -34,11 +34,9 @@ flowchart TD
     G -- Yes --> H([✅ Training Data\nClean audio-text pairs\nwith timestamps])
     G -- No --> D
 
-    H --> I[5️⃣ KARAOKE\nPlay audio with words\nhighlighting in sync.\nExport as SRT/VTT subtitles.]
+    J([🏆 5 Gold Standard Files\nPerfect reference transcripts]) --> K[5️⃣ BENCHMARK\nRun ASR models on gold files.\nMeasure accuracy before & after training.\nThese NEVER enter the training set.]
 
-    J([🏆 5 Gold Standard Files\nPerfect reference transcripts]) --> K[6️⃣ BENCHMARK\nRun ASR models on gold files.\nMeasure accuracy before & after training.\nThese NEVER enter the training set.]
-
-    H --> L[7️⃣ TRANSCRIPTION\nUse the trained model to\nauto-transcribe the remaining\n2,860 untranscribed files.]
+    H --> L[6️⃣ TRANSCRIPTION\nUse the trained model to\nauto-transcribe the remaining\n2,860 untranscribed files.]
 ```
 
 ---
@@ -58,7 +56,6 @@ graph LR
         MAP[mapping.js\nMatch audio ↔ transcript]
         CLEAN[cleaning.js\nStrip editorial noise]
         REV[review.js\nHuman verification panel]
-        KAR[karaoke.js\nAudio player + word sync]
         BENCH[benchmark.js\nWER/CER scoring]
         UTIL[utils.js\nShared helpers]
     end
@@ -87,7 +84,6 @@ graph LR
     APP --> MAP
     APP --> CLEAN
     APP --> REV
-    APP --> KAR
     APP --> BENCH
     STATE --> UTIL
     MAP --> UTIL
@@ -141,14 +137,11 @@ The review panel shows:
 - Inline editing: click any word to fix it
 - Approve / Reject / Skip buttons
 
-### 5. Karaoke — *"Listen and watch the words highlight"*
-An audio player where words light up as they're spoken. Used to verify alignment quality during review, and to export subtitle files (SRT/VTT) for video players.
-
-### 6. Benchmark — *"Is the AI actually getting better?"*
+### 5. Benchmark — *"Is the AI actually getting better?"*
 Five gold-standard files with verified-perfect transcripts are used to measure model accuracy. The app runs them through any configured ASR model and calculates WER (Word Error Rate) and CER (Character Error Rate). **These files are permanently locked out of the training set.**
 
-### 7. Transcription — *"Auto-transcribe the rest of the archive"*
-Once the model is trained and benchmark scores look good, this mode sends the remaining 2,860 untranscribed audio files to the fine-tuned model for automatic transcription. The results go through the same review → karaoke → approve pipeline.
+### 6. Transcription — *"Auto-transcribe the rest of the archive"*
+Once the model is trained and benchmark scores look good, this mode sends the remaining 2,860 untranscribed audio files to the fine-tuned model for automatic transcription. The results go through the same review → approve pipeline.
 
 ---
 
@@ -350,25 +343,24 @@ In `detail.js`, versions with `type === 'manual'` render the textarea with `read
 ### Cleaning pass buttons are async
 `getCurrentText()` in `detail.js` is async — it fetches the full transcript text from R2 or Supabase if no cleaning data exists yet (startup optimization means `transcript.text` is null). Pass buttons show "Loading…" while fetching, then open the diff preview. Always `await getCurrentText()` before running a pass.
 
-### wordDiffTokens emits both removed and added tokens
-`wordDiffTokens(origLine, cleanLine)` returns tokens of three kinds: `{ text, isSpace }` (unchanged), `{ text, removed: true }` (struck-through red), and `{ text, added: true }` (green replacement). When a word is removed, the function peeks at the next clean word — if it doesn't appear later in orig, it's treated as a replacement and emitted as `added`. CSS classes in `style.css`: `.diff-word-added` (green background) and `.diff-row-rejected` (opacity 0.38 + strikethrough). All three token-rendering sites in `detail.js` must handle `tok.added`.
+### Diff view uses row-by-row display (not word-level)
+Cleaning pass diffs show two rows per changed line: the original line (`.diff-line-removed` — red strikethrough) and the cleaned line (`.diff-line-added` — green, editable). This applies to both the cleaning pass preview modal and the detail page diff view. The `wordDiffTokens()` function still exists but is no longer used for rendering diffs.
 
 ### Rejected diff rows have visual feedback
-`.diff-row-rejected` class sets `opacity: 0.38` and strikes through child text. Applied by checkbox `change` handler and the "Reject All" button. "Accept All" removes it from all rows.
+`.diff-row-rejected` class sets `opacity: 0.38` and strikes through child text (including `.diff-line-removed` and `.diff-line-added`). Applied by checkbox `change` handler and the "Reject All" button. "Accept All" removes it from all rows.
 
 ### Audio playback speed controls
-Speed buttons appear in three places, all using the `.speed-btn` / `.word-view-speed-bar` CSS classes:
+Speed buttons appear in two places, using the `.speed-btn` / `.word-view-speed-bar` CSS classes:
 - **Main audio player** (detail page) — speeds: 1x, 1.25x, 1.5x, 2x.
 - **Word view** (`renderWordView()` in `detail.js`) — speeds: 0.5x, 1x, 1.25x, 1.5x, 2x.
-- **Karaoke player** (`karaoke.js`) — speeds: 0.5x, 1x, 1.25x, 1.5x, 2x.
 
-The main player and word view use a shared `renderSpeedBar(playerEl, speeds)` helper in `detail.js`. All three set `audioElement.playbackRate` and toggle the `.active` class on the clicked button.
+Both use a shared `renderSpeedBar(playerEl, speeds)` helper in `detail.js`. They set `audioElement.playbackRate` and toggle the `.active` class on the clicked button.
 
-### Karaoke inline word editing
+### Word view inline word editing
 In `detail.js` `renderWordView()`, an **"Edit Words"** toggle button switches between play mode and edit mode:
 - Edit mode: clicking a chip opens an inline `<input>`; Tab advances to next word; Enter/Escape commits/cancels
 - A bulk RTL textarea shows all words space-joined; "Apply Text to Words" maps back by position (warns on count mismatch)
-- "Save Word Edits" calls `updateState('alignments', audioId, { ...alignment, words: editModeWords })`
+- "Save Word Edits" calls `updateState('alignments', audioId, { ...alignment, words: editModeWords })` AND `setVersionAlignment()` to sync the active version's alignment
 - Seek-click handlers are stored as `chip._seekHandler` and disabled/restored on mode toggle
 
 ### Mobile card view opens detail page
@@ -378,7 +370,7 @@ At ≤480px the table switches to card view (`buildCardView` in `table.js`). Eac
 Clicking a table row calls `onRowExpand(audioId)` in `app.js`, which dispatches based on status:
 - `unmapped` → expands inline to show mapping suggestions + Search Transcripts button
 - `mapped` / `cleaned` → navigates directly to `detail.html?id=` in a new tab (no inline panel)
-- `aligned` / `approved` → expands inline to show the review panel + Karaoke button
+- `aligned` / `approved` → expands inline to show the review panel + Open Detail Page button
 - `benchmark` → expands inline to show benchmark tools
 
 **Arrow keys** (`↑`/`↓`) only highlight/select rows — they do NOT trigger expansion or navigation. Only `Enter` or a click expands/navigates.
@@ -390,6 +382,9 @@ Column `showWhen` functions use `filterMatchesStatus(filter, statuses)` which ex
 
 ### Audio name inline editing stops propagation on the input
 In `table.js` `case 'name'`, clicking the `nameSpan` replaces it with an `<input>` and calls `e.stopPropagation()`. The `<input>` itself also has a click handler calling `e.stopPropagation()` — without this, clicking inside the input to reposition the cursor would bubble to the `<tr>` click handler and trigger row navigation.
+
+### Cleaning passes chain via the cleaned version
+When a cleaning pass preview is applied ("Apply Selected"), it both updates the legacy `state.cleaning` key AND creates/updates a `cleaned` version in `transcriptVersions`. Since `getBestVersion` prioritizes `cleaned` over `manual`, the cleaned tab becomes selected on re-render. The next cleaning pass then reads from the cleaned tab via `getCurrentText()`, giving correct cumulative chaining. `batchClean()` does the same — it creates/updates the `cleaned` version alongside the legacy key.
 
 ### Cleaning passes and alignment use the selected version tab's text
 `renderDetailPage` creates a shared `activeVersionRef = { id }` object and passes it to both `renderMappingSection` and `renderUnifiedWorkSection`. Whenever the user clicks a version tab, `activeVersionRef.id` is updated. `getCurrentText()` in `renderUnifiedWorkSection` reads from the selected version's `.text` for non-manual versions, or falls back to loading the raw transcript from R2/Supabase for the manual version. The alignment button calls `getCurrentText()` and passes the result as `textOverride` to `alignRow(audioId, state, textOverride, currentVersionId)` — so alignment always runs on whatever version is currently displayed, and the result is stored on that specific version.
@@ -437,7 +432,6 @@ jem-asr-app/
 │   ├── cleaning.js             # 5-pass regex cleaner, clean rate, batch clean
 │   ├── alignment.js            # RunPod API calls, confidence parsing, batch align
 │   ├── review.js               # Diff viewer, inline editing, approve/reject
-│   ├── karaoke.js              # Audio player, word highlighting, SRT/VTT export
 │   ├── benchmark.js            # ASR API config, WER/CER calculator, comparison table
 │   ├── detail.js               # Per-file detail page logic
 │   └── utils.js                # parseHebrewDate, normalizeYiddish, levenshtein, CSV
@@ -620,12 +614,6 @@ Data flow: `Browser → CF Worker: { audio_url, text }` (tiny) → `CF Worker �
 
 ### Alignment retry and timeout
 `alignRow` retries 3 times on 502/504 HTTP errors AND network-level errors (connection refused, DNS failure) with a 10-second delay between attempts. Each fetch has a 5-minute `AbortController` timeout. If the alignment button fails, it re-enables with a "click to retry" message rather than staying disabled.
-
-### karaoke.js
-```javascript
-renderKaraokePlayer(audioId, state)   // appends modal to document.body
-downloadFile(content, filename, mimeType)
-```
 
 ### benchmark.js
 ```javascript

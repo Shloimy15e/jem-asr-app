@@ -741,40 +741,27 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
       });
       rowEl.appendChild(cb);
 
-      // Word-level diff: original with removed words struck through
-      const diffContent = document.createElement('div');
-      diffContent.className = 'diff-word-content';
-      diffContent.dir = 'rtl';
+      // Row-by-row diff: original line (red) then cleaned line (green)
+      const diffBlock = document.createElement('div');
+      diffBlock.className = 'diff-block';
 
-      if (!row.clean.trim() && row.orig.trim()) {
-        const allRemoved = document.createElement('span');
-        allRemoved.className = 'diff-word-removed';
-        allRemoved.textContent = row.orig;
-        diffContent.appendChild(allRemoved);
-      } else {
-        const tokens = wordDiffTokens(row.orig, row.clean);
-        tokens.forEach(tok => {
-          if (tok.isSpace) { diffContent.appendChild(document.createTextNode(tok.text)); return; }
-          const span = document.createElement('span');
-          span.textContent = tok.text;
-          if (tok.removed) span.className = 'diff-word-removed';
-          else if (tok.added) span.className = 'diff-word-added';
-          diffContent.appendChild(span);
-        });
-      }
-      rowEl.appendChild(diffContent);
+      const origRow = document.createElement('div');
+      origRow.className = 'diff-line-removed';
+      origRow.dir = 'rtl';
+      origRow.textContent = row.orig;
+      diffBlock.appendChild(origRow);
 
-      // Editable cleaned result
       if (row.clean.trim()) {
-        const editRow = document.createElement('div');
-        editRow.className = 'diff-edit-row';
-        editRow.dir = 'rtl';
-        editRow.contentEditable = 'true';
-        editRow.textContent = row.clean;
-        editRow.title = 'Edit cleaned text before accepting';
-        editRow.addEventListener('blur', () => { row.editedClean = editRow.textContent; });
-        rowEl.appendChild(editRow);
+        const cleanRow = document.createElement('div');
+        cleanRow.className = 'diff-line-added';
+        cleanRow.dir = 'rtl';
+        cleanRow.contentEditable = 'true';
+        cleanRow.textContent = row.clean;
+        cleanRow.title = 'Edit cleaned text before accepting';
+        cleanRow.addEventListener('blur', () => { row.editedClean = cleanRow.textContent; });
+        diffBlock.appendChild(cleanRow);
       }
+      rowEl.appendChild(diffBlock);
     } else {
       const spacer = document.createElement('span');
       spacer.className = 'diff-row-checkbox-spacer';
@@ -820,6 +807,24 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
       cleanRate: calculateCleanRate(rawOriginal, finalText),
       cleanedAt: new Date().toISOString(),
     });
+    // Create or update a cleaned version so subsequent passes chain from this result
+    const versions = getVersions(audioId);
+    const existingCleaned = versions.find(v => v.type === 'cleaned');
+    if (existingCleaned) {
+      updateVersion(audioId, existingCleaned.id, {
+        text: finalText,
+        originalText: rawOriginal,
+        cleanRate: calculateCleanRate(rawOriginal, finalText),
+      });
+    } else {
+      addVersion(audioId, {
+        type: 'cleaned',
+        text: finalText,
+        originalText: rawOriginal,
+        cleanRate: calculateCleanRate(rawOriginal, finalText),
+        createdBy: 'user',
+      });
+    }
     closeModal();
     const s = getState();
     renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
@@ -969,10 +974,10 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
         const fullAlignment = words ? { ...alignment, words } : alignment;
         if (words) updateState('alignments', audioId, fullAlignment);
         placeholder.remove();
-        renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl);
+        renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl, activeVersionRef);
       });
     } else {
-      renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl);
+      renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef);
     }
   }
 
@@ -1173,7 +1178,7 @@ function renderCompareView(audioId, alignedVersions, container, pageContainer, p
   wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl) {
+function renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef) {
   const origText = cleaning?.originalText || '';
   const cleanText = cleaning?.cleanedText || origText;
   const words = alignment?.words || [];
@@ -1390,7 +1395,13 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       if (openInput) openInput.blur();
       const currentState = getState();
       const currentAlignment = currentState.alignments?.[audioId] || alignment;
-      updateState('alignments', audioId, { ...currentAlignment, words: editModeWords });
+      const updatedAlignment = { ...currentAlignment, words: editModeWords };
+      updateState('alignments', audioId, updatedAlignment);
+      // Also update the active version's alignment so Compare Versions stays in sync
+      const versionId = activeVersionRef?.id;
+      if (versionId) {
+        setVersionAlignment(audioId, versionId, updatedAlignment);
+      }
       exitEditMode();
       editStatus.textContent = 'Saved';
       setTimeout(() => { editStatus.textContent = ''; }, 2500);
@@ -1414,22 +1425,18 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
         lineSpan.textContent = orig;
         wordGrid.appendChild(lineSpan);
       } else {
-        // Changed line — word-level diff
-        const lineDiv = document.createElement('span');
-        lineDiv.className = 'word-view-line word-view-line-changed';
-        const tokens = wordDiffTokens(orig, clean);
-        tokens.forEach(tok => {
-          if (tok.isSpace) {
-            lineDiv.appendChild(document.createTextNode(tok.text));
-            return;
-          }
-          const s = document.createElement('span');
-          s.textContent = tok.text;
-          if (tok.removed) s.className = 'diff-word-removed';
-          else if (tok.added) s.className = 'diff-word-added';
-          lineDiv.appendChild(s);
-        });
-        wordGrid.appendChild(lineDiv);
+        // Changed line — row-by-row diff
+        const removedLine = document.createElement('div');
+        removedLine.className = 'word-view-line diff-line-removed';
+        removedLine.textContent = orig;
+        wordGrid.appendChild(removedLine);
+
+        if (clean.trim()) {
+          const addedLine = document.createElement('div');
+          addedLine.className = 'word-view-line diff-line-added';
+          addedLine.textContent = clean;
+          wordGrid.appendChild(addedLine);
+        }
       }
       // Line break
       wordGrid.appendChild(document.createElement('br'));

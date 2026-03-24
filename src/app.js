@@ -5,7 +5,7 @@ import { renderSuggestedMatches, linkMatch, renderSearchModal } from './mapping.
 import { batchClean } from './cleaning.js';
 import { batchAlign } from './alignment.js';
 import { renderReviewPanel, approveAll } from './review.js';
-import { renderKaraokePlayer } from './karaoke.js';
+
 import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark.js';
 import { exportCSV } from './utils.js';
 
@@ -219,15 +219,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         },
       });
 
-      // Karaoke button for aligned rows
+      // Open detail page button for aligned rows
       if (state.alignments[audioId]) {
-        const karaokeBtn = document.createElement('button');
-        karaokeBtn.className = 'bulk-btn';
-        karaokeBtn.textContent = 'Karaoke Player';
-        karaokeBtn.addEventListener('click', () => {
-          renderKaraokePlayer(audioId, getState());
+        const detailBtn = document.createElement('button');
+        detailBtn.className = 'bulk-btn';
+        detailBtn.textContent = 'Open Detail Page';
+        detailBtn.addEventListener('click', () => {
+          window.open(`detail.html?id=${encodeURIComponent(audioId)}`, '_blank');
         });
-        panel.appendChild(karaokeBtn);
+        panel.appendChild(detailBtn);
       }
     }
 
@@ -451,20 +451,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (e.key === ' ') {
       // Space = play/pause audio
       e.preventDefault();
-      const audioEl = document.querySelector('.expanded-panel audio, .karaoke-modal audio');
+      const audioEl = document.querySelector('.expanded-panel audio');
       if (audioEl) {
         if (audioEl.paused) audioEl.play();
         else audioEl.pause();
       }
     } else if (e.key === 'ArrowLeft') {
       // Seek -5s
-      const audioEl = document.querySelector('.expanded-panel audio, .karaoke-modal audio');
+      const audioEl = document.querySelector('.expanded-panel audio');
       if (audioEl) {
         audioEl.currentTime = Math.max(0, audioEl.currentTime - 5);
       }
     } else if (e.key === 'ArrowRight') {
       // Seek +5s
-      const audioEl = document.querySelector('.expanded-panel audio, .karaoke-modal audio');
+      const audioEl = document.querySelector('.expanded-panel audio');
       if (audioEl) {
         audioEl.currentTime = Math.min(audioEl.duration || 0, audioEl.currentTime + 5);
       }
