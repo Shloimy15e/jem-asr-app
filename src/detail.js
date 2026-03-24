@@ -807,6 +807,24 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
       cleanRate: calculateCleanRate(rawOriginal, finalText),
       cleanedAt: new Date().toISOString(),
     });
+    // Create or update a cleaned version so subsequent passes chain from this result
+    const versions = getVersions(audioId);
+    const existingCleaned = versions.find(v => v.type === 'cleaned');
+    if (existingCleaned) {
+      updateVersion(audioId, existingCleaned.id, {
+        text: finalText,
+        originalText: rawOriginal,
+        cleanRate: calculateCleanRate(rawOriginal, finalText),
+      });
+    } else {
+      addVersion(audioId, {
+        type: 'cleaned',
+        text: finalText,
+        originalText: rawOriginal,
+        cleanRate: calculateCleanRate(rawOriginal, finalText),
+        createdBy: 'user',
+      });
+    }
     closeModal();
     const s = getState();
     renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
