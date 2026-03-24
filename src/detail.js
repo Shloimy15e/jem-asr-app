@@ -889,11 +889,11 @@ function renderAsrSection(audioId, state, container, pageContainer) {
         const config = { provider: providerArg, ...providerCfg };
         const text = await transcribeAudio(audioId, audioUrl, config);
         if (!text) throw new Error('Empty transcription returned');
-        // Replace existing asr version if present, otherwise add new
+        // Each model gets its own version slot — only overwrite if same model ran before
         const versions = getVersions(audioId);
-        const existingAsr = versions.find(v => v.type === 'asr');
+        const existingAsr = versions.find(v => v.type === 'asr' && v.model === key);
         if (existingAsr) {
-          updateVersion(audioId, existingAsr.id, { text, model: key, createdAt: new Date().toISOString() });
+          updateVersion(audioId, existingAsr.id, { text, createdAt: new Date().toISOString() });
         } else {
           addVersion(audioId, { type: 'asr', text, model: key, createdAt: new Date().toISOString() });
         }

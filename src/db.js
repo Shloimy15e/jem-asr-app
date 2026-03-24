@@ -98,10 +98,12 @@ export async function syncEdited(audioId, text, audioEntry) {
 export async function syncAsr(audioId, text, modelName, audioEntry) {
   if (text == null) return;
   await ensureAudioFile(audioEntry);
+  // Each model gets its own row: version = 'asr-gemini', 'asr-whisper', 'asr-yiddish-labs', etc.
+  const versionKey = `asr-${modelName || 'unknown'}`;
   const { error } = await supabase.from('transcript_edits').upsert(
     {
       audio_id: audioId,
-      version: 'asr',
+      version: versionKey,
       text,
       created_at: new Date().toISOString(),
       created_by: modelName || 'asr',
@@ -459,13 +461,15 @@ export async function loadFromSupabase() {
       };
     });
 
+    // asr[audioId] = array of { text, model, createdAt } — one entry per model
     const asr = {};
-    (editsData || []).filter(e => e.version === 'asr').forEach(e => {
-      asr[e.audio_id] = {
+    (editsData || []).filter(e => e.version.startsWith('asr-')).forEach(e => {
+      if (!asr[e.audio_id]) asr[e.audio_id] = [];
+      asr[e.audio_id].push({
         text: e.text,
         model: e.created_by,
         createdAt: e.created_at,
-      };
+      });
     });
 
     return { audio, transcripts, mappings, alignments, reviews, cleaning, trims, edited, asr };

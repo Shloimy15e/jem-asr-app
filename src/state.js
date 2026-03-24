@@ -134,23 +134,24 @@ export function mergeSupabaseData(remote) {
     }
   }
 
-  // Restore asr versions loaded from Supabase into transcriptVersions
+  // Restore asr versions loaded from Supabase — one version per model
   if (remote.asr) {
-    for (const [audioId, asrData] of Object.entries(remote.asr)) {
+    for (const [audioId, asrArray] of Object.entries(remote.asr)) {
       const versions = state.transcriptVersions[audioId];
       if (!versions || versions.length === 0) continue;
-      const existing = versions.find(v => v.type === 'asr');
-      if (existing) {
-        existing.text = asrData.text;
-        existing.model = asrData.model;
-      } else {
-        versions.push({
-          id: `tv_${audioId}_asr_restored`,
-          type: 'asr',
-          text: asrData.text,
-          model: asrData.model,
-          createdAt: asrData.createdAt,
-        });
+      for (const asrData of asrArray) {
+        const existing = versions.find(v => v.type === 'asr' && v.model === asrData.model);
+        if (existing) {
+          existing.text = asrData.text;
+        } else {
+          versions.push({
+            id: `tv_${audioId}_asr_${asrData.model}_restored`,
+            type: 'asr',
+            text: asrData.text,
+            model: asrData.model,
+            createdAt: asrData.createdAt,
+          });
+        }
       }
     }
   }
