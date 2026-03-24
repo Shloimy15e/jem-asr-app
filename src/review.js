@@ -159,7 +159,7 @@ export function renderReviewPanel(container, audioId, state, callbacks) {
 
   const cleanContent = document.createElement('div');
   cleanContent.className = 'review-diff-content';
-  const alignmentWords = alignment ? alignment.words : [];
+  const alignmentWords = alignment?.words ?? [];
 
   cleanedWords.forEach((word, i) => {
     const span = document.createElement('span');
