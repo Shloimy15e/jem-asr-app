@@ -225,6 +225,22 @@ function renderDetailPage(audioId, audio, state, container) {
     }, { once: true });
     playerSection.content.appendChild(playerEl);
 
+    // Speed Controls
+    const speedBar = document.createElement('div');
+    speedBar.className = 'word-view-speed-bar';
+    [1, 1.25, 1.5, 2].forEach(speed => {
+      const btn = document.createElement('button');
+      btn.className = 'speed-btn' + (speed === 1 ? ' active' : '');
+      btn.textContent = speed + 'x';
+      btn.addEventListener('click', () => {
+        playerEl.playbackRate = speed;
+        speedBar.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+      speedBar.appendChild(btn);
+    });
+    playerSection.content.appendChild(speedBar);
+
     // Trim Controls
     renderTrimControls(audioId, playerEl, playerSection.content);
   } else {
@@ -969,7 +985,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   if (playerEl && words.length > 0) {
     const speedBar = document.createElement('div');
     speedBar.className = 'word-view-speed-bar';
-    [0.5, 1, 1.5, 2].forEach(speed => {
+    [0.5, 1, 1.25, 1.5, 2].forEach(speed => {
       const btn = document.createElement('button');
       btn.className = 'speed-btn' + (speed === 1 ? ' active' : '');
       btn.textContent = speed + 'x';

@@ -52,7 +52,7 @@ export function renderKaraokePlayer(audioId, state) {
   // Speed controls
   const speedBar = document.createElement('div');
   speedBar.className = 'karaoke-speed-bar';
-  const speeds = [0.5, 1, 1.5, 2];
+  const speeds = [0.5, 1, 1.25, 1.5, 2];
   speeds.forEach(speed => {
     const btn = document.createElement('button');
     btn.className = 'speed-btn' + (speed === 1 ? ' active' : '');
