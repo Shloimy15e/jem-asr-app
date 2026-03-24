@@ -2045,7 +2045,9 @@ input {
 }
 
 .diff-row-rejected .diff-word-content,
-.diff-row-rejected .diff-edit-row {
+.diff-row-rejected .diff-edit-row,
+.diff-row-rejected .diff-line-removed,
+.diff-row-rejected .diff-line-added {
   text-decoration: line-through;
   color: var(--text-secondary);
 }
@@ -2103,6 +2105,38 @@ input {
   color: var(--green);
   padding: 1px 2px;
   border-radius: 2px;
+}
+
+/* Row-level diff lines */
+.diff-line-removed {
+  background: var(--red-dim);
+  color: var(--red);
+  text-decoration: line-through;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-family: 'SBL Hebrew', 'David Libre', 'Noto Serif Hebrew', serif;
+  word-break: break-word;
+  font-size: 0.85rem;
+  line-height: 1.8;
+}
+
+.diff-line-added {
+  background: var(--green-dim);
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-family: 'SBL Hebrew', 'David Libre', 'Noto Serif Hebrew', serif;
+  word-break: break-word;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  outline: none;
+  border: 1px dashed transparent;
+  line-height: 1.8;
+}
+
+.diff-line-added:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+  color: var(--text);
 }
 
 /* Editable cleaned row below */
