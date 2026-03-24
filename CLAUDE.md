@@ -426,37 +426,47 @@ When 2+ versions have alignment data, a **"Compare Versions"** button appears be
 
 The intended iterative workflow: clean → align → edit → align again → compare both → repeat until all words are green.
 
-### ASR Transcription providers — three options, configured per-session in localStorage
-The detail page has a **"Configure ASR Providers"** panel (gear icon in the Processing section) that stores credentials in `state.transcribeProviders` (persisted to localStorage). Three providers:
+### ASR Transcription providers — three options, configured globally via toolbar
+A global **"ASR Settings"** button in the main toolbar opens the config modal (same modal used by benchmark). Settings persist in `state.transcribeProviders` (localStorage). Three providers:
 
 | Provider | CF Worker endpoint | Auth |
 |----------|--------------------|------|
-| **Gemini (fine-tuned)** | `POST /api/transcribe` with `provider:'gemini'` | Vertex AI service account JSON (preferred) OR Gemini API key |
+| **Gemini (fine-tuned)** | `POST /api/transcribe` with `provider:'gemini'` | Vertex AI — `GEMINI_SA_JSON` worker secret |
 | **Whisper** | `POST /api/align` with `mode:'transcribe'` | None — proxied to `align.kohnai.ai` |
-| **Yiddish Labs** | `POST /api/transcribe` with `provider:'yiddish-labs'` | `X-API-KEY` header |
+| **Yiddish Labs** | `POST /api/transcribe` with `provider:'yiddish-labs'` | `YL_API_KEY` worker secret |
 
-**Gemini Vertex AI details** (the fine-tuned model lives on GCP, not Google AI Studio):
-- Project: `fink-partnership`, Region: `us-central1`, Endpoint ID: `5718022314876993536`
-- Auth flow in `transcribe.js`: service account JSON → RS256 JWT signed with Web Crypto API → POST `oauth2.googleapis.com/token` → Bearer access token → `{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/endpoints/{endpointId}:generateContent`
-- If `gemini_sa_json` is present in the payload the worker uses Vertex AI; if only `gemini_api_key` is present it falls back to the public Gemini API (`generativelanguage.googleapis.com/v1beta/...`)
-
-**Secrets are stored as Cloudflare Worker secrets — never in localStorage or request payloads:**
+**Secrets are Cloudflare Worker secrets — never in localStorage or request payloads:**
 ```bash
 npx wrangler pages secret put GEMINI_SA_JSON --project-name jem-asr-app   # full SA JSON from vertex-service-account.json
 npx wrangler pages secret put YL_API_KEY     --project-name jem-asr-app   # Yiddish Labs API key
 ```
-The worker reads `context.env.GEMINI_SA_JSON` and `context.env.YL_API_KEY`. The browser only sends non-sensitive config (projectId, region, endpointId, optional yl_endpoint).
+The worker reads `context.env.GEMINI_SA_JSON` / `context.env.YL_API_KEY`. The browser only sends non-sensitive config (projectId, region, endpointId, optional yl_endpoint).
+
+**Gemini Vertex AI details** (fine-tuned model lives on GCP, not Google AI Studio):
+- Project: `fink-partnership`, Region: `us-central1`, Endpoint ID: `5718022314876993536`
+- Auth flow in `transcribe.js`: SA JSON → RS256 JWT (Web Crypto API) → `oauth2.googleapis.com/token` → Bearer token → `{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/endpoints/{endpointId}:generateContent`
 
 **State structure** (`state.transcribeProviders`) — secrets not stored here:
 ```javascript
 {
   gemini:      { projectId: 'fink-partnership', region: 'us-central1', endpointId: '5718022314876993536' },
   whisper:     {},
-  yiddishLabs: { endpoint: '' },  // endpoint optional, defaults to sync API
+  yiddishLabs: { endpoint: '' },
 }
 ```
 
-**ASR Settings UI** — global toolbar button on the main page (not per-file). Opens the existing modal. Only shows non-secret endpoint config fields + an informational note pointing to CLI for secrets.
+### ASR versions — each model gets its own independent version slot
+Running an ASR provider from the detail page creates (or updates) a version of `type: 'asr'` scoped to that model. Running a second provider creates a second separate version — they never overwrite each other.
+
+| Model run | Version tab label | Supabase `transcript_edits.version` |
+|-----------|-------------------|--------------------------------------|
+| Gemini    | `asr` (model: gemini)       | `asr-gemini`       |
+| Whisper   | `asr` (model: whisper)      | `asr-whisper`      |
+| Yiddish Labs | `asr` (model: yiddishLabs) | `asr-yiddishlabs` |
+
+Each ASR version tab is **editable** (auto-saves to Supabase via `syncAsr`), **alignable** (Align button uses the active tab's text), and **comparable** via Compare Versions. Re-running the same model overwrites only that model's slot.
+
+`loadFromSupabase` collects all `version.startsWith('asr-')` rows and returns them as `asr[audioId] = [{text, model, createdAt}, ...]`. `mergeSupabaseData` restores each one as a separate version entry, matched by `type === 'asr' && model === asrData.model`.
 
 ### Manual version text is always loaded from the transcript, never from a stale cache
 In `renderVersionContent`, `type === 'manual'` versions skip the `version.text` check entirely and always load from `transcript.text` (or R2/Supabase if not yet in memory), caching on the `transcript` object rather than the `version` object. This ensures the Manual tab always matches "View Transcript Independently" (`detail?tid=`). Non-manual versions (`cleaned`, `edited`, etc.) still use `version.text` as before.
