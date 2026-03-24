@@ -1,9 +1,5 @@
 import { getState, updateState } from './state.js';
-
-/** Map a confidence score to a level string for CSS classes. */
-function getConfidenceLevel(conf) {
-  return conf >= 0.8 ? 'high' : conf >= 0.4 ? 'mid' : 'low';
-}
+import { getConfidenceLevel } from './utils.js';
 
 /**
  * Compute LCS (Longest Common Subsequence) table for two word arrays.
