@@ -81,14 +81,43 @@ export function levenshtein(refWords, hypWords) {
   return { distance: dp[n][m], operations };
 }
 
+// Distance-only Levenshtein using two-row DP — O(min(n,m)) space, no operation tracking.
+// Used for CER where character arrays can be very large.
+export function levenshteinDistance(a, b) {
+  // Ensure we iterate over the shorter dimension for space efficiency
+  if (a.length < b.length) { const t = a; a = b; b = t; }
+  const m = b.length;
+  let prev = new Array(m + 1);
+  let curr = new Array(m + 1);
+  for (let j = 0; j <= m; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= m; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        curr[j] = prev[j - 1];
+      } else {
+        curr[j] = 1 + Math.min(prev[j - 1], prev[j], curr[j - 1]);
+      }
+    }
+    const tmp = prev; prev = curr; curr = tmp;
+  }
+  return prev[m];
+}
+
 export function calculateWER(reference, hypothesis) {
   const refNorm = normalizeYiddish(reference);
   const hypNorm = normalizeYiddish(hypothesis);
   const refWords = refNorm.split(/\s+/).filter(Boolean);
   const hypWords = hypNorm.split(/\s+/).filter(Boolean);
 
+  // CER: character-level using distance-only Levenshtein (fast, O(min(n,m)) space)
+  const refChars = refNorm.replace(/\s/g, '');
+  const hypChars = hypNorm.replace(/\s/g, '');
+  const charDist = levenshteinDistance(refChars.split(''), hypChars.split(''));
+  const cer = refChars.length > 0 ? charDist / refChars.length : (hypChars.length > 0 ? 1 : 0);
+
   if (refWords.length === 0) {
-    return { wer: hypWords.length > 0 ? 1 : 0, cer: 0, substitutions: 0, insertions: hypWords.length, deletions: 0, total: 0 };
+    return { wer: hypWords.length > 0 ? 1 : 0, cer, substitutions: 0, insertions: hypWords.length, deletions: 0, total: 0 };
   }
 
   const { distance, operations } = levenshtein(refWords, hypWords);
@@ -96,12 +125,6 @@ export function calculateWER(reference, hypothesis) {
   const insertions = operations.filter(o => o.type === 'I').length;
   const deletions = operations.filter(o => o.type === 'D').length;
   const wer = distance / refWords.length;
-
-  // CER: character-level
-  const refChars = refNorm.replace(/\s/g, '').split('');
-  const hypChars = hypNorm.replace(/\s/g, '').split('');
-  const charResult = levenshtein(refChars, hypChars);
-  const cer = refChars.length > 0 ? charResult.distance / refChars.length : 0;
 
   return { wer, cer, substitutions, insertions, deletions, total: refWords.length };
 }

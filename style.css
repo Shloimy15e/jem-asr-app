@@ -92,9 +92,6 @@ input {
   padding: 12px 24px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  z-index: 100;
 }
 
 .app-title {
@@ -399,27 +396,41 @@ input {
 }
 
 /* === Word Chips (karaoke, review) === */
-.word-chip {
+.word-chip,
+.karaoke-word {
   display: inline-block;
   padding: 3px 8px;
   margin: 2px;
   border-radius: 4px;
-  font-size: 1rem;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
-.word-chip.confidence-high {
+.word-chip {
+  font-size: 1rem;
+}
+
+.karaoke-word {
+  border-radius: 6px;
+  font-size: 0.95rem;
+  direction: rtl;
+  font-family: 'SBL Hebrew', 'David Libre', 'Noto Serif Hebrew', 'Times New Roman', serif;
+}
+
+.word-chip.confidence-high,
+.karaoke-word.confidence-high {
   background: var(--green-dim);
   color: var(--green);
 }
 
-.word-chip.confidence-mid {
+.word-chip.confidence-mid,
+.karaoke-word.confidence-mid {
   background: var(--orange-dim);
   color: var(--orange);
 }
 
-.word-chip.confidence-low {
+.word-chip.confidence-low,
+.karaoke-word.confidence-low {
   background: var(--red-dim);
   color: var(--red);
 }
@@ -436,30 +447,16 @@ input {
   background: rgba(248, 113, 113, 0.3);
 }
 
+.karaoke-word.confidence-high:hover { background: rgba(22, 163, 74, 0.25); }
+.karaoke-word.confidence-mid:hover { background: rgba(234, 88, 12, 0.25); }
+.karaoke-word.confidence-low:hover { background: rgba(220, 38, 38, 0.25); }
+
 .word-chip.active {
   background: var(--accent) !important;
   color: var(--bg) !important;
   transform: scale(1.08);
 }
 
-/* === Karaoke Word Chips === */
-.karaoke-word {
-  display: inline-block;
-  padding: 3px 8px;
-  margin: 2px;
-  border-radius: 6px;
-  font-size: 0.95rem;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  direction: rtl;
-  font-family: 'SBL Hebrew', 'David Libre', 'Noto Serif Hebrew', 'Times New Roman', serif;
-}
-.karaoke-word.confidence-high { background: var(--green-dim); color: var(--green); }
-.karaoke-word.confidence-mid { background: var(--orange-dim); color: var(--orange); }
-.karaoke-word.confidence-low { background: var(--red-dim); color: var(--red); }
-.karaoke-word.confidence-high:hover { background: rgba(22, 163, 74, 0.25); }
-.karaoke-word.confidence-mid:hover { background: rgba(234, 88, 12, 0.25); }
-.karaoke-word.confidence-low:hover { background: rgba(220, 38, 38, 0.25); }
 .karaoke-word.active {
   background: var(--accent) !important;
   color: var(--bg) !important;
@@ -671,7 +668,8 @@ input {
 }
 
 /* === Modal Overlay === */
-.modal-overlay {
+.modal-overlay,
+.karaoke-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.4);
@@ -686,7 +684,8 @@ input {
   display: none;
 }
 
-.modal {
+.modal,
+.karaoke-modal {
   position: relative;
   width: 90%;
   max-width: 900px;
@@ -1281,27 +1280,7 @@ input {
 }
 
 /* === Karaoke Modal Styles === */
-.karaoke-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 200;
-}
-
 .karaoke-modal {
-  position: relative;
-  width: 90%;
-  max-width: 900px;
-  max-height: 85vh;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
-  overflow-y: auto;
   padding: 24px;
 }
 
@@ -1718,10 +1697,6 @@ input {
   margin-bottom: 12px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
-}
-
-.detail-section-content {
-  /* content container */
 }
 
 .detail-mapping-info {

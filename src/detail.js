@@ -526,9 +526,9 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
         const s = getState();
         // Reset versions for this audio
         s.transcriptVersions[audioId] = [];
-        if (s.cleaning[audioId]) delete s.cleaning[audioId];
-        if (s.alignments[audioId]) delete s.alignments[audioId];
-        if (s.reviews[audioId]) delete s.reviews[audioId];
+        if (s.cleaning[audioId]) updateState('cleaning', audioId, null);
+        if (s.alignments[audioId]) updateState('alignments', audioId, null);
+        if (s.reviews[audioId]) updateState('reviews', audioId, null);
         const audio = s.audio.find(a => a.id === audioId);
         renderDetailPage(audioId, audio, s, pageContainer);
       });
@@ -542,9 +542,9 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       unlinkMatch(audioId);
       const s = getState();
       s.transcriptVersions[audioId] = [];
-      if (s.cleaning[audioId]) delete s.cleaning[audioId];
-      if (s.alignments[audioId]) delete s.alignments[audioId];
-      if (s.reviews[audioId]) delete s.reviews[audioId];
+      if (s.cleaning[audioId]) updateState('cleaning', audioId, null);
+      if (s.alignments[audioId]) updateState('alignments', audioId, null);
+      if (s.reviews[audioId]) updateState('reviews', audioId, null);
       const audio = s.audio.find(a => a.id === audioId);
       renderDetailPage(audioId, audio, s, pageContainer);
     });
@@ -555,7 +555,7 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
     // Unmapped: show suggestions + search
     const suggestionsDiv = document.createElement('div');
     suggestionsDiv.className = 'suggestions-container';
-    renderSuggestedMatches(audioId, suggestionsDiv, state, (aId, tId) => {
+    renderSuggestedMatches(suggestionsDiv, audioId, state, (aId, tId) => {
       linkMatch(aId, tId, 0.8, 'user selected');
       const s = getState();
       const audio = s.audio.find(a => a.id === audioId);
@@ -592,13 +592,13 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       const s = getState();
       // Create a synthetic mapping so the pipeline can proceed
       if (!s.mappings[audioId]) {
-        s.mappings[audioId] = {
+        updateState('mappings', audioId, {
           transcriptId: null,
           confidence: 1.0,
           matchReason: 'created-from-scratch',
           confirmedBy: 'user',
           confirmedAt: new Date().toISOString(),
-        };
+        });
       }
       const audio = s.audio.find(a => a.id === audioId);
       renderDetailPage(audioId, audio, s, pageContainer);
@@ -639,7 +639,7 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
   const closeBtn = document.createElement('button');
   closeBtn.className = 'btn btn-close';
   closeBtn.textContent = '\u00D7';
-  closeBtn.addEventListener('click', () => overlay.remove());
+  // closeBtn click is bound later via closeModal()
   header.appendChild(title);
   header.appendChild(closeBtn);
   modal.appendChild(header);
@@ -796,7 +796,7 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
   const cancelBtn = document.createElement('button');
   cancelBtn.className = 'action-btn';
   cancelBtn.textContent = 'Cancel';
-  cancelBtn.addEventListener('click', () => overlay.remove());
+  // cancelBtn click is bound later via closeModal()
   applyBar.appendChild(cancelBtn);
 
   const applyBtn = document.createElement('button');
@@ -811,7 +811,7 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
       cleanRate: calculateCleanRate(rawOriginal, finalText),
       cleanedAt: new Date().toISOString(),
     });
-    overlay.remove();
+    closeModal();
     const s = getState();
     renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
   });
@@ -819,10 +819,18 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
   modal.appendChild(applyBar);
 
   overlay.appendChild(modal);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-  document.addEventListener('keydown', function escHandler(e) {
-    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); }
-  });
+  function closeModal() {
+    overlay.remove();
+    document.removeEventListener('keydown', escHandler);
+  }
+  function escHandler(e) {
+    if (e.key === 'Escape') closeModal();
+  }
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+  // Re-bind close button and cancel button to use unified closeModal
+  closeBtn.addEventListener('click', closeModal);
+  cancelBtn.addEventListener('click', closeModal);
+  document.addEventListener('keydown', escHandler);
   document.body.appendChild(overlay);
 }
 

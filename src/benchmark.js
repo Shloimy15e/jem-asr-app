@@ -129,7 +129,10 @@ export async function runBenchmark(benchmarkAudioIds, state, onProgress) {
       state.benchmarks[audio.id] = { results: [] };
     }
 
-    const audioUrl = audio.r2Link || audio.driveLink;
+    let audioUrl = audio.r2Link || audio.driveLink;
+    if (audioUrl && audioUrl.includes('audio.kohnai.ai')) {
+      audioUrl = '/api/audio?url=' + encodeURIComponent(audioUrl);
+    }
     let audioBlob;
     try {
       const resp = await fetch(audioUrl);
@@ -147,7 +150,9 @@ export async function runBenchmark(benchmarkAudioIds, state, onProgress) {
         const werResult = calculateWER(goldTranscript, asrTranscript);
 
         // Custom WER: (I + D + critical_S) / N
-        // Without user-marked critical substitutions, all S count as critical
+        // Known limitation: critical_S distinction is not yet implemented, so
+        // all substitutions count as critical — making customWer equal to wer.
+        // Column kept as a placeholder for future functionality.
         const customWer = werResult.total > 0
           ? (werResult.insertions + werResult.deletions + werResult.substitutions) / werResult.total
           : 0;
