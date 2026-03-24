@@ -46,9 +46,18 @@ function audioBufferToWavBlob(buffer) {
   return new Blob([ab], { type: 'audio/wav' });
 }
 
-// Fetch audio and return { base64, format }.
-// If trim is set, crops via Web Audio API and returns WAV.
+// Fetch audio and return { base64, format } or { audioUrl } for untrimmed R2 audio.
+// Untrimmed R2 audio returns the URL so the GPU server can fetch it directly —
+// avoids base64-encoding large files through the Cloudflare proxy (413 limit).
+// Trimmed audio is cropped, downsampled to 16 kHz mono, and returned as WAV base64.
 async function fetchAudioForAlignment(url, trimStart, trimEnd) {
+  const hasTrim = (trimStart > 0) || (trimEnd > 0);
+
+  // For untrimmed audio from R2, skip the fetch entirely — pass the URL to the GPU server.
+  if (!hasTrim && url.includes('audio.kohnai.ai')) {
+    return { audioUrl: url };
+  }
+
   const fetchUrl = url.includes('audio.kohnai.ai')
     ? `/api/audio?url=${encodeURIComponent(url)}`
     : url;
@@ -57,13 +66,13 @@ async function fetchAudioForAlignment(url, trimStart, trimEnd) {
   if (!res.ok) throw new Error(`Failed to fetch audio: ${res.status}`);
   const blob = await res.blob();
 
-  const hasTrim = (trimStart > 0) || (trimEnd > 0);
   if (!hasTrim) {
+    // Non-R2 URL with no trim — encode as-is (Google Drive links, etc.)
     const base64 = await blobToBase64(blob);
     return { base64, format: '.mp3' };
   }
 
-  // Crop via Web Audio API
+  // Crop via Web Audio API, then downsample to 16 kHz mono (Whisper only needs this).
   const arrayBuffer = await blob.arrayBuffer();
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   const decoded = await audioCtx.decodeAudioData(arrayBuffer);
@@ -72,15 +81,23 @@ async function fetchAudioForAlignment(url, trimStart, trimEnd) {
   const sr = decoded.sampleRate;
   const startSample = Math.floor((trimStart || 0) * sr);
   const endSample = trimEnd > 0 ? Math.floor(trimEnd * sr) : decoded.length;
-  const length = Math.max(1, endSample - startSample);
+  const trimLength = Math.max(1, endSample - startSample);
 
-  // Can't call createBuffer on closed context — use OfflineAudioContext
-  const trimmedBuf = new AudioBuffer({ length, numberOfChannels: decoded.numberOfChannels, sampleRate: sr });
+  // Resample to 16 kHz mono via OfflineAudioContext — reduces WAV size ~6× vs stereo 44.1 kHz.
+  const TARGET_SR = 16000;
+  const targetLength = Math.ceil(trimLength / sr * TARGET_SR);
+  const offCtx = new OfflineAudioContext(1, targetLength, TARGET_SR);
+  const tmpBuf = new AudioBuffer({ length: trimLength, numberOfChannels: decoded.numberOfChannels, sampleRate: sr });
   for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
-    trimmedBuf.copyToChannel(decoded.getChannelData(ch).subarray(startSample, startSample + length), ch);
+    tmpBuf.copyToChannel(decoded.getChannelData(ch).subarray(startSample, startSample + trimLength), ch);
   }
+  const src = offCtx.createBufferSource();
+  src.buffer = tmpBuf;
+  src.connect(offCtx.destination);
+  src.start();
+  const resampled = await offCtx.startRendering();
 
-  const wavBlob = audioBufferToWavBlob(trimmedBuf);
+  const wavBlob = audioBufferToWavBlob(resampled);
   const base64 = await blobToBase64(wavBlob);
   return { base64, format: '.wav' };
 }
@@ -107,15 +124,13 @@ export async function alignRow(audioId, state, textOverride = null) {
   const trimStart = trim.start || 0;
   const trimEnd = trim.end || 0;
 
-  const { base64: audioBase64, format: audioFormat } = await fetchAudioForAlignment(url, trimStart, trimEnd);
+  const audioResult = await fetchAudioForAlignment(url, trimStart, trimEnd);
 
-  const requestBody = JSON.stringify({
-    mode: 'align',
-    audio_base64: audioBase64,
-    audio_format: audioFormat,
-    text: alignText,
-    language: 'yi',
-  });
+  const requestBody = JSON.stringify(
+    audioResult.audioUrl
+      ? { mode: 'align', audio_url: audioResult.audioUrl, text: alignText, language: 'yi' }
+      : { mode: 'align', audio_base64: audioResult.base64, audio_format: audioResult.format, text: alignText, language: 'yi' }
+  );
 
   // Retry logic for cold start 502/504 timeouts
   const MAX_RETRIES = 3;
@@ -193,15 +208,18 @@ export async function batchAlign(audioIds, state, onProgress) {
 }
 
 export async function transcribeAudio(audioId, audioUrl, modelConfig) {
-  const { base64: audioBase64 } = await fetchAudioForAlignment(audioUrl, 0, 0);
+  const audioResult = await fetchAudioForAlignment(audioUrl, 0, 0);
+
+  const audioFields = audioResult.audioUrl
+    ? { audio_url: audioResult.audioUrl }
+    : { audio_base64: audioResult.base64, audio_format: audioResult.format || '.mp3' };
 
   const response = await fetch(modelConfig.endpoint || ALIGN_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       mode: 'transcribe',
-      audio_base64: audioBase64,
-      audio_format: '.mp3',
+      ...audioFields,
       language: 'yi',
       ...(modelConfig.requestTemplate || {}),
     }),
