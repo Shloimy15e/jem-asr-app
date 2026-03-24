@@ -1,13 +1,43 @@
-import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, exportState, importState, mergeSupabaseData } from './state.js';
+import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData } from './state.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
 import { alignRow } from './alignment.js';
-import { renderReviewPanel } from './review.js';
-import { renderKaraokePlayer } from './karaoke.js';
 import { formatConfidence } from './utils.js';
-import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration } from './db.js';
+import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration, deleteMapping } from './db.js';
 
-const R2_BASE = 'https://audio.kohnai.ai';
+// Loads full transcript text using R2 first, then Supabase fallback.
+// Caches on the transcript object for the session.
+async function loadFullText(transcript) {
+  if (transcript.text) return transcript.text;
+  let text = null;
+  if (transcript.r2TranscriptLink) {
+    const res = await fetch(transcript.r2TranscriptLink).catch(() => null);
+    if (res?.ok) text = await res.text().catch(() => null);
+  }
+  if (!text && transcript.id) {
+    text = await loadTranscriptText(transcript.id);
+  }
+  if (text) transcript.text = text;
+  return text;
+}
+
+// Renders a speed-control bar for an audio player element.
+function renderSpeedBar(playerEl, speeds) {
+  const speedBar = document.createElement('div');
+  speedBar.className = 'word-view-speed-bar';
+  speeds.forEach(speed => {
+    const btn = document.createElement('button');
+    btn.className = 'speed-btn' + (speed === 1 ? ' active' : '');
+    btn.textContent = speed + 'x';
+    btn.addEventListener('click', () => {
+      playerEl.playbackRate = speed;
+      speedBar.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+    speedBar.appendChild(btn);
+  });
+  return speedBar;
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
   const params = new URLSearchParams(window.location.search);
@@ -81,7 +111,10 @@ function renderTranscriptPage(transcriptId, transcript, state, container) {
   title.textContent = transcript.name;
   title.addEventListener('blur', () => {
     const newName = title.textContent.trim();
-    if (newName && newName !== transcript.name) transcript.name = newName;
+    if (newName && newName !== transcript.name) {
+      transcript.name = newName;
+      // Note: transcript rename is display-only for this session; no Supabase sync exists for transcript names yet
+    }
   });
   title.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); title.blur(); }
@@ -133,13 +166,10 @@ function renderTranscriptPage(transcriptId, transcript, state, container) {
     textarea.value = transcript.firstLine;
   }
 
-  // Load full text from R2
-  if (transcript.r2TranscriptLink && !transcript.text) {
-    fetch(transcript.r2TranscriptLink).then(r => r.ok ? r.text() : null).then(text => {
-      if (text) {
-        transcript.text = text;
-        textarea.value = text;
-      }
+  // Load full text from R2 / Supabase
+  if (!transcript.text) {
+    loadFullText(transcript).then(text => {
+      if (text) textarea.value = text;
     }).catch(() => {});
   }
 
@@ -177,7 +207,7 @@ function renderDetailPage(audioId, audio, state, container) {
     const newName = title.textContent.trim();
     if (newName && newName !== audio.name) {
       audio.name = newName;
-      updateState('renamedFiles', audioId, newName);
+      updateState('audioNames', audioId, newName);
     }
   });
   title.addEventListener('keydown', (e) => {
@@ -226,20 +256,7 @@ function renderDetailPage(audioId, audio, state, container) {
     playerSection.content.appendChild(playerEl);
 
     // Speed Controls
-    const speedBar = document.createElement('div');
-    speedBar.className = 'word-view-speed-bar';
-    [1, 1.25, 1.5, 2].forEach(speed => {
-      const btn = document.createElement('button');
-      btn.className = 'speed-btn' + (speed === 1 ? ' active' : '');
-      btn.textContent = speed + 'x';
-      btn.addEventListener('click', () => {
-        playerEl.playbackRate = speed;
-        speedBar.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-      });
-      speedBar.appendChild(btn);
-    });
-    playerSection.content.appendChild(speedBar);
+    playerSection.content.appendChild(renderSpeedBar(playerEl, [1, 1.25, 1.5, 2]));
 
     // Trim Controls
     renderTrimControls(audioId, playerEl, playerSection.content);
@@ -350,42 +367,20 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
             textarea.value = transcript.text;
           } else if (transcript?.firstLine) {
             textarea.value = transcript.firstLine;
-            const loadFullText = async () => {
-              let text = null;
-              if (transcript.r2TranscriptLink) {
-                const res = await fetch(transcript.r2TranscriptLink).catch(() => null);
-                if (res?.ok) text = await res.text().catch(() => null);
-              }
-              if (!text && transcript.id) {
-                text = await loadTranscriptText(transcript.id);
-              }
-              if (text) {
-                transcript.text = text; // cache on transcript object, not version
-                textarea.value = text;
-              }
-            };
-            loadFullText().catch(() => {});
+            loadFullText(transcript).then(text => {
+              if (text) textarea.value = text;
+            }).catch(() => {});
           }
         } else if (version.text) {
           textarea.value = version.text;
         } else if (transcript?.firstLine) {
           textarea.value = transcript.firstLine;
-          // Try R2 first, fall back to Supabase
-          const loadFullText = async () => {
-            let text = null;
-            if (transcript.r2TranscriptLink) {
-              const res = await fetch(transcript.r2TranscriptLink).catch(() => null);
-              if (res?.ok) text = await res.text().catch(() => null);
-            }
-            if (!text && transcript.id) {
-              text = await loadTranscriptText(transcript.id);
-            }
+          loadFullText(transcript).then(text => {
             if (text && !version.text) {
               version.text = text;
               textarea.value = text;
             }
-          };
-          loadFullText().catch(() => {});
+          }).catch(() => {});
         }
 
         // Save on change (debounced) — not available for manual versions
@@ -443,14 +438,11 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
             startEditBtn.textContent = 'Loading...';
             // Ensure full text is loaded before copying
             let text = textarea.value;
-            if (!version.text && transcript) {
-              let full = null;
-              if (transcript.r2TranscriptLink) {
-                const res = await fetch(transcript.r2TranscriptLink).catch(() => null);
-                if (res?.ok) full = await res.text().catch(() => null);
-              }
-              if (!full && transcript.id) full = await loadTranscriptText(transcript.id);
-              if (full) { version.text = full; text = full; }
+            if (!transcript?.text && transcript) {
+              const full = await loadFullText(transcript);
+              if (full) { text = full; }
+            } else if (transcript?.text) {
+              text = transcript.text;
             }
             addVersion(audioId, {
               type: 'edited',
@@ -513,9 +505,9 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       textarea.dir = 'rtl';
       textarea.rows = 12;
       textarea.value = transcript.text || transcript.firstLine || '';
-      if (transcript.r2TranscriptLink && !transcript.text) {
-        fetch(transcript.r2TranscriptLink).then(r => r.ok ? r.text() : null).then(text => {
-          if (text) { transcript.text = text; textarea.value = text; }
+      if (!transcript.text) {
+        loadFullText(transcript).then(text => {
+          if (text) textarea.value = text;
         }).catch(() => {});
       }
       container.appendChild(textarea);

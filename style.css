@@ -201,18 +201,6 @@ input {
   color: var(--bg);
 }
 
-.dropdown-filters {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.search-wrapper {
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
 .search-input {
   width: 260px;
   padding: 7px 14px;
@@ -328,7 +316,7 @@ input {
 .data-table td.cell-hebrew {
   direction: rtl;
   text-align: right;
-  unicode-bidi: bidi-override;
+  unicode-bidi: isolate;
   font-family: 'SBL Hebrew', 'David Libre', 'Noto Serif Hebrew', 'Times New Roman', serif;
   white-space: normal;
   max-width: 300px;
@@ -497,6 +485,19 @@ input {
 
 .diff-kept {
   color: var(--text);
+}
+
+.diff-word-added {
+  background: rgba(74, 222, 128, 0.15);
+  color: #16a34a;
+}
+
+.diff-row-rejected {
+  opacity: 0.38;
+}
+
+.diff-row-rejected * {
+  text-decoration: line-through;
 }
 
 /* === Review Panel (inline, expands below row) === */
@@ -1013,11 +1014,6 @@ input {
     flex-direction: column;
     gap: 8px;
     padding: 10px 16px;
-  }
-
-  .search-wrapper {
-    margin-left: 0;
-    width: 100%;
   }
 
   .search-input {

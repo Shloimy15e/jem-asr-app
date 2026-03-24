@@ -155,20 +155,20 @@ function groupWordSegments(words) {
   return segments;
 }
 
-function formatSRTTime(seconds) {
+function formatSubtitleTime(seconds, separator) {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
   const ms = Math.min(Math.round((seconds % 1) * 1000), 999);
-  return `${pad(h)}:${pad(m)}:${pad(s)},${String(ms).padStart(3, '0')}`;
+  return `${pad(h)}:${pad(m)}:${pad(s)}${separator}${String(ms).padStart(3, '0')}`;
+}
+
+function formatSRTTime(seconds) {
+  return formatSubtitleTime(seconds, ',');
 }
 
 function formatVTTTime(seconds) {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  const ms = Math.min(Math.round((seconds % 1) * 1000), 999);
-  return `${pad(h)}:${pad(m)}:${pad(s)}.${String(ms).padStart(3, '0')}`;
+  return formatSubtitleTime(seconds, '.');
 }
 
 function pad(n) {
@@ -212,4 +212,18 @@ export function debounce(fn, ms) {
     clearTimeout(timer);
     timer = setTimeout(() => fn.apply(this, args), ms);
   };
+}
+
+export function getConfidenceLevel(conf) {
+  return conf >= 0.8 ? 'high' : conf >= 0.4 ? 'mid' : 'low';
+}
+
+export function downloadFile(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType || 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }

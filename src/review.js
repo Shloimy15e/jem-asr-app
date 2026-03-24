@@ -1,4 +1,9 @@
-import { updateState } from './state.js';
+import { getState, updateState } from './state.js';
+
+/** Map a confidence score to a level string for CSS classes. */
+function getConfidenceLevel(conf) {
+  return conf >= 0.8 ? 'high' : conf >= 0.4 ? 'mid' : 'low';
+}
 
 /**
  * Compute LCS (Longest Common Subsequence) table for two word arrays.
@@ -71,7 +76,6 @@ export function renderReviewPanel(container, audioId, state, callbacks) {
   const entry = state.audio.find(a => a.id === audioId);
   const cleaning = state.cleaning[audioId];
   const alignment = state.alignments[audioId];
-  const mapping = state.mappings[audioId];
   if (!entry) return;
 
   // Bug fix #2: Instead of clearing the entire container (which destroys
@@ -165,7 +169,7 @@ export function renderReviewPanel(container, audioId, state, callbacks) {
     const span = document.createElement('span');
     // Bug fix #3: Use word-text matching fallback instead of blind index
     const conf = findWordConfidence(alignmentWords, word, i);
-    const level = conf >= 0.8 ? 'high' : conf >= 0.4 ? 'mid' : 'low';
+    const level = getConfidenceLevel(conf);
     span.className = `word-chip confidence-${level}`;
     span.textContent = word;
     span.dataset.index = i;
@@ -246,7 +250,12 @@ export function renderReviewPanel(container, audioId, state, callbacks) {
 
 export function approveAll(audioIds, state) {
   const now = new Date().toISOString();
+  const currentState = state || getState();
   for (const audioId of audioIds) {
+    // Never approve benchmark files — they are gold-standard reference only
+    const audioEntry = currentState.audio.find(a => a.id === audioId);
+    if (audioEntry?.isBenchmark) continue;
+
     updateState('reviews', audioId, {
       status: 'approved',
       reviewedAt: now,

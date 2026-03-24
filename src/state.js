@@ -97,11 +97,11 @@ export function getState() {
 export function mergeSupabaseData(remote) {
   if (!state || !remote) return;
 
-  // Work data — Supabase wins over localStorage cache
-  if (remote.mappings)   Object.assign(state.mappings, remote.mappings);
-  if (remote.cleaning)   Object.assign(state.cleaning, remote.cleaning);
-  if (remote.alignments) Object.assign(state.alignments, remote.alignments);
-  if (remote.reviews)    Object.assign(state.reviews, remote.reviews);
+  // Work data — Supabase is authoritative, replace entirely so deletions propagate
+  if (remote.mappings)   state.mappings = remote.mappings;
+  if (remote.cleaning)   state.cleaning = remote.cleaning;
+  if (remote.alignments) state.alignments = remote.alignments;
+  if (remote.reviews)    state.reviews = remote.reviews;
   if (remote.trims)      Object.assign(state.trims, remote.trims);
 
   // Restore edited versions loaded from Supabase into transcriptVersions
@@ -332,6 +332,9 @@ export function getFilteredRows(filter, searchTerm, sortCol, sortDir, yearFilter
     case 'approved':
       rows = audio.filter(a => getStatus(a.id) === 'approved');
       break;
+    case 'rejected':
+      rows = audio.filter(a => getStatus(a.id) === 'rejected');
+      break;
     case 'all':
     default:
       rows = audio;
@@ -383,34 +386,48 @@ function getTranscriptNameForAudio(audioId) {
 export function getFilterCounts() {
   if (!state) return {};
   const { audio } = state;
-  const fifty = audio.filter(a => a.isSelected50hr);
 
-  const statusCounts = { unmapped: 0, mapped: 0, cleaned: 0, aligned: 0, approved: 0 };
+  // Cache status per audio file — avoids calling getStatus multiple times
+  const statusCounts = { unmapped: 0, mapped: 0, cleaned: 0, aligned: 0, approved: 0, rejected: 0 };
+  const fiftyStatusCounts = { unmapped: 0, mapped: 0, cleaned: 0, aligned: 0, approved: 0 };
+  let benchmarkCount = 0;
+  let fiftyCount = 0;
+
   audio.forEach(a => {
     const s = getStatus(a.id);
     if (statusCounts[s] !== undefined) statusCounts[s]++;
+    if (a.isBenchmark) benchmarkCount++;
+    if (a.isSelected50hr) {
+      fiftyCount++;
+      if (fiftyStatusCounts[s] !== undefined) fiftyStatusCounts[s]++;
+    }
   });
 
-  return {
+  const counts = {
     all: audio.length,
     unmapped: statusCounts.unmapped,
     mapped: statusCounts.mapped,
-    benchmark: audio.filter(a => a.isBenchmark).length,
+    benchmark: benchmarkCount,
     'needs-review': statusCounts.aligned,
     approved: statusCounts.approved,
-    'fifty': fifty.length,
-    '50hr': fifty.length,
-    'fifty-unmapped': fifty.filter(a => getStatus(a.id) === 'unmapped').length,
-    '50hr-unmapped': fifty.filter(a => getStatus(a.id) === 'unmapped').length,
-    'fifty-mapped': fifty.filter(a => getStatus(a.id) === 'mapped').length,
-    '50hr-mapped': fifty.filter(a => getStatus(a.id) === 'mapped').length,
-    'fifty-cleaned': fifty.filter(a => getStatus(a.id) === 'cleaned').length,
-    '50hr-cleaned': fifty.filter(a => getStatus(a.id) === 'cleaned').length,
-    'fifty-aligned': fifty.filter(a => getStatus(a.id) === 'aligned').length,
-    '50hr-aligned': fifty.filter(a => getStatus(a.id) === 'aligned').length,
-    'fifty-approved': fifty.filter(a => getStatus(a.id) === 'approved').length,
-    '50hr-approved': fifty.filter(a => getStatus(a.id) === 'approved').length,
+    rejected: statusCounts.rejected,
+    'fifty': fiftyCount,
+    'fifty-unmapped': fiftyStatusCounts.unmapped,
+    'fifty-mapped': fiftyStatusCounts.mapped,
+    'fifty-cleaned': fiftyStatusCounts.cleaned,
+    'fifty-aligned': fiftyStatusCounts.aligned,
+    'fifty-approved': fiftyStatusCounts.approved,
   };
+
+  // Alias '50hr-*' keys to 'fifty-*' values
+  counts['50hr'] = counts['fifty'];
+  counts['50hr-unmapped'] = counts['fifty-unmapped'];
+  counts['50hr-mapped'] = counts['fifty-mapped'];
+  counts['50hr-cleaned'] = counts['fifty-cleaned'];
+  counts['50hr-aligned'] = counts['fifty-aligned'];
+  counts['50hr-approved'] = counts['fifty-approved'];
+
+  return counts;
 }
 
 export function exportState() {

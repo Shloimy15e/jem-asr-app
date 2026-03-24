@@ -9,22 +9,29 @@ const supabase = createClient(
 // Many tables have audio_id FK → audio_files.id, so we upsert the file
 // before writing related rows.
 
+// Shared field mapping for audio_files rows (camelCase app → snake_case DB).
+// Does NOT include duration_minutes — that is managed separately by syncAudioDuration.
+function toAudioRow(a) {
+  return {
+    id: a.id,
+    name: a.name,
+    r2_link: a.r2Link || null,
+    drive_link: a.driveLink || null,
+    year: a.year || null,
+    month: a.month || null,
+    day: a.day || null,
+    type: a.type || null,
+    is_selected_50hr: a.isSelected50hr || false,
+    is_benchmark: a.isBenchmark || false,
+  };
+}
+
 async function ensureAudioFile(audio) {
   if (!audio) return;
+  // duration_minutes intentionally omitted — it is corrected by the detail page
+  // via syncAudioDuration and must not be overwritten with stale estMinutes.
   const { error } = await supabase.from('audio_files').upsert(
-    {
-      id: audio.id,
-      name: audio.name,
-      r2_link: audio.r2Link || null,
-      drive_link: audio.driveLink || null,
-      year: audio.year || null,
-      month: audio.month || null,
-      day: audio.day || null,
-      type: audio.type || null,
-      duration_minutes: audio.estMinutes || null,
-      is_selected_50hr: audio.isSelected50hr || false,
-      is_benchmark: audio.isBenchmark || false,
-    },
+    toAudioRow(audio),
     { onConflict: 'id' },
   );
   if (error) console.warn('[DB] ensureAudioFile:', error.message);
@@ -122,20 +129,20 @@ export async function syncReview(audioId, reviewData, audioEntry) {
 // ── Dispatch helper used by state.js ────────────────────────────────
 // Called fire-and-forget after every updateState() call.
 
-async function syncAudioName(audioId, newName) {
+async function syncAudioField(audioId, column, value) {
   const { error } = await supabase
     .from('audio_files')
-    .update({ name: newName })
+    .update({ [column]: value })
     .eq('id', audioId);
-  if (error) console.warn('[DB] syncAudioName:', error.message);
+  if (error) console.warn(`[DB] syncAudioField(${column}):`, error.message);
+}
+
+async function syncAudioName(audioId, newName) {
+  return syncAudioField(audioId, 'name', newName);
 }
 
 async function syncAudioComment(audioId, comment) {
-  const { error } = await supabase
-    .from('audio_files')
-    .update({ comments: comment || null })
-    .eq('id', audioId);
-  if (error) console.warn('[DB] syncAudioComment:', error.message);
+  return syncAudioField(audioId, 'comments', comment || null);
 }
 
 export async function syncAudioDuration(audioId, durationMinutes) {
@@ -194,17 +201,9 @@ const CHUNK = 200;
 export async function bulkSyncAudioFiles(audioArray) {
   for (let i = 0; i < audioArray.length; i += CHUNK) {
     const rows = audioArray.slice(i, i + CHUNK).map(a => ({
-      id: a.id,
-      name: a.name,
-      r2_link: a.r2Link || null,
-      drive_link: a.driveLink || null,
-      year: a.year || null,
-      month: a.month || null,
-      day: a.day || null,
-      type: a.type || null,
+      ...toAudioRow(a),
+      // Seeding includes duration — detail page will correct later if needed
       duration_minutes: a.estMinutes || null,
-      is_selected_50hr: a.isSelected50hr || false,
-      is_benchmark: a.isBenchmark || false,
     }));
     const { error } = await supabase.from('audio_files').upsert(rows, { onConflict: 'id' });
     if (error) console.warn('[DB] bulkSyncAudioFiles:', error.message);
