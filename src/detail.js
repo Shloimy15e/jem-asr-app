@@ -2442,6 +2442,23 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       // Refresh the version textarea so the user sees the change immediately
       activeVersionRef?.rerenderContent?.();
     }
+
+    // Update the live word/segment/editModeWords arrays in-place so the karaoke
+    // view immediately reflects the saved changes without a full page reload
+    words.splice(0, words.length, ...finalWords);
+    const newSegs = [];
+    if (words.length) {
+      let cur = [words[0]];
+      for (let i = 1; i < words.length; i++) {
+        if ((words[i].start - words[i - 1].end) > GAP_THRESHOLD) { newSegs.push(cur); cur = [words[i]]; }
+        else cur.push(words[i]);
+      }
+      newSegs.push(cur);
+    }
+    segments.splice(0, segments.length, ...newSegs);
+    editModeWords.splice(0, editModeWords.length, ...finalWords.map(w => ({ ...w })));
+    Object.keys(insertions).forEach(k => delete insertions[k]);
+
     exitEditMode();
     const parts = [];
     if (addedCount) parts.push(`${addedCount} added`);
