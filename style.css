@@ -2160,6 +2160,32 @@ input {
 }
 
 /* Cleaning button bar */
+.pipeline-tools-details {
+  margin-bottom: 10px;
+}
+.pipeline-tools-summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  padding: 4px 0;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pipeline-tools-summary::before {
+  content: '▶';
+  font-size: 0.65rem;
+  transition: transform 0.15s;
+}
+details[open] > .pipeline-tools-summary::before {
+  transform: rotate(90deg);
+}
+.pipeline-tools-inner {
+  padding: 10px 0 4px 0;
+}
+
 .clean-btn-bar {
   display: flex;
   gap: 6px;

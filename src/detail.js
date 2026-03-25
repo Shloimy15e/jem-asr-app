@@ -977,10 +977,22 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     return c?.originalText || await getCurrentText();
   }
 
+  // ── Collapsible pipeline tools (cleaning + ASR) ──
+  const toolsDetails = document.createElement('details');
+  toolsDetails.className = 'pipeline-tools-details';
+  const toolsSummary = document.createElement('summary');
+  toolsSummary.className = 'pipeline-tools-summary';
+  toolsSummary.textContent = 'Pipeline Tools (Cleaning & ASR)';
+  toolsDetails.appendChild(toolsSummary);
+  const toolsInner = document.createElement('div');
+  toolsInner.className = 'pipeline-tools-inner';
+  toolsDetails.appendChild(toolsInner);
+  container.appendChild(toolsDetails);
+
   const cleanLabel = document.createElement('div');
   cleanLabel.className = 'section-sublabel';
   cleanLabel.textContent = 'Cleaning — click a pass to preview changes line by line';
-  container.appendChild(cleanLabel);
+  toolsInner.appendChild(cleanLabel);
 
   const btnBar = document.createElement('div');
   btnBar.className = 'clean-btn-bar';
@@ -1025,7 +1037,10 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
   });
   btnBar.appendChild(cleanAllBtn);
-  container.appendChild(btnBar);
+  toolsInner.appendChild(btnBar);
+
+  // ── ASR Transcription (inside pipeline tools) ──
+  renderAsrSection(audioId, state, toolsInner, pageContainer);
 
   // ── Alignment button ──
   const alignBar = document.createElement('div');
@@ -1059,9 +1074,6 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     alignBar.appendChild(info);
   }
   container.appendChild(alignBar);
-
-  // ── ASR Transcription ──
-  renderAsrSection(audioId, state, container, pageContainer);
 
   // ── Unified Word View (diff + karaoke in one) ──
   if (cleaning || alignment) {
