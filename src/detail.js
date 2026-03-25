@@ -393,15 +393,28 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
         // Save on change (debounced) — not available for manual versions
         const saveStatus = document.createElement('span');
         saveStatus.className = 'save-status text-secondary';
+        saveStatus.style.fontSize = '0.8rem';
+
+        function formatSaveTime(isoString) {
+          if (!isoString) return '';
+          const d = new Date(isoString);
+          return `Saved ${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        }
+
+        // Show existing save time on load
+        if (!isManual && (version.updatedAt || version.createdAt)) {
+          saveStatus.textContent = formatSaveTime(version.updatedAt || version.createdAt);
+        }
+
         if (!isManual) {
           let saveTimer = null;
           textarea.addEventListener('input', () => {
             saveStatus.textContent = 'Unsaved...';
             clearTimeout(saveTimer);
             saveTimer = setTimeout(() => {
-              updateVersion(audioId, version.id, { text: textarea.value });
-              saveStatus.textContent = 'Saved';
-              setTimeout(() => { saveStatus.textContent = ''; }, 2000);
+              const now = new Date().toISOString();
+              updateVersion(audioId, version.id, { text: textarea.value, updatedAt: now });
+              saveStatus.textContent = formatSaveTime(now);
             }, 800);
           });
         }
@@ -485,6 +498,11 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
         }
 
         contentArea.appendChild(infoBar);
+      }
+
+      // Expose re-render on the shared ref so the word view can refresh the textarea after saving edits
+      if (activeVersionRef) {
+        activeVersionRef.rerenderContent = () => renderVersionContent(activeVersionRef.id);
       }
 
       // Build tabs
@@ -2166,7 +2184,10 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       setVersionAlignment(audioId, versionId, updatedAlignment);
       // Also update the version's text so the transcript tab reflects word edits
       const newText = finalWords.map(w => w.word || w.text || '').join(' ');
-      updateVersion(audioId, versionId, { text: newText });
+      const now = new Date().toISOString();
+      updateVersion(audioId, versionId, { text: newText, updatedAt: now });
+      // Refresh the version textarea so the user sees the change immediately
+      activeVersionRef?.rerenderContent?.();
     }
     exitEditMode();
     const parts = [];
