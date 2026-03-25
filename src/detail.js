@@ -1399,94 +1399,131 @@ function drawKaraokeFrame(ctx, words, currentTime, title, W, H) {
 
 // ── Karaoke video recorder ─────────────────────────────────────────────────────
 // Returns a cancel() function. Calls onStatus(text) with progress, onDone() when file downloaded.
-async function startKaraokeVideoExport(words, playerEl, audioName, onStatus, onDone) {
-  const W = 1280, H = 720;
-  const canvas = document.createElement('canvas');
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d');
-
-  // Use the CORS-enabled proxy URL so Web Audio API can access the stream.
-  // playerEl.src may be a raw R2 URL without CORS headers; the proxy always returns *
-  const rawSrc = playerEl.src;
-  let proxiedSrc = rawSrc;
-  try {
-    const u = new URL(rawSrc, location.href);
-    if (u.hostname === 'audio.kohnai.ai') {
-      proxiedSrc = `/api/audio?url=${encodeURIComponent(rawSrc)}`;
-    }
-  } catch { /* keep rawSrc */ }
-
-  // Fresh audio element so we don't disturb the main player
-  const recAudio = new Audio();
-  recAudio.crossOrigin = 'anonymous';
-  recAudio.src = proxiedSrc;
-  onStatus('Loading audio...');
-  await new Promise((res, rej) => {
-    recAudio.addEventListener('canplaythrough', res, { once: true });
-    recAudio.addEventListener('error', e => rej(new Error(`Audio load failed (${recAudio.error?.code ?? e.type})`)), { once: true });
-    recAudio.load();
-  });
-
-  // Route audio through Web Audio so MediaRecorder can capture it
-  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const src = audioCtx.createMediaElementSource(recAudio);
-  const dest = audioCtx.createMediaStreamDestination();
-  src.connect(dest);
-  src.connect(audioCtx.destination); // also play through speakers
-
-  // Combine canvas video + audio into one stream
-  const canvasStream = canvas.captureStream(30);
-  const combined = new MediaStream([
-    ...canvasStream.getVideoTracks(),
-    ...dest.stream.getAudioTracks(),
-  ]);
-
-  // Pick best supported format
-  const candidate = ['video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
-    .find(t => MediaRecorder.isTypeSupported(t)) || 'video/webm';
-  const ext = candidate.startsWith('video/mp4') ? 'mp4' : 'webm';
-
-  const recorder = new MediaRecorder(combined, { mimeType: candidate, videoBitsPerSecond: 2_500_000 });
-  const chunks = [];
-  recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-
-  const duration = words[words.length - 1]?.e || 0;
+// Fast karaoke video export using WebCodecs + webm-muxer (no real-time playback).
+// Returns a cancel() function synchronously; encoding runs in the background.
+function startKaraokeVideoExport(words, playerEl, audioName, onStatus, onDone) {
   let cancelled = false;
-  let rafId = null;
+  const cancel = () => { cancelled = true; };
 
-  function render() {
-    if (cancelled) return;
-    drawKaraokeFrame(ctx, words, recAudio.currentTime, audioName, W, H);
-    onStatus(`Recording ${formatTime(recAudio.currentTime)} / ${formatTime(duration)} — keep this tab open`);
-    rafId = requestAnimationFrame(render);
-  }
+  (async () => {
+    try {
+      if (!window.VideoEncoder || !window.AudioEncoder || !window.VideoFrame || !window.AudioData) {
+        throw new Error('WebCodecs not supported in this browser — try Chrome 94+');
+      }
 
-  recorder.onstop = () => {
-    cancelAnimationFrame(rafId);
-    audioCtx.close();
-    if (cancelled) { onDone('Cancelled.'); return; }
-    const blob = new Blob(chunks, { type: candidate });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `${audioName}.${ext}`;
-    document.body.appendChild(a); a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
-    onDone(`Done! Saved as ${audioName}.${ext}`);
-  };
+      // Load webm-muxer from CDN (lightweight ~30 KB, loaded once)
+      onStatus('Loading encoder...');
+      const { Muxer, ArrayBufferTarget } = await import(
+        'https://cdn.jsdelivr.net/npm/webm-muxer@5.0.3/build/webm-muxer.mjs'
+      );
 
-  recAudio.currentTime = 0;
-  recorder.start(250);
-  recAudio.play();
-  render();
+      const W = 1280, H = 720, FPS = 25;
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
 
-  recAudio.addEventListener('ended', () => recorder.stop(), { once: true });
+      // Proxy URL for CORS access
+      const rawSrc = playerEl.src;
+      let audioSrc = rawSrc;
+      try {
+        const u = new URL(rawSrc, location.href);
+        if (u.hostname === 'audio.kohnai.ai') audioSrc = `/api/audio?url=${encodeURIComponent(rawSrc)}`;
+      } catch { /* keep rawSrc */ }
 
-  return function cancel() {
-    cancelled = true;
-    recorder.stop();
-    recAudio.pause();
-  };
+      // Fetch and decode audio
+      onStatus('Fetching audio...');
+      const audioResp = await fetch(audioSrc);
+      if (!audioResp.ok) throw new Error(`Audio fetch failed: ${audioResp.status}`);
+      const audioBuffer = await audioResp.arrayBuffer();
+      if (cancelled) return;
+
+      onStatus('Decoding audio...');
+      const audioCtx = new AudioContext({ sampleRate: 48000 });
+      const decoded = await audioCtx.decodeAudioData(audioBuffer);
+      audioCtx.close();
+      if (cancelled) return;
+
+      const duration = words[words.length - 1]?.e || decoded.duration;
+      const totalFrames = Math.ceil(duration * FPS);
+
+      // Set up muxer
+      const target = new ArrayBufferTarget();
+      const muxer = new Muxer({
+        target,
+        video: { codec: 'V_VP9', width: W, height: H, frameRate: FPS },
+        audio: { codec: 'A_OPUS', sampleRate: 48000, numberOfChannels: 1 },
+        firstTimestampBehavior: 'offset',
+      });
+
+      // Video encoder
+      const videoEncoder = new VideoEncoder({
+        output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+        error: e => { throw e; },
+      });
+      videoEncoder.configure({
+        codec: 'vp09.00.10.08', width: W, height: H,
+        bitrate: 2_500_000, framerate: FPS,
+      });
+
+      // Audio encoder
+      const audioEncoder = new AudioEncoder({
+        output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+        error: e => { throw e; },
+      });
+      audioEncoder.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 1, bitrate: 128000 });
+
+      // Encode audio in chunks
+      onStatus('Encoding audio...');
+      const channelData = decoded.numberOfChannels > 1
+        ? (() => { const m = new Float32Array(decoded.length); const l = decoded.getChannelData(0); const r = decoded.getChannelData(1); for (let i = 0; i < m.length; i++) m[i] = (l[i] + r[i]) / 2; return m; })()
+        : decoded.getChannelData(0);
+      const CHUNK = 4096;
+      for (let i = 0; i < channelData.length; i += CHUNK) {
+        if (cancelled) return;
+        const len = Math.min(CHUNK, channelData.length - i);
+        const data = new AudioData({
+          format: 'f32', sampleRate: 48000, numberOfFrames: len, numberOfChannels: 1,
+          timestamp: Math.round(i / 48000 * 1_000_000),
+          data: channelData.subarray(i, i + len),
+        });
+        audioEncoder.encode(data);
+        data.close();
+      }
+      await audioEncoder.flush();
+
+      // Encode video frames (fast — no real-time playback)
+      for (let f = 0; f < totalFrames; f++) {
+        if (cancelled) return;
+        drawKaraokeFrame(ctx, words, f / FPS, audioName, W, H);
+        const frame = new VideoFrame(canvas, {
+          timestamp: Math.round(f / FPS * 1_000_000),
+          duration: Math.round(1_000_000 / FPS),
+        });
+        videoEncoder.encode(frame, { keyFrame: f % (FPS * 5) === 0 });
+        frame.close();
+        if (f % 75 === 0) {
+          onStatus(`Encoding video ${Math.round(f / totalFrames * 100)}% (${formatTime(f / FPS)} / ${formatTime(duration)})`);
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
+      await videoEncoder.flush();
+      muxer.finalize();
+
+      if (cancelled) return;
+      const blob = new Blob([target.buffer], { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `${audioName}.webm`;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 15000);
+      onDone(`Done! Saved as ${audioName}.webm`);
+    } catch (err) {
+      if (!cancelled) onDone(`Error: ${err?.message || String(err)}`);
+    }
+  })();
+
+  return cancel;
 }
 
 function generateKaraokeHTML(words, audioSrc, title) {
@@ -2281,7 +2318,10 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   function goToSegment(idx) {
     if (idx < 0 || idx >= segments.length) return;
     currentSegIdx = idx;
-    if (playerEl) playerEl.currentTime = segments[idx][0]?.start ?? 0;
+    if (playerEl) {
+      playerEl.currentTime = segments[idx][0]?.start ?? 0;
+      if (playerEl.paused) playerEl.play().catch(() => {});
+    }
     renderSegmentChips();
     updateSegHeader();
     updateStats();
@@ -2312,7 +2352,12 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       }
       prevActiveChip = found;
 
-      // Auto-advance removed — user must click Mark Reviewed to advance
+      // Pause at the end of the current segment so the user can review before continuing
+      const segWords = segments[currentSegIdx];
+      if (segWords?.length && !playerEl.paused) {
+        const segEnd = segWords[segWords.length - 1].end;
+        if (t >= segEnd) playerEl.pause();
+      }
     };
     playerEl._wordViewTimeUpdate = onTimeUpdate;
     playerEl.addEventListener('timeupdate', onTimeUpdate);
@@ -2401,7 +2446,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     videoStatus.textContent = 'Starting...';
 
     try {
-      cancelVideoExport = await startKaraokeVideoExport(
+      cancelVideoExport = startKaraokeVideoExport(
         normWords,
         playerEl,
         getExportBaseName(),
