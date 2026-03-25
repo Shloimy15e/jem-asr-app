@@ -28,11 +28,12 @@ function toAudioRow(a) {
 
 async function ensureAudioFile(audio) {
   if (!audio) return;
-  // duration_minutes intentionally omitted — it is corrected by the detail page
-  // via syncAudioDuration and must not be overwritten with stale estMinutes.
+  // ignoreDuplicates: true — only inserts if the row is missing (FK guard).
+  // Never updates existing rows, so it cannot overwrite name, duration, or any
+  // other field that is managed by dedicated sync helpers (syncAudioField, etc.).
   const { error } = await supabase.from('audio_files').upsert(
     toAudioRow(audio),
-    { onConflict: 'id' },
+    { onConflict: 'id', ignoreDuplicates: true },
   );
   if (error) console.warn('[DB] ensureAudioFile:', error.message);
 }

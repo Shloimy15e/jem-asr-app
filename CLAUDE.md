@@ -609,7 +609,7 @@ bulkSyncTranscripts(transcriptArray)
 bulkSyncMappings(mappingsObj)   // ignoreDuplicates — won't overwrite user-confirmed
 ```
 
-`ensureAudioFile(audio)` is called internally before any write that has a FK → `audio_files.id`. It uses `toAudioRow(audio)` to map camelCase fields to snake_case DB columns. **`ensureAudioFile` does NOT write `duration_minutes`** — duration is managed exclusively by `syncAudioDuration()` to avoid overwriting corrected values with stale estimates.
+`ensureAudioFile(audio)` is called internally before any write that has a FK → `audio_files.id`. It uses `toAudioRow(audio)` to map camelCase fields to snake_case DB columns. **`ensureAudioFile` uses `ignoreDuplicates: true`** — it only inserts when the row is genuinely missing (FK guard). It never updates existing rows, so it cannot overwrite `name`, `duration_minutes`, or any other field managed by dedicated helpers (`syncAudioField`, `syncAudioDuration`). Do not remove `ignoreDuplicates: true` — without it, every sync operation (mapping, cleaning, alignment, review) would upsert the full audio row and silently revert any name or duration changes made since the JS state was last loaded.
 
 **Actual DB column names** (important — these differ from the camelCase app fields):
 - `mappings.created_at` (not `confirmed_at` — that column doesn't exist)
