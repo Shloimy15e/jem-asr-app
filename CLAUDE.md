@@ -362,8 +362,19 @@ Both use a shared `renderSpeedBar(playerEl, speeds)` helper in `detail.js`. They
 In `detail.js` `renderWordView()`, an **"Edit Words"** toggle button switches between play mode and edit mode:
 - Edit mode: clicking a chip opens an inline `<input>`; Tab advances to next word; Enter/Escape commits/cancels
 - A bulk RTL textarea shows all words space-joined; "Apply Text to Words" maps back by position (warns on count mismatch)
-- "Save Word Edits" calls `updateState('alignments', audioId, { ...alignment, words: editModeWords })` AND `setVersionAlignment()` to sync the active version's alignment
+- "Save Word Edits" calls `updateState('alignments', audioId, { ...alignment, words: editModeWords })` AND `setVersionAlignment()` to sync the active version's alignment, AND `updateVersion(audioId, versionId, { text: newText })` to rebuild the version's text string from the final words array so the transcript tab reflects the edits
 - Seek-click handlers are stored as `chip._seekHandler` and disabled/restored on mode toggle
+
+### Word view export buttons (SRT / VTT / Karaoke HTML)
+Three export buttons appear in the word view toolbar: **SRT**, **VTT**, and **🎤 Karaoke**.
+- All three use the live word array: if "Edit Words" mode is active they export the in-progress edits (including deletions); otherwise they use the saved alignment words
+- **SRT / VTT** call `generateSRT()` / `generateVTT()` from `utils.js` and `downloadFile()` — segments grouped on gap >0.5s or every ~10 words
+- **🎤 Karaoke** calls `generateKaraokeHTML(words, audioSrc, title)` in `detail.js`, which produces a self-contained HTML file with:
+  - Audio loaded from `https://jem-asr-app.pages.dev/api/audio?url=<encoded-r2-url>` (the open CF proxy — no auth required)
+  - All word timestamps embedded as JSON
+  - Dark-theme karaoke player: highlights the active word in blue, dims past words, click any word to seek
+  - RTL layout for Yiddish text
+- Downloaded as `<audio-name>-karaoke.html` — works offline in any browser
 
 ### Authentication — all pages require login
 The app uses Supabase Auth (email + password). `src/auth.js` exports `checkAuth()`, `signIn()`, `signOut()`. Both `app.js` and `detail.js` call `await checkAuth()` at the very top of their `DOMContentLoaded` handler — this redirects to `/login.html` if there is no active session. `login.html` + `src/login.js` handle the login form. Supabase RLS on all tables requires the `authenticated` role (migration `20260324000000_require_auth.sql`); the anon key alone cannot read any data. To add a new user: POST to `/auth/v1/admin/users` with the service role key, then trigger `/auth/v1/recover` to send a password-reset email.

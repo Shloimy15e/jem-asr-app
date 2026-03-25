@@ -4,7 +4,7 @@ import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } fro
 import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
 import { alignRow, transcribeAudio } from './alignment.js';
 import { buildAsrConfigPanel } from './asr-config.js';
-import { formatConfidence, getConfidenceLevel } from './utils.js';
+import { formatConfidence, getConfidenceLevel, generateSRT, generateVTT, downloadFile } from './utils.js';
 import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration } from './db.js';
 
 // Loads full transcript text using R2 first, then Supabase fallback.
@@ -1262,6 +1262,54 @@ function renderCompareView(audioId, alignedVersions, container, pageContainer, p
   wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+function generateKaraokeHTML(words, audioSrc, title) {
+  const wordsJson = JSON.stringify(words.map(w => ({ w: w.word || w.text || '', s: +(w.start ?? 0).toFixed(3), e: +(w.end ?? 0).toFixed(3) })));
+  return `<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title.replace(/</g,'&lt;')}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;background:#1a1a2e;color:#e8e8f0;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:20px}
+h1{font-size:1.1rem;color:#8888cc;margin-bottom:16px;text-align:center;direction:rtl}
+#player{width:100%;max-width:700px;margin-bottom:16px}
+#stage{width:100%;max-width:700px;background:#111128;border-radius:12px;padding:20px 24px;min-height:120px;display:flex;flex-wrap:wrap;gap:6px 10px;direction:rtl;align-content:flex-start}
+.w{padding:4px 6px;border-radius:6px;font-size:1.3rem;cursor:pointer;transition:background .1s,color .1s;color:#9090b0}
+.w.active{background:#2563eb;color:#fff;font-weight:bold}
+.w.past{color:#c8c8e0}
+</style>
+</head>
+<body>
+<h1>${title.replace(/</g,'&lt;')}</h1>
+<audio id="player" controls src="${audioSrc}"></audio>
+<div id="stage"></div>
+<script>
+const words=${wordsJson};
+const stage=document.getElementById('stage');
+const player=document.getElementById('player');
+const chips=words.map((w,i)=>{
+  const s=document.createElement('span');
+  s.className='w';s.textContent=w.w;
+  s.addEventListener('click',()=>{player.currentTime=w.s;player.play();});
+  stage.appendChild(s);return s;
+});
+let lastIdx=-1;
+player.addEventListener('timeupdate',()=>{
+  const t=player.currentTime;
+  let found=-1;
+  for(let i=0;i<words.length;i++){if(t>=words[i].s&&t<words[i].e){found=i;break;}}
+  if(found===lastIdx)return;
+  if(lastIdx>=0){chips[lastIdx].classList.remove('active');chips[lastIdx].classList.add('past');}
+  if(found>=0){chips[found].classList.add('active');chips[found].scrollIntoView({block:'nearest',behavior:'smooth'});}
+  lastIdx=found;
+});
+</script>
+</body>
+</html>`;
+}
+
 function renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef) {
   const origText = cleaning?.originalText || '';
   const cleanedTextFallback = cleaning?.cleanedText || origText;
@@ -1462,10 +1510,32 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   editStatus.className = 'text-secondary';
   editStatus.style.fontSize = '0.8rem';
 
+  // Export buttons
+  const exportSrtBtn = document.createElement('button');
+  exportSrtBtn.className = 'btn btn-secondary';
+  exportSrtBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
+  exportSrtBtn.textContent = 'SRT';
+  exportSrtBtn.title = 'Download subtitle file (.srt)';
+
+  const exportVttBtn = document.createElement('button');
+  exportVttBtn.className = 'btn btn-secondary';
+  exportVttBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
+  exportVttBtn.textContent = 'VTT';
+  exportVttBtn.title = 'Download subtitle file (.vtt)';
+
+  const exportKaraokeBtn = document.createElement('button');
+  exportKaraokeBtn.className = 'btn btn-secondary';
+  exportKaraokeBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
+  exportKaraokeBtn.textContent = '🎤 Karaoke';
+  exportKaraokeBtn.title = 'Download self-contained karaoke HTML player';
+
   toolbar.appendChild(problemFilterBtn);
   toolbar.appendChild(editToggleBtn);
   toolbar.appendChild(saveEditsBtn);
   toolbar.appendChild(editStatus);
+  toolbar.appendChild(exportSrtBtn);
+  toolbar.appendChild(exportVttBtn);
+  toolbar.appendChild(exportKaraokeBtn);
   leftPanel.appendChild(toolbar);
 
   // Word grid
@@ -2023,6 +2093,46 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
   editToggleBtn.addEventListener('click', () => { if (!editMode) enterEditMode(); else exitEditMode(); });
 
+  function getCurrentWords() {
+    // Use the live editModeWords if in edit mode, otherwise alignment words
+    if (editMode) {
+      return words.map((w, i) => editModeWords[i] ? { ...w, ...editModeWords[i] } : w).filter(w => !w._deleted);
+    }
+    return words;
+  }
+
+  function getExportBaseName() {
+    const state = getState();
+    const audio = state.audio?.find(a => a.id === audioId);
+    return (audio?.name || audioId).replace(/\.[^.]+$/, '');
+  }
+
+  exportSrtBtn.addEventListener('click', () => {
+    const srt = generateSRT(getCurrentWords());
+    if (!srt) { alert('No aligned words to export.'); return; }
+    downloadFile(srt, `${getExportBaseName()}.srt`, 'text/plain');
+  });
+
+  exportVttBtn.addEventListener('click', () => {
+    const vtt = generateVTT(getCurrentWords());
+    if (!vtt) { alert('No aligned words to export.'); return; }
+    downloadFile(vtt, `${getExportBaseName()}.vtt`, 'text/vtt');
+  });
+
+  exportKaraokeBtn.addEventListener('click', () => {
+    const exportWords = getCurrentWords();
+    if (!exportWords.length) { alert('No aligned words to export.'); return; }
+    const state = getState();
+    const audio = state.audio?.find(a => a.id === audioId);
+    const r2Link = audio?.r2Link;
+    const audioSrc = r2Link
+      ? `https://jem-asr-app.pages.dev/api/audio?url=${encodeURIComponent(r2Link)}`
+      : (playerEl?.src || '');
+    const baseName = getExportBaseName();
+    const html = generateKaraokeHTML(exportWords, audioSrc, baseName);
+    downloadFile(html, `${baseName}-karaoke.html`, 'text/html');
+  });
+
   saveEditsBtn.addEventListener('click', () => {
     const openInput = wordGrid.querySelector('input');
     if (openInput) openInput.blur();
@@ -2052,7 +2162,12 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     const updatedAlignment = { ...currentAlignment, words: finalWords };
     updateState('alignments', audioId, updatedAlignment);
     const versionId = activeVersionRef?.id;
-    if (versionId) setVersionAlignment(audioId, versionId, updatedAlignment);
+    if (versionId) {
+      setVersionAlignment(audioId, versionId, updatedAlignment);
+      // Also update the version's text so the transcript tab reflects word edits
+      const newText = finalWords.map(w => w.word || w.text || '').join(' ');
+      updateVersion(audioId, versionId, { text: newText });
+    }
     exitEditMode();
     const parts = [];
     if (addedCount) parts.push(`${addedCount} added`);
