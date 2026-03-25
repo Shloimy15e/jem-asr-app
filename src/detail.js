@@ -1405,14 +1405,25 @@ async function startKaraokeVideoExport(words, playerEl, audioName, onStatus, onD
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
 
+  // Use the CORS-enabled proxy URL so Web Audio API can access the stream.
+  // playerEl.src may be a raw R2 URL without CORS headers; the proxy always returns *
+  const rawSrc = playerEl.src;
+  let proxiedSrc = rawSrc;
+  try {
+    const u = new URL(rawSrc, location.href);
+    if (u.hostname === 'audio.kohnai.ai') {
+      proxiedSrc = `/api/audio?url=${encodeURIComponent(rawSrc)}`;
+    }
+  } catch { /* keep rawSrc */ }
+
   // Fresh audio element so we don't disturb the main player
   const recAudio = new Audio();
   recAudio.crossOrigin = 'anonymous';
-  recAudio.src = playerEl.src;
+  recAudio.src = proxiedSrc;
   onStatus('Loading audio...');
   await new Promise((res, rej) => {
     recAudio.addEventListener('canplaythrough', res, { once: true });
-    recAudio.addEventListener('error', rej, { once: true });
+    recAudio.addEventListener('error', e => rej(new Error(`Audio load failed (${recAudio.error?.code ?? e.type})`)), { once: true });
     recAudio.load();
   });
 
@@ -2400,7 +2411,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     } catch (err) {
       cancelVideoExport = null;
       exportVideoBtn.textContent = '🎬 Export Video';
-      videoStatus.textContent = `Error: ${err.message}`;
+      videoStatus.textContent = `Error: ${err?.message || String(err) || 'unknown'}`;
     }
   });
 
