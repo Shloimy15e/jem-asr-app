@@ -1786,6 +1786,11 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   // Bulk edit panel (edit mode only)
   const bulkPanel = document.createElement('div');
   bulkPanel.style.cssText = 'display:none;margin-top:8px;';
+  const bulkHint = document.createElement('div');
+  bulkHint.className = 'text-secondary';
+  bulkHint.style.cssText = 'font-size:0.75rem;margin-bottom:4px;';
+  bulkHint.textContent = 'Edit the segment text below. Same word count → timestamps preserved. Different count → timestamps redistributed evenly.';
+  bulkPanel.appendChild(bulkHint);
   const bulkTextarea = document.createElement('textarea');
   bulkTextarea.className = 'transcript-editor';
   bulkTextarea.dir = 'rtl';
@@ -2481,21 +2486,42 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   bulkApplyBtn.addEventListener('click', () => {
     const segWords = segments[currentSegIdx] || [];
     const tokens = bulkTextarea.value.trim().split(/\s+/).filter(Boolean);
-    if (tokens.length !== segWords.length) {
-      bulkStatus.style.color = 'var(--orange)';
-      bulkStatus.textContent = `Count mismatch: ${tokens.length} vs ${segWords.length} expected`;
-      return;
+    if (!tokens.length) { bulkStatus.textContent = 'Nothing to apply.'; return; }
+
+    if (tokens.length === segWords.length) {
+      // Same count — 1:1 text swap, timestamps unchanged
+      tokens.forEach((tok, i) => {
+        const gi = words.indexOf(segWords[i]);
+        if (gi >= 0) editModeWords[gi] = { ...editModeWords[gi], word: tok };
+      });
+      bulkStatus.style.color = 'var(--green)';
+      bulkStatus.textContent = `${tokens.length} words updated`;
+    } else {
+      // Different count — delete original words, insert new ones with redistributed timestamps
+      const segStart = segWords[0]?.start ?? 0;
+      const segEnd = segWords[segWords.length - 1]?.end ?? segStart + 1;
+      const dur = (segEnd - segStart) / tokens.length;
+
+      // Mark all original segment words as deleted
+      segWords.forEach(w => {
+        const gi = words.indexOf(w);
+        if (gi >= 0) editModeWords[gi] = { ...editModeWords[gi], _deleted: true };
+      });
+
+      // Replace any existing insertions at pos 0 for this segment with the new words
+      if (!insertions[currentSegIdx]) insertions[currentSegIdx] = {};
+      insertions[currentSegIdx][0] = tokens.map((tok, i) => ({
+        word: tok,
+        start: +(segStart + i * dur).toFixed(3),
+        end: +(segStart + (i + 1) * dur).toFixed(3),
+      }));
+
+      bulkStatus.style.color = 'var(--green)';
+      bulkStatus.textContent = `Replaced with ${tokens.length} words (was ${segWords.length}), timestamps redistributed`;
     }
-    tokens.forEach((tok, i) => {
-      const gi = words.indexOf(segWords[i]);
-      if (gi >= 0) editModeWords[gi] = { ...editModeWords[gi], word: tok };
-    });
-    chipEls.forEach(chip => {
-      const gi = parseInt(chip.dataset.globalIdx, 10);
-      if (!isNaN(gi)) chip.textContent = editModeWords[gi]?.word || '';
-    });
-    bulkStatus.style.color = 'var(--green)';
-    bulkStatus.textContent = `${tokens.length} words updated`;
+
+    renderSegmentChips();
+    refreshBulkTextarea();
   });
 
   prevBtn.addEventListener('click', () => goToSegment(currentSegIdx - 1));
