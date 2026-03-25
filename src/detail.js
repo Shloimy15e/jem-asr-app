@@ -2352,11 +2352,15 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       }
       prevActiveChip = found;
 
-      // Pause at the end of the current segment so the user can review before continuing
+      // Pause at the end of the current segment — only when word view is visible
+      // (avoids interfering with the top audio player when user is scrolled up)
       const segWords = segments[currentSegIdx];
       if (segWords?.length && !playerEl.paused) {
-        const segEnd = segWords[segWords.length - 1].end;
-        if (t >= segEnd) playerEl.pause();
+        const wvRect = container.getBoundingClientRect();
+        if (wvRect.top < window.innerHeight && wvRect.bottom > 0) {
+          const segEnd = segWords[segWords.length - 1].end;
+          if (t >= segEnd) playerEl.pause();
+        }
       }
     };
     playerEl._wordViewTimeUpdate = onTimeUpdate;

@@ -310,6 +310,9 @@ The app enforces: no "Approve" button on these rows (both UI and `approveAll()` 
 ### Page layout: body is a flex column, table scrolls internally
 `body` uses `display: flex; flex-direction: column; height: 100%`. The `.table-container` has `flex: 1; overflow: auto; min-height: 0` so it fills the remaining viewport height and scrolls internally. The `<thead>` is `position: sticky; top: 0` within that scroll container. The app header and filter bar are always visible above the table — they do not need `position: sticky`. Do not revert to a scrolling-page layout or the sticky column header will appear in the wrong position.
 
+### Detail page layout: `.detail-page` needs `width: 100%`
+`body` is `display: flex; flex-direction: column`. In a flex column container, `margin: 0 auto` on a child element **prevents stretch behavior** — the element shrinks to its natural content width instead of filling the container. `.detail-page` must have `width: 100%; box-sizing: border-box` alongside `max-width: 1200px; margin: 0 auto` so it spans the full viewport width on screens narrower than 1200px. Do not remove `width: 100%` from `.detail-page`.
+
 ### Cloudflare Pages — manual deploy required
 The Pages project is NOT connected to GitHub auto-deploy. Every release requires:
 ```bash
@@ -390,6 +393,9 @@ The word view does NOT auto-advance to the next segment when the audio playhead 
 Two places in `detail.js` were cleaned up to achieve this:
 1. **`timeupdate` listener** — removed the block that called `goToSegment(next)` when `currentTime > segment.end`.
 2. **Mark Reviewed button handler** — removed the `goToSegment(next)` call after adding to `reviewedSegments`. Now it only calls `updateStats()`, `updateSegHeader()`, and re-renders the sidebar list — the segment stays put.
+
+### Segment pause is gated on word view visibility
+The `timeupdate` handler pauses at the end of the current segment **only when the word view container is visible in the viewport**. This prevents the top audio player (above the fold) from being stopped mid-playback by the segment boundary. The check uses `container.getBoundingClientRect()` — the same pattern already used to gate karaoke scroll. Do not remove this viewport check or the top player will stop abruptly at segment ends.
 
 ### Trim slider drag requires `user-select: none`
 `renderTrimControls` sets `document.body.style.userSelect = 'none'` on `mousedown` and clears it on `mouseup`. Without this, the browser treats the drag as text selection and interrupts it. Always restore `userSelect` in the `onEnd` handler.
@@ -706,7 +712,9 @@ All word timestamps are offset by the chunk's audio start time so they represent
 A 52-minute file with 31K chars produces 2 chunks and takes ~5 min on a cold GPU. Console logs `[Align] Text too long (N chars) — splitting into X chunks`.
 
 ### Alignment retry and timeout
-Each chunk retries 3 times on 502/504 HTTP errors AND network-level errors (connection refused, DNS failure) with a 10-second delay between attempts. Each fetch has a 5-minute `AbortController` timeout. If the alignment button fails, it re-enables with a "click to retry" message rather than staying disabled.
+Each chunk retries **15 times** on 502/504 HTTP errors AND network-level errors (connection refused, DNS failure) with a 10-second delay between attempts (15 × 10s = 150s total — covers the ~2.5 min RunPod cold-start window). Each fetch has a 5-minute `AbortController` timeout. If the alignment button fails, it re-enables with a "click to retry" message rather than staying disabled.
+
+**Do not reduce `MAX_RETRIES` below 15.** RunPod scales to zero when idle. A cold GPU returns 502 for ~2.5 minutes before becoming ready. With only 3 retries (the old value), alignment would always fail on a cold GPU.
 
 ### benchmark.js
 ```javascript

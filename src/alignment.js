@@ -134,7 +134,7 @@ function splitTextIntoChunks(text) {
 // Send one alignment request to the CF Worker with retry logic.
 // Returns the parsed response data object.
 async function doAlignRequest(requestBody, chunkLabel) {
-  const MAX_RETRIES = 3;
+  const MAX_RETRIES = 15; // GPU cold start can take ~2.5 min; 15×10s = 150s covers it
   const RETRY_DELAY_MS = 10000;
   const FETCH_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
   let response;
