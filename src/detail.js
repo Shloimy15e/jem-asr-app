@@ -1292,6 +1292,192 @@ function renderCompareView(audioId, alignedVersions, container, pageContainer, p
   wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+// ── Karaoke canvas frame renderer ─────────────────────────────────────────────
+function drawKaraokeFrame(ctx, words, currentTime, title, W, H) {
+  // Background
+  ctx.fillStyle = '#0f0f1a';
+  ctx.fillRect(0, 0, W, H);
+
+  // Title
+  ctx.save();
+  ctx.font = '22px Arial';
+  ctx.fillStyle = '#7777aa';
+  ctx.textAlign = 'center';
+  ctx.direction = 'ltr';
+  ctx.fillText(title, W / 2, 38);
+  ctx.restore();
+
+  if (!words.length) return;
+
+  // Find active word index
+  let activeIdx = -1;
+  for (let i = 0; i < words.length; i++) {
+    if (currentTime >= words[i].s && currentTime <= words[i].e) { activeIdx = i; break; }
+  }
+  if (activeIdx === -1) {
+    for (let i = words.length - 1; i >= 0; i--) {
+      if (currentTime > words[i].s) { activeIdx = i; break; }
+    }
+  }
+
+  // Group words into lines of ~7
+  const LINE_SIZE = 7;
+  const numLines = Math.ceil(words.length / LINE_SIZE);
+  const currentLine = Math.floor(Math.max(0, activeIdx) / LINE_SIZE);
+
+  const CENTER_Y = H / 2 + 10;
+  const LINE_SPACING = 90;
+  const GAP = 12;
+
+  for (let offset = -1; offset <= 1; offset++) {
+    const li = currentLine + offset;
+    if (li < 0 || li >= numLines) continue;
+
+    const lineWords = words.slice(li * LINE_SIZE, (li + 1) * LINE_SIZE);
+    const y = CENTER_Y + offset * LINE_SPACING;
+    const isCurrent = offset === 0;
+
+    if (!isCurrent) {
+      ctx.save();
+      ctx.font = '36px Arial';
+      ctx.fillStyle = offset < 0 ? '#55556a' : '#444458';
+      ctx.textAlign = 'center';
+      ctx.direction = 'rtl';
+      ctx.fillText(lineWords.map(w => w.w).join(' '), W / 2, y);
+      ctx.restore();
+    } else {
+      // Measure word widths for this line
+      ctx.font = 'bold 50px Arial';
+      const widths = lineWords.map(w => ctx.measureText(w.w).width);
+      const totalWidth = widths.reduce((s, v) => s + v, 0) + GAP * (lineWords.length - 1);
+
+      // RTL: word[0] is rightmost; draw from right edge of centered block
+      let x = W / 2 + totalWidth / 2;
+
+      lineWords.forEach((word, wi) => {
+        const globalIdx = li * LINE_SIZE + wi;
+        const isActive = globalIdx === activeIdx;
+        const isPast = globalIdx < activeIdx;
+        const w = widths[wi];
+
+        if (isActive) {
+          // Highlight pill behind active word
+          ctx.save();
+          ctx.fillStyle = 'rgba(37,99,235,0.45)';
+          const pad = 10, h = 62;
+          ctx.beginPath();
+          if (ctx.roundRect) {
+            ctx.roundRect(x - w - pad, y - 50, w + pad * 2, h, 10);
+          } else {
+            ctx.rect(x - w - pad, y - 50, w + pad * 2, h);
+          }
+          ctx.fill();
+          ctx.restore();
+        }
+
+        ctx.save();
+        ctx.font = 'bold 50px Arial';
+        ctx.fillStyle = isActive ? '#88bbff' : isPast ? '#555578' : '#aaaacc';
+        ctx.textAlign = 'right';
+        ctx.direction = 'rtl';
+        ctx.fillText(word.w, x, y);
+        ctx.restore();
+
+        x -= w + GAP;
+      });
+    }
+  }
+
+  // Progress bar
+  const lastEnd = words[words.length - 1]?.e || 1;
+  const progress = Math.min(currentTime / lastEnd, 1);
+  ctx.fillStyle = '#1e1e30';
+  ctx.fillRect(40, H - 24, W - 80, 10);
+  ctx.fillStyle = '#2563eb';
+  ctx.fillRect(40, H - 24, (W - 80) * progress, 10);
+}
+
+// ── Karaoke video recorder ─────────────────────────────────────────────────────
+// Returns a cancel() function. Calls onStatus(text) with progress, onDone() when file downloaded.
+async function startKaraokeVideoExport(words, playerEl, audioName, onStatus, onDone) {
+  const W = 1280, H = 720;
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  // Fresh audio element so we don't disturb the main player
+  const recAudio = new Audio();
+  recAudio.crossOrigin = 'anonymous';
+  recAudio.src = playerEl.src;
+  onStatus('Loading audio...');
+  await new Promise((res, rej) => {
+    recAudio.addEventListener('canplaythrough', res, { once: true });
+    recAudio.addEventListener('error', rej, { once: true });
+    recAudio.load();
+  });
+
+  // Route audio through Web Audio so MediaRecorder can capture it
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const src = audioCtx.createMediaElementSource(recAudio);
+  const dest = audioCtx.createMediaStreamDestination();
+  src.connect(dest);
+  src.connect(audioCtx.destination); // also play through speakers
+
+  // Combine canvas video + audio into one stream
+  const canvasStream = canvas.captureStream(30);
+  const combined = new MediaStream([
+    ...canvasStream.getVideoTracks(),
+    ...dest.stream.getAudioTracks(),
+  ]);
+
+  // Pick best supported format
+  const candidate = ['video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
+    .find(t => MediaRecorder.isTypeSupported(t)) || 'video/webm';
+  const ext = candidate.startsWith('video/mp4') ? 'mp4' : 'webm';
+
+  const recorder = new MediaRecorder(combined, { mimeType: candidate, videoBitsPerSecond: 2_500_000 });
+  const chunks = [];
+  recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+  const duration = words[words.length - 1]?.e || 0;
+  let cancelled = false;
+  let rafId = null;
+
+  function render() {
+    if (cancelled) return;
+    drawKaraokeFrame(ctx, words, recAudio.currentTime, audioName, W, H);
+    onStatus(`Recording ${formatTime(recAudio.currentTime)} / ${formatTime(duration)} — keep this tab open`);
+    rafId = requestAnimationFrame(render);
+  }
+
+  recorder.onstop = () => {
+    cancelAnimationFrame(rafId);
+    audioCtx.close();
+    if (cancelled) { onDone('Cancelled.'); return; }
+    const blob = new Blob(chunks, { type: candidate });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${audioName}.${ext}`;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    onDone(`Done! Saved as ${audioName}.${ext}`);
+  };
+
+  recAudio.currentTime = 0;
+  recorder.start(250);
+  recAudio.play();
+  render();
+
+  recAudio.addEventListener('ended', () => recorder.stop(), { once: true });
+
+  return function cancel() {
+    cancelled = true;
+    recorder.stop();
+    recAudio.pause();
+  };
+}
+
 function generateKaraokeHTML(words, audioSrc, title) {
   const wordsJson = JSON.stringify(words.map(w => ({ w: w.word || w.text || '', s: +(w.start ?? 0).toFixed(3), e: +(w.end ?? 0).toFixed(3) })));
   return `<!DOCTYPE html>
@@ -1559,6 +1745,16 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   exportKaraokeBtn.textContent = '🎤 Karaoke';
   exportKaraokeBtn.title = 'Download self-contained karaoke HTML player';
 
+  const exportVideoBtn = document.createElement('button');
+  exportVideoBtn.className = 'btn btn-secondary';
+  exportVideoBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
+  exportVideoBtn.textContent = '🎬 Export Video';
+  exportVideoBtn.title = 'Record karaoke video file (runs in real-time)';
+
+  const videoStatus = document.createElement('span');
+  videoStatus.className = 'text-secondary';
+  videoStatus.style.cssText = 'font-size:0.78rem;';
+
   toolbar.appendChild(problemFilterBtn);
   toolbar.appendChild(editToggleBtn);
   toolbar.appendChild(saveEditsBtn);
@@ -1566,6 +1762,8 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   toolbar.appendChild(exportSrtBtn);
   toolbar.appendChild(exportVttBtn);
   toolbar.appendChild(exportKaraokeBtn);
+  toolbar.appendChild(exportVideoBtn);
+  toolbar.appendChild(videoStatus);
   leftPanel.appendChild(toolbar);
 
   // Word grid
@@ -2161,6 +2359,49 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     const baseName = getExportBaseName();
     const html = generateKaraokeHTML(exportWords, audioSrc, baseName);
     downloadFile(html, `${baseName}-karaoke.html`, 'text/html');
+  });
+
+  let cancelVideoExport = null;
+  exportVideoBtn.addEventListener('click', async () => {
+    if (cancelVideoExport) {
+      cancelVideoExport();
+      cancelVideoExport = null;
+      exportVideoBtn.textContent = '🎬 Export Video';
+      videoStatus.textContent = '';
+      return;
+    }
+    if (!playerEl) { alert('No audio player found.'); return; }
+    const exportWords = getCurrentWords();
+    if (!exportWords.length) { alert('No aligned words to export.'); return; }
+
+    // Normalize to {w, s, e} for the renderer
+    const normWords = exportWords.map(w => ({
+      w: w.word || w.text || '',
+      s: w.start ?? 0,
+      e: w.end ?? 0,
+    }));
+
+    exportVideoBtn.textContent = '⏹ Cancel Recording';
+    videoStatus.textContent = 'Starting...';
+
+    try {
+      cancelVideoExport = await startKaraokeVideoExport(
+        normWords,
+        playerEl,
+        getExportBaseName(),
+        text => { videoStatus.textContent = text; },
+        msg => {
+          cancelVideoExport = null;
+          exportVideoBtn.textContent = '🎬 Export Video';
+          videoStatus.textContent = msg;
+          setTimeout(() => { videoStatus.textContent = ''; }, 5000);
+        }
+      );
+    } catch (err) {
+      cancelVideoExport = null;
+      exportVideoBtn.textContent = '🎬 Export Video';
+      videoStatus.textContent = `Error: ${err.message}`;
+    }
   });
 
   saveEditsBtn.addEventListener('click', () => {
