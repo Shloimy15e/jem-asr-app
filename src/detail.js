@@ -1057,7 +1057,8 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       const currentVersionId = activeVersionRef?.id || null;
       await alignRow(audioId, getState(), textForAlignment, currentVersionId);
     } catch (err) {
-      alignBtn.textContent = 'Alignment failed — click to retry';
+      console.error('[Alignment] Failed for', audioId, ':', err);
+      alignBtn.textContent = `Alignment failed (${err.message}) — click to retry`;
       alignBtn.disabled = false;
       return;
     }
