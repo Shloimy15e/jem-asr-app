@@ -12,6 +12,18 @@ To train that AI, we need **50 hours of verified audio-text pairs**. This app is
 
 ---
 
+## Libraries
+
+| ID | Name | Files | Notes |
+|----|------|-------|-------|
+| `jemedia` | JEM Media | 4,669 audio, 1,065 transcripts | Main archive — Rebbe's talks 1950–1992 |
+| `satmar` | Satmar | 2 audio | Hoshana Rabba 5710, Va'eschanan Sharon Springs 5727 |
+| `training` | Training | Growing | New audio for future training data |
+
+Audio for `satmar` and `training` libraries uses the `r2.dev` URL (`pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev`) rather than `audio.kohnai.ai` — see gotcha below.
+
+---
+
 ## The User Journey
 
 Every audio file moves through a pipeline from raw → ready. Here's the full flow:
@@ -305,6 +317,12 @@ The app enforces: no "Approve" button on these rows (both UI and `approveAll()` 
 **Do not add `text` or `words` back to the startup queries** — it would fetch megabytes for 4,669 files on every page load.
 
 **`alignment.words` is undefined at startup even when `alignment` is truthy.** The alignment object loaded at startup has `avgConfidence`, `lowConfidenceCount`, `alignedAt` but NOT `words`. Any code that reads `alignment.words` must use `alignment?.words ?? []` — never `alignment ? alignment.words : []`, which evaluates to `undefined` when the object exists but `.words` hasn't been lazy-loaded yet.
+
+### Non-JEM library IDs break the `byId` sort
+The startup sort in `db.js` originally used `parseInt(a.id.slice(2))` which assumed JEM-format IDs like `0016` (all-numeric). IDs like `satmar-001` slice to `tmar-001` → `NaN`, causing the sort to produce an empty-looking array and the app to show "Failed to load data." Fixed: `byId` now does `parseInt(a.id)` (full string) for numeric IDs, falling back to lexicographic comparison — so any library with non-numeric IDs works correctly.
+
+### R2 custom domain (audio.kohnai.ai) only serves pre-existing objects
+New objects uploaded to the `jem-asr-audio` R2 bucket via `wrangler r2 object put` do NOT appear at `audio.kohnai.ai` — they return 404 even though they exist in the bucket. The `r2.dev` public URL (`pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev`) works for all objects. New library audio files should use the `r2.dev` URL in their `r2_link` column. The `ALLOWED_R2_DOMAINS` Pages secret includes both domains: `audio.kohnai.ai,pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev`.
 
 ### Supabase row limit — use fetchAll(), not .limit()
 `supabase.from(...).select(...).limit(10000)` does NOT work — Supabase's server-side `max_rows` caps responses at 1,000 rows regardless of the client-side `.limit()` call. All startup queries use `fetchAll(table, columns)` defined in `db.js`, which paginates in 1,000-row chunks via `.range(from, from+999)` until all records are returned. Never replace this with `.limit()`.

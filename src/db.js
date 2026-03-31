@@ -424,8 +424,12 @@ export async function loadFromSupabase(libraryId = null) {
 
     // errors are logged inside fetchAll
 
-    // Sort by numeric ID suffix for consistent ordering
-    const byId = (a, b) => parseInt(a.id.slice(2)) - parseInt(b.id.slice(2));
+    // Sort by ID — numeric suffix for JEM-style IDs (0001), lexicographic fallback for others
+    const byId = (a, b) => {
+      const na = parseInt(a.id), nb = parseInt(b.id);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    };
 
     const audio = (audioData || []).sort(byId).map(a => ({
       id: a.id,
