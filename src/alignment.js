@@ -63,7 +63,12 @@ async function fetchAudioForAlignment(url, trimStart, trimEnd, audioDuration) {
     return { audioUrl: url, trimStart: hasTrim ? trimStart : undefined, trimEnd: hasTrim ? trimEnd : undefined, audioDuration: hasTrim ? audioDuration : undefined };
   }
 
-  const res = await fetch(url);
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    throw new Error(`Audio not on R2 — set r2_link in Supabase for this file (${url.substring(0, 60)})`);
+  }
   if (!res.ok) throw new Error(`Failed to fetch audio: ${res.status}`);
   const blob = await res.blob();
 
@@ -215,8 +220,26 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
 
   const effectiveEnd = trimEnd > 0 ? trimEnd : audioDuration;
 
+  // For multi-chunk alignment, VBR MP3 byte-seeking can be inaccurate mid-file.
+  //
+  // Fix (two parts):
+  // 1. CF Worker detects corrupt (flat) XING TOC and falls back to byte-proportional,
+  //    giving an accurate short clip starting just before the chunk boundary.
+  // 2. The last ANCHOR_COUNT words of chunk N are prepended to chunk N+1's text.
+  //    RunPod aligns them first; comparing their timestamps against chunk N's known
+  //    timestamps gives the residual byte-seeking error (calibration), which is then
+  //    applied to all of chunk N+1's timestamps.
+  //
+  // The audio clip starts ANCHOR_PRE_BUFFER seconds before the first anchor word so
+  // the clip is short (~500s). A short clip prevents RunPod from false-matching to
+  // unrelated speech that appears earlier in the recording.
+  const ANCHOR_COUNT = 20;         // words to borrow from previous chunk
+  const ANCHOR_PRE_BUFFER = 20;    // seconds of audio before first anchor word
+  const BOUNDARY_GAP_THRESHOLD = 5; // seconds — inter-word gap larger than this = inflation artifact
+
   let allWords = [];
   let chunkAudioStart = trimStart;
+  let prevChunkWords = null;
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
@@ -235,8 +258,25 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
       chunkAudioEnd = Math.min(chunkAudioStart + audioLeft * fraction * 1.3, effectiveEnd);
     }
 
-    const audioResult = await fetchAudioForAlignment(url, chunkAudioStart, chunkAudioEnd, audioDuration);
-    const requestBody = buildRequestBody(audioResult, chunk);
+    let requestText = chunk;
+    let anchorCount = 0;
+    let audioStart = chunkAudioStart;
+
+    if (i > 0 && prevChunkWords && prevChunkWords.length >= ANCHOR_COUNT) {
+      const anchors = prevChunkWords.slice(-ANCHOR_COUNT);
+      requestText = anchors.map(w => w.word).join(' ') + ' ' + chunk;
+      anchorCount = ANCHOR_COUNT;
+      // Start audio just before the anchor words so:
+      // - The clip is short (~500s) → RunPod can't false-match to unrelated early speech
+      // - Anchors appear near the beginning of the clip → accurate alignment
+      // The CF Worker uses byte-proportional for corrupt VBR TOCs, so this trim is reliable.
+      audioStart = Math.max(trimStart, anchors[0].start - ANCHOR_PRE_BUFFER);
+    }
+
+    console.log(`[Align${chunkLabel}] audioStart=${audioStart.toFixed(1)}s chunkAudioEnd=${chunkAudioEnd || 'eof'} anchorCount=${anchorCount}`);
+
+    const audioResult = await fetchAudioForAlignment(url, audioStart, chunkAudioEnd, audioDuration);
+    const requestBody = buildRequestBody(audioResult, requestText);
     const data = await doAlignRequest(requestBody, chunkLabel);
 
     let rawWords = data.timestamps || [];
@@ -244,19 +284,76 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
       rawWords = data.segments.flatMap(seg => seg.words || []);
     }
 
+    console.log(`[Align${chunkLabel}] RunPod returned ${rawWords.length} words; first=${JSON.stringify(rawWords[0])}, last=${JSON.stringify(rawWords[rawWords.length - 1])}`);
+
     const chunkWords = rawWords.map(t => ({
       word: t.word || t.text || '',
-      start: (t.start || 0) + chunkAudioStart,
-      end: (t.end || 0) + chunkAudioStart,
+      start: (t.start || 0) + audioStart,
+      end: (t.end || 0) + audioStart,
       confidence: t.confidence ?? t.probability ?? t.score ?? 0,
     }));
 
-    allWords = allWords.concat(chunkWords);
+    let wordsToAdd;
 
-    // Use the actual last aligned word's end time as the next chunk's audio start.
-    // This is more accurate than a proportional estimate.
-    if (chunkWords.length > 0) {
-      chunkAudioStart = chunkWords[chunkWords.length - 1].end;
+    if (i > 0 && anchorCount > 0 && prevChunkWords && chunkWords.length > anchorCount) {
+      // Compute calibration: median of (chunk_N_anchor_time - chunk_N+1_anchor_time).
+      // Median resists outliers from boundary-inflated anchor words.
+      const anchors = prevChunkWords.slice(-anchorCount);
+      const diffs = anchors.map((a, k) => a.start - chunkWords[k].start);
+      const sorted = [...diffs].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      const calibration = sorted.length % 2 !== 0
+        ? sorted[mid]
+        : (sorted[mid - 1] + sorted[mid]) / 2;
+
+      if (Math.abs(calibration) < 400) {
+        console.log(`[Align${chunkLabel}] Calibration: ${calibration.toFixed(2)}s`);
+        const calibrated = chunkWords.map(w => ({
+          ...w, start: w.start + calibration, end: w.end + calibration,
+        }));
+        // Replace the last anchorCount words in allWords with the calibrated chunk N+1
+        // versions (chunk N's boundary timestamps are inflated by the audio buffer;
+        // chunk N+1's calibrated versions are more accurate).
+        allWords = allWords.slice(0, allWords.length - anchorCount);
+        // Also trim any residual original words that are later than the first calibrated
+        // anchor — the cut point may have left an inflated word just before the boundary.
+        if (calibrated.length > 0) {
+          while (allWords.length > 0 && allWords[allWords.length - 1].start > calibrated[0].start) {
+            allWords.pop();
+          }
+        }
+        allWords = allWords.concat(calibrated.slice(0, anchorCount));
+        wordsToAdd = calibrated.slice(anchorCount);
+      } else {
+        console.warn(`[Align${chunkLabel}] Calibration out of range (${calibration.toFixed(2)}s) — trimming inflation`);
+        allWords = allWords.slice(0, allWords.length - anchorCount);
+        // Trim residual inflation using gap detection
+        while (allWords.length >= 2) {
+          const last = allWords[allWords.length - 1];
+          const prev = allWords[allWords.length - 2];
+          if (last.start - prev.start > BOUNDARY_GAP_THRESHOLD) allWords.pop();
+          else break;
+        }
+        wordsToAdd = chunkWords.slice(anchorCount);
+      }
+    } else {
+      // No anchors: trim inflated boundary words using gap detection before merging.
+      if (i > 0 && allWords.length >= 2) {
+        while (allWords.length >= 2) {
+          const last = allWords[allWords.length - 1];
+          const prev = allWords[allWords.length - 2];
+          if (last.start - prev.start > BOUNDARY_GAP_THRESHOLD) allWords.pop();
+          else break;
+        }
+      }
+      wordsToAdd = chunkWords;
+    }
+
+    allWords = allWords.concat(wordsToAdd);
+    prevChunkWords = wordsToAdd;
+
+    if (allWords.length > 0) {
+      chunkAudioStart = allWords[allWords.length - 1].end;
     } else {
       chunkAudioStart = chunkAudioEnd || effectiveEnd;
     }
