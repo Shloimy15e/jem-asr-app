@@ -1012,6 +1012,20 @@ input {
     min-height: 40px;
     font-size: 0.82rem;
   }
+  .filter-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+  }
+  .filter-select {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .search-input {
+    width: 100%;
+    box-sizing: border-box;
+  }
 }
 
 @media (min-width: 481px) and (max-width: 768px) {
