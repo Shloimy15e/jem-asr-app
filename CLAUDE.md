@@ -479,6 +479,14 @@ When 2+ versions have alignment data, a **"Compare Versions"** button appears be
 
 The intended iterative workflow: clean → align → edit → align again → compare both → repeat until all words are green.
 
+### ASR Transcription section — standalone card before cleaning
+
+`renderAsrSection(audioId, state, container, pageContainer)` in `detail.js` renders as its own **`.detail-section.asr-transcription-card`** card, positioned **before** the cleaning section in `renderUnifiedWorkSection`. This ordering reflects the pipeline: generate transcript (ASR) → clean → align.
+
+**Do not move `renderAsrSection` back inside `cleanSection`** — it was previously nested there which was architecturally wrong (cleaning processes existing text; ASR generates new text from audio).
+
+Visual design: purple left border (`border-left: 3px solid var(--purple)`), header with 🎙 icon in a purple-dim circle + "Generate Transcript" title + description line, provider buttons as `.asr-provider-btn` (purple-tinted pill style), "Configure providers…" as a `.asr-config-toggle-link` (underlined text link, not a button).
+
 ### ASR Transcription providers — three options, configured globally via toolbar
 A global **"ASR Settings"** button in the main toolbar opens the config modal (same modal used by benchmark). Settings persist in `state.transcribeProviders` (localStorage). Three providers:
 
