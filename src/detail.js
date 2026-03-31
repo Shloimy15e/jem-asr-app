@@ -288,7 +288,7 @@ function renderDetailPage(audioId, audio, state, container) {
     const playerEl = document.createElement('audio');
     playerEl.controls = true;
     playerEl.preload = 'metadata';
-    playerEl.src = audioUrl;
+    playerEl.src = isLibraryR2Url(audioUrl) ? `/api/audio?url=${encodeURIComponent(audioUrl)}` : audioUrl;
     playerEl.className = 'audio-player';
     playerEl.addEventListener('loadedmetadata', () => {
       const realMin = parseFloat((playerEl.duration / 60).toFixed(1));

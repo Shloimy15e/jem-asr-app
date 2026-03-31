@@ -123,8 +123,10 @@ export function getActiveLibraryConfig() {
 // Returns true when the given URL points to the active library's R2 bucket.
 export function isLibraryR2Url(url) {
   try {
+    const host = new URL(url).hostname;
     const config = getActiveLibraryConfig();
-    return new URL(url).hostname === config?.r2Domain;
+    // Match the library's configured r2Domain OR the public r2.dev bucket URL
+    return host === config?.r2Domain || host.endsWith('.r2.dev');
   } catch {
     return false;
   }
