@@ -518,7 +518,7 @@ export async function loadFromSupabase(libraryId = null) {
       if (!asr[e.audio_id]) asr[e.audio_id] = [];
       asr[e.audio_id].push({
         text: e.text,
-        model: e.created_by,
+        model: e.version.replace(/^asr-/, ''),
         createdAt: e.created_at,
       });
     });

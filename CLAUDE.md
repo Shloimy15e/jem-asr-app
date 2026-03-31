@@ -114,13 +114,13 @@ Matching score (0–1.0):
 ### 2. Cleaning — *"Strip the editor's notes, keep only the spoken words"*
 Transcripts were prepared by human editors who added notes, section headers, and markers. Ten cleaning passes remove all of that:
 - `[brackets]` → removed
-- `(parenthetical notes)` → removed
+- `(parenthetical notes)` → removed entirely (content and parentheses both stripped)
 - Section markers like `סעיף א׳` and `* * *` → removed
 - Surrounding quotation marks (Hebrew/English/French) → stripped
 - **Dashes → space** (`cleanDashesToSpace`) — replaces all dash/hyphen chars with a space, preserving word separation ("word-word" → "word word"). Use this when you want the two words to stay separate and intelligible.
 - Hyphens/dashes (em-dash, en-dash, multiples) → removed entirely (`cleanHyphens`) — use this when the dash is decorative and no space is needed
-- Question mark artifacts (multiple ???) → collapsed
-- Ellipsis patterns (... and …) → removed
+- Question mark artifacts (multiple `???`) → collapsed to single `?` (single `?` preserved)
+- Ellipsis patterns (`...` and Unicode `…` U+2026) → removed
 - Zero-width characters, smart quotes → normalized
 - Extra whitespace and blank lines → collapsed
 

@@ -90,7 +90,7 @@ function renderTranscribePage(audioId, audio, state, root) {
   fileMeta.style.fontSize = '0.82rem';
   fileMeta.style.marginTop = '4px';
   fileMeta.textContent = [
-    audio.duration_minutes ? `${audio.duration_minutes.toFixed(1)} min` : null,
+    audio.estMinutes ? `${audio.estMinutes.toFixed(1)} min` : null,
     audio.year ? `Year: ${audio.year}` : null,
   ].filter(Boolean).join(' \u00b7 ');
 

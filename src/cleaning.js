@@ -8,8 +8,8 @@ export function cleanBrackets(text) {
 }
 
 export function cleanParentheses(text) {
-  // Strip the parentheses characters but keep the words inside
-  return text.replace(/\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g, '$1');
+  // Remove parenthetical editorial notes entirely (including content)
+  return text.replace(/\([^()]*(?:\([^()]*\)[^()]*)*\)/g, '');
 }
 
 export function cleanSectionMarkers(text) {
@@ -54,14 +54,14 @@ export function cleanHyphens(text) {
   return t;
 }
 
-// Remove question mark characters
+// Collapse multiple consecutive question marks into a single one
 export function cleanQuestionMarks(text) {
-  return text.replace(/\?/g, '');
+  return text.replace(/\?{2,}/g, '?');
 }
 
-// Remove sequences of 2 or more consecutive dots (ellipsis)
+// Remove ellipsis patterns (2+ dots or Unicode … character)
 export function cleanEllipsis(text) {
-  return text.replace(/\.{2,}/g, '');
+  return text.replace(/\.{2,}|\u2026/g, '');
 }
 
 export function cleanSymbols(text) {

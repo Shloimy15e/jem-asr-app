@@ -429,7 +429,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (approved.length === 0) return;
 
     const approvedFiles = approved;
-    const totalHours = approvedFiles.reduce((sum, a) => sum + (a.duration_minutes || 0), 0) / 60;
+    const totalHours = approvedFiles.reduce((sum, a) => sum + (a.estMinutes || 0), 0) / 60;
     if (!confirm(`Export ${approvedFiles.length} approved files (≈${totalHours.toFixed(1)} hrs) as training CSV?`)) return;
 
     const columns = [
