@@ -350,8 +350,12 @@ In `detail.js`, versions with `type === 'manual'` render the textarea with `read
 ### Cleaning pass buttons are async
 `getCurrentText()` in `detail.js` is async — it fetches the full transcript text from R2 or Supabase if no cleaning data exists yet (startup optimization means `transcript.text` is null). Pass buttons show "Loading…" while fetching, then open the diff preview. Always `await getCurrentText()` before running a pass.
 
-### Diff view uses row-by-row display (not word-level)
-Cleaning pass diffs show two rows per changed line: the original line (`.diff-line-removed` — red strikethrough) and the cleaned line (`.diff-line-added` — green, editable). This applies to both the cleaning pass preview modal and the detail page diff view. The `wordDiffTokens()` function still exists but is no longer used for rendering diffs.
+### Diff view uses row-by-row display with character-level inline strikethrough
+Cleaning pass diffs show two rows per changed line: the original line (`.diff-line-removed`) and the cleaned line (`.diff-line-added` — green, editable). This applies to both the cleaning pass preview modal and the detail page diff view.
+
+**The original row uses character-level LCS diff** — only the specific removed characters (brackets, dashes, symbols, etc.) are wrapped in `.diff-char-removed` spans with `text-decoration: line-through`. Kept characters render as plain text nodes with no strikethrough. The `.diff-line-removed` container itself does NOT have `text-decoration: line-through` — the strikethrough is applied per-character only.
+
+`buildInlineDiff(orig, clean)` in `detail.js` — LCS-based, returns `[{text, removed}]` segments. `renderInlineDiff(container, orig, clean)` — renders those segments into DOM (spans for removed, text nodes for kept). Both the preview modal and the word-view diff call `renderInlineDiff`.
 
 ### Rejected diff rows have visual feedback
 `.diff-row-rejected` class sets `opacity: 0.38` and strikes through child text (including `.diff-line-removed` and `.diff-line-added`). Applied by checkbox `change` handler and the "Reject All" button. "Accept All" removes it from all rows.

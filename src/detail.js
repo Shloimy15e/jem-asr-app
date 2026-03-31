@@ -726,6 +726,60 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
 
 // Opens a modal showing a per-line diff preview for a cleaning pass.
 // currentText: text before the pass; previewText: what the pass would produce.
+// Character-level LCS diff: returns [{text, removed}] segments for orig vs clean.
+// Removed chars (only in orig) get removed:true so they can be rendered with strikethrough.
+function buildInlineDiff(orig, clean) {
+  const m = orig.length, n = clean.length;
+  if (m === 0) return [];
+  if (n === 0) return [{ text: orig, removed: true }];
+
+  // Build LCS table
+  const dp = [];
+  for (let i = 0; i <= m; i++) dp[i] = new Uint16Array(n + 1);
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = orig[i - 1] === clean[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  // Backtrack: mark which chars in orig are kept (appear in LCS)
+  const kept = new Uint8Array(m);
+  let i = m, j = n;
+  while (i > 0 && j > 0) {
+    if (orig[i - 1] === clean[j - 1]) { kept[i - 1] = 1; i--; j--; }
+    else if (dp[i - 1][j] >= dp[i][j - 1]) i--;
+    else j--;
+  }
+  // Build contiguous segments
+  const segs = [];
+  let s = 0;
+  while (s < m) {
+    const removed = !kept[s];
+    let e = s + 1;
+    while (e < m && !kept[e] === removed) e++;
+    segs.push({ text: orig.slice(s, e), removed });
+    s = e;
+  }
+  return segs;
+}
+
+// Render orig text as inline spans: removed chars get .diff-char-removed (strikethrough),
+// kept chars render as plain text nodes.
+function renderInlineDiff(container, orig, clean) {
+  const segs = buildInlineDiff(orig, clean || '');
+  for (const seg of segs) {
+    if (seg.removed) {
+      const span = document.createElement('span');
+      span.className = 'diff-char-removed';
+      span.textContent = seg.text;
+      container.appendChild(span);
+    } else {
+      container.appendChild(document.createTextNode(seg.text));
+    }
+  }
+}
+
 // rawOriginal: the locked original transcript text (never overwritten).
 // Accepted lines are applied; rejected lines keep their original content.
 function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawOriginal, pageContainer) {
@@ -856,7 +910,7 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
       const origRow = document.createElement('div');
       origRow.className = 'diff-line-removed';
       origRow.dir = 'rtl';
-      origRow.textContent = row.orig;
+      renderInlineDiff(origRow, row.orig, row.clean);
       diffBlock.appendChild(origRow);
 
       if (row.clean.trim()) {
@@ -1914,7 +1968,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
         } else {
           const removedLine = document.createElement('div');
           removedLine.className = 'word-view-line diff-line-removed';
-          removedLine.textContent = orig;
+          renderInlineDiff(removedLine, orig, clean);
           wordGrid.appendChild(removedLine);
           if (clean.trim()) {
             const addedLine = document.createElement('div');

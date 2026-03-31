@@ -2397,13 +2397,18 @@ input {
 .diff-line-removed {
   background: var(--red-dim);
   color: var(--red);
-  text-decoration: line-through;
   padding: 4px 8px;
   border-radius: 3px;
   font-family: 'SBL Hebrew', 'David Libre', 'Noto Serif Hebrew', serif;
   word-break: break-word;
   font-size: 0.85rem;
   line-height: 1.8;
+}
+
+/* Inline removed chars within a diff-line-removed row */
+.diff-char-removed {
+  text-decoration: line-through;
+  opacity: 0.75;
 }
 
 .diff-line-added {
