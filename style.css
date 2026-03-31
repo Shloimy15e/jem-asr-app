@@ -3789,3 +3789,96 @@ button:focus-visible,
     flex-wrap: wrap;
   }
 }
+
+/* === Transcribe Page === */
+.asr-link-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 20px;
+}
+.asr-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--purple-dim, #f3eeff);
+  color: var(--purple, #7c3aed);
+  border: 1px solid var(--purple, #7c3aed);
+  border-radius: var(--radius);
+  padding: 10px 18px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all var(--transition);
+  width: fit-content;
+}
+.asr-link-btn:hover {
+  background: var(--purple, #7c3aed);
+  color: #fff;
+}
+.asr-result-area {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.asr-result-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--green, #34c759);
+}
+.asr-result-text {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  font-family: 'SBL Hebrew', 'David Libre', 'Noto Serif Hebrew', serif;
+  font-size: 1rem;
+  line-height: 1.7;
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+.asr-result-back-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 16px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  width: fit-content;
+  transition: background var(--transition);
+}
+.asr-result-back-btn:hover {
+  background: var(--accent-hover);
+}
+.asr-existing-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.asr-existing-row:last-of-type {
+  border-bottom: none;
+}
+.asr-existing-model {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--purple, #7c3aed);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.asr-existing-preview {
+  font-family: 'SBL Hebrew', 'David Libre', 'Noto Serif Hebrew', serif;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}

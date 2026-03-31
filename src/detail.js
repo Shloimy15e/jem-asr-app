@@ -2,7 +2,7 @@ import { initState, getState, getStatus, getVersions, getBestVersion, addVersion
 import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, setActiveLibrary, getActiveLibraryConfig, isLibraryR2Url } from './auth.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
-import { alignRow, transcribeAudio } from './alignment.js';
+import { alignRow } from './alignment.js';
 
 import { formatConfidence, getConfidenceLevel, generateSRT, generateVTT, downloadFile } from './utils.js';
 import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration } from './db.js';
@@ -948,97 +948,6 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
   document.body.appendChild(overlay);
 }
 
-// ── ASR Transcription Section ────────────────────────────────────────────────
-// Renders a standalone card with provider buttons and collapsible config.
-// Creates/updates an 'asr' version per provider. Lives BEFORE the cleaning section.
-
-function renderAsrSection(audioId, state, container, pageContainer) {
-  const audio = state.audio.find(a => a.id === audioId);
-  const audioUrl = audio?.r2Link || audio?.driveLink || null;
-
-  // Card wrapper — visually distinct from cleaning/alignment sections
-  const card = document.createElement('div');
-  card.className = 'detail-section asr-transcription-card';
-
-  // Header: icon + title + description
-  const header = document.createElement('div');
-  header.className = 'asr-card-header';
-
-  const iconEl = document.createElement('div');
-  iconEl.className = 'asr-card-icon';
-  iconEl.textContent = '🎙';
-
-  const headerText = document.createElement('div');
-  headerText.className = 'asr-card-header-text';
-
-  const titleEl = document.createElement('div');
-  titleEl.className = 'asr-card-title';
-  titleEl.textContent = 'Generate Transcript';
-
-  const descEl = document.createElement('div');
-  descEl.className = 'asr-card-desc';
-  descEl.textContent = 'Run an ASR model to produce a transcript from audio — no reference text needed';
-
-  headerText.appendChild(titleEl);
-  headerText.appendChild(descEl);
-  header.appendChild(iconEl);
-  header.appendChild(headerText);
-  card.appendChild(header);
-
-  // Provider buttons
-  const PROVIDERS = [
-    { key: 'gemini',      label: 'Gemini (fine-tuned)',  providerArg: 'gemini' },
-    { key: 'whisper',     label: 'Whisper (RunPod)',      providerArg: 'whisper' },
-    { key: 'yiddishLabs', label: 'Yiddish Labs',          providerArg: 'yiddish-labs' },
-  ];
-
-  const btnBar = document.createElement('div');
-  btnBar.className = 'asr-provider-btns';
-
-  for (const { key, label: btnLabel, providerArg } of PROVIDERS) {
-    const btn = document.createElement('button');
-    btn.className = 'asr-provider-btn';
-    btn.textContent = btnLabel;
-    btn.addEventListener('click', async () => {
-      if (!audioUrl) { alert('No audio URL for this file.'); return; }
-      btn.disabled = true;
-      btn.textContent = `${btnLabel} — transcribing…`;
-      try {
-        const providers = getState().transcribeProviders || {};
-        const providerCfg = providers[key] || {};
-        const config = { provider: providerArg, ...providerCfg };
-        const text = await transcribeAudio(audioId, audioUrl, config);
-        if (!text) throw new Error('Empty transcription returned');
-        // Each model gets its own version slot — only overwrite if same model ran before
-        const versions = getVersions(audioId);
-        const existingAsr = versions.find(v => v.type === 'asr' && v.model === key);
-        if (existingAsr) {
-          updateVersion(audioId, existingAsr.id, { text, createdAt: new Date().toISOString() });
-        } else {
-          addVersion(audioId, { type: 'asr', text, model: key, createdAt: new Date().toISOString() });
-        }
-        const s = getState();
-        renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
-      } catch (err) {
-        console.error('[ASR] transcription failed:', err);
-        btn.textContent = `${btnLabel} — failed, retry?`;
-        btn.disabled = false;
-      }
-    });
-    btnBar.appendChild(btn);
-  }
-  card.appendChild(btnBar);
-
-  // Provider config lives in the main app Settings, not per-file
-  const configNote = document.createElement('p');
-  configNote.className = 'asr-config-note';
-  configNote.innerHTML = 'Configure providers in <a href="/" class="asr-settings-link">ASR Settings</a> on the main page.';
-  card.appendChild(configNote);
-
-  container.appendChild(card);
-}
-
-// ── End ASR Section ──────────────────────────────────────────────────────────
 
 function renderUnifiedWorkSection(audioId, state, container, pageContainer, playerEl, activeVersionRef) {
   const cleaning = state.cleaning[audioId];
@@ -1195,8 +1104,22 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     targetEl.appendChild(alignBar);
   }
 
-  // ── ASR Transcription section — generates a transcript from audio ──
-  renderAsrSection(audioId, state, container, pageContainer);
+  // ── Generate Transcript — opens dedicated transcribe page ──
+  const asrLinkCard = document.createElement('div');
+  asrLinkCard.className = 'detail-section asr-link-card';
+
+  const asrLinkBtn = document.createElement('a');
+  asrLinkBtn.href = `/transcribe.html?id=${audioId}`;
+  asrLinkBtn.className = 'asr-link-btn';
+  asrLinkBtn.innerHTML = '🎙 Generate Transcript with ASR';
+
+  const asrLinkDesc = document.createElement('p');
+  asrLinkDesc.className = 'asr-config-note';
+  asrLinkDesc.textContent = 'Opens a dedicated page to run Whisper, Gemini, or Yiddish Labs on this audio file.';
+
+  asrLinkCard.appendChild(asrLinkBtn);
+  asrLinkCard.appendChild(asrLinkDesc);
+  container.appendChild(asrLinkCard);
 
   // ── Cleaning section (always visible) ──
   const cleanSection = document.createElement('div');
