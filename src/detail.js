@@ -1882,7 +1882,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   const reviewedSegments = new Set();
   let currentSegIdx = 0;
   let problemFilterActive = false;
-  let editMode = false;
+  const editMode = true; // always on — chips are always directly editable
   let chipEls = [];
 
   // Problem segment: >2 low-confidence words OR 3+ consecutive low-confidence words
@@ -1973,19 +1973,9 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     if (sidebar._renderList) sidebar._renderList();
   });
 
-  const editToggleBtn = document.createElement('button');
-  editToggleBtn.className = 'btn btn-secondary';
-  editToggleBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
-  editToggleBtn.textContent = 'Edit Words';
-
-  const saveEditsBtn = document.createElement('button');
-  saveEditsBtn.className = 'btn btn-primary';
-  saveEditsBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;display:none;';
-  saveEditsBtn.textContent = 'Save Word Edits';
-
   const editStatus = document.createElement('span');
   editStatus.className = 'text-secondary';
-  editStatus.style.fontSize = '0.8rem';
+  editStatus.style.cssText = 'font-size:0.8rem;min-width:60px;';
 
   // Export buttons
   const exportSrtBtn = document.createElement('button');
@@ -2017,8 +2007,6 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   videoStatus.style.cssText = 'font-size:0.78rem;';
 
   toolbar.appendChild(problemFilterBtn);
-  toolbar.appendChild(editToggleBtn);
-  toolbar.appendChild(saveEditsBtn);
   toolbar.appendChild(editStatus);
   toolbar.appendChild(exportSrtBtn);
   toolbar.appendChild(exportVttBtn);
@@ -2033,13 +2021,13 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   wordGrid.dir = 'rtl';
   leftPanel.appendChild(wordGrid);
 
-  // Bulk edit panel (edit mode only)
+  // Bulk edit panel (always visible)
   const bulkPanel = document.createElement('div');
-  bulkPanel.style.cssText = 'display:none;margin-top:8px;';
+  bulkPanel.style.cssText = 'margin-top:8px;';
   const bulkHint = document.createElement('div');
   bulkHint.className = 'text-secondary';
   bulkHint.style.cssText = 'font-size:0.75rem;margin-bottom:4px;';
-  bulkHint.textContent = 'Edit the segment text below. Same word count → timestamps preserved. Different count → timestamps redistributed evenly.';
+  bulkHint.textContent = 'Edit segment text below — blur to apply. Same word count keeps timestamps; different count redistributes evenly.';
   bulkPanel.appendChild(bulkHint);
   const bulkTextarea = document.createElement('textarea');
   bulkTextarea.className = 'transcript-editor';
@@ -2047,15 +2035,10 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   bulkTextarea.rows = 4;
   bulkTextarea.style.cssText = 'width:100%;box-sizing:border-box;font-size:0.85rem;';
   const bulkBtnRow = document.createElement('div');
-  bulkBtnRow.style.cssText = 'display:flex;gap:8px;margin-top:6px;align-items:center;';
-  const bulkApplyBtn = document.createElement('button');
-  bulkApplyBtn.className = 'btn btn-secondary';
-  bulkApplyBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
-  bulkApplyBtn.textContent = 'Apply Text to Segment';
+  bulkBtnRow.style.cssText = 'margin-top:4px;';
   const bulkStatus = document.createElement('span');
   bulkStatus.className = 'text-secondary';
-  bulkStatus.style.fontSize = '0.8rem';
-  bulkBtnRow.appendChild(bulkApplyBtn);
+  bulkStatus.style.fontSize = '0.78rem';
   bulkBtnRow.appendChild(bulkStatus);
   bulkPanel.appendChild(bulkTextarea);
   bulkPanel.appendChild(bulkBtnRow);
@@ -2231,6 +2214,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       if (val) addInsertion(segIdx, posInSeg, val, start, end);
       renderSegmentChips();
       refreshBulkTextarea();
+      scheduleAutoSave();
     };
     const cancel = () => { if (done) return; done = true; renderSegmentChips(); };
     confirmBtn.addEventListener('mousedown', e => { e.preventDefault(); commit(); });
@@ -2290,6 +2274,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       editModeWords[globalIdx] = { ...editModeWords[globalIdx], word: val, _deleted: false };
       chip.textContent = val;
       refreshBulkTextarea();
+      scheduleAutoSave();
     };
     const doDelete = () => {
       if (done) return; done = true;
@@ -2304,8 +2289,10 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
         chip.onclick = null;
         chip.addEventListener('click', () => startChipEdit(chip, globalIdx));
         refreshBulkTextarea();
+        scheduleAutoSave();
       };
       refreshBulkTextarea();
+      scheduleAutoSave();
     };
     const cancel = () => { if (done) return; done = true; chip.textContent = origWord; };
     confirmBtn.addEventListener('mousedown', e => { e.preventDefault(); commit(); });
@@ -2542,31 +2529,74 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     playerEl.addEventListener('timeupdate', onTimeUpdate);
   }
 
-  // ── Edit mode ──
-  function enterEditMode() {
-    editMode = true;
-    editToggleBtn.textContent = 'Exit Edit Mode';
-    saveEditsBtn.style.display = '';
-    bulkPanel.style.display = '';
-    renderSegmentChips();
-  }
-
-  function exitEditMode() {
-    editMode = false;
-    editToggleBtn.textContent = 'Edit Words';
-    saveEditsBtn.style.display = 'none';
-    bulkPanel.style.display = 'none';
-    renderSegmentChips();
-  }
-
-  editToggleBtn.addEventListener('click', () => { if (!editMode) enterEditMode(); else exitEditMode(); });
-
   function getCurrentWords() {
-    // Use the live editModeWords if in edit mode, otherwise alignment words
-    if (editMode) {
-      return words.map((w, i) => editModeWords[i] ? { ...w, ...editModeWords[i] } : w).filter(w => !w._deleted);
+    return words.map((w, i) => editModeWords[i] ? { ...w, ...editModeWords[i] } : w).filter(w => !w._deleted);
+  }
+
+  // ── Auto-save: commit edits to state after a short debounce ──
+  let _saveTimer = null;
+  function scheduleAutoSave() {
+    clearTimeout(_saveTimer);
+    editStatus.textContent = 'Editing…';
+    _saveTimer = setTimeout(() => commitEdits(), 1500);
+  }
+
+  function commitEdits() {
+    clearTimeout(_saveTimer);
+    const openInput = wordGrid.querySelector('input');
+    if (openInput) openInput.blur(); // commit any open inline edit first
+
+    const currentAlignment = getState().alignments?.[audioId] || alignment;
+    const finalWords = [];
+    let addedCount = 0;
+    let deletedCount = 0;
+    for (let s = 0; s < segments.length; s++) {
+      const seg = segments[s];
+      for (let pos = 0; pos <= seg.length; pos++) {
+        (insertions[s]?.[pos] || []).forEach(ins => {
+          finalWords.push({ word: ins.word, start: ins.start, end: ins.end, confidence: 1 });
+          addedCount++;
+        });
+        if (pos < seg.length) {
+          const gi = words.indexOf(seg[pos]);
+          const ew = gi >= 0 ? editModeWords[gi] : null;
+          if (ew?._deleted) { deletedCount++; continue; }
+          finalWords.push(ew ? { ...ew, _deleted: undefined } : seg[pos]);
+        }
+      }
     }
-    return words;
+
+    const updatedAlignment = { ...currentAlignment, words: finalWords };
+    updateState('alignments', audioId, updatedAlignment);
+    const versionId = activeVersionRef?.id;
+    if (versionId) {
+      setVersionAlignment(audioId, versionId, updatedAlignment);
+      const newText = finalWords.map(w => w.word || w.text || '').join(' ');
+      updateVersion(audioId, versionId, { text: newText, updatedAt: new Date().toISOString() });
+      activeVersionRef?.rerenderContent?.();
+    }
+
+    // Update live arrays in-place so karaoke/seek stays in sync
+    words.splice(0, words.length, ...finalWords);
+    const newSegs = [];
+    if (words.length) {
+      let cur = [words[0]];
+      for (let i = 1; i < words.length; i++) {
+        if ((words[i].start - words[i - 1].end) > GAP_THRESHOLD) { newSegs.push(cur); cur = [words[i]]; }
+        else cur.push(words[i]);
+      }
+      newSegs.push(cur);
+    }
+    segments.splice(0, segments.length, ...newSegs);
+    editModeWords.splice(0, editModeWords.length, ...finalWords.map(w => ({ ...w })));
+    Object.keys(insertions).forEach(k => delete insertions[k]);
+
+    renderSegmentChips();
+    const parts = [];
+    if (addedCount) parts.push(`+${addedCount}`);
+    if (deletedCount) parts.push(`−${deletedCount}`);
+    editStatus.textContent = parts.length ? `Saved (${parts.join(', ')})` : 'Saved ✓';
+    setTimeout(() => { editStatus.textContent = ''; }, 2000);
   }
 
   function getExportBaseName() {
@@ -2644,109 +2674,38 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     }
   });
 
-  saveEditsBtn.addEventListener('click', () => {
-    const openInput = wordGrid.querySelector('input');
-    if (openInput) openInput.blur();
-    const currentState = getState();
-    const currentAlignment = currentState.alignments?.[audioId] || alignment;
-
-    // Build final word array: merge editModeWords (non-deleted) with insertions, segment by segment
-    const finalWords = [];
-    let addedCount = 0;
-    let deletedCount = 0;
-    for (let s = 0; s < segments.length; s++) {
-      const seg = segments[s];
-      for (let pos = 0; pos <= seg.length; pos++) {
-        (insertions[s]?.[pos] || []).forEach(ins => {
-          finalWords.push({ word: ins.word, start: ins.start, end: ins.end, confidence: 1 });
-          addedCount++;
-        });
-        if (pos < seg.length) {
-          const gi = words.indexOf(seg[pos]);
-          const ew = gi >= 0 ? editModeWords[gi] : null;
-          if (ew?._deleted) { deletedCount++; continue; }
-          finalWords.push(ew ? { ...ew, _deleted: undefined } : seg[pos]);
-        }
-      }
-    }
-
-    const updatedAlignment = { ...currentAlignment, words: finalWords };
-    updateState('alignments', audioId, updatedAlignment);
-    const versionId = activeVersionRef?.id;
-    if (versionId) {
-      setVersionAlignment(audioId, versionId, updatedAlignment);
-      // Also update the version's text so the transcript tab reflects word edits
-      const newText = finalWords.map(w => w.word || w.text || '').join(' ');
-      const now = new Date().toISOString();
-      updateVersion(audioId, versionId, { text: newText, updatedAt: now });
-      // Refresh the version textarea so the user sees the change immediately
-      activeVersionRef?.rerenderContent?.();
-    }
-
-    // Update the live word/segment/editModeWords arrays in-place so the karaoke
-    // view immediately reflects the saved changes without a full page reload
-    words.splice(0, words.length, ...finalWords);
-    const newSegs = [];
-    if (words.length) {
-      let cur = [words[0]];
-      for (let i = 1; i < words.length; i++) {
-        if ((words[i].start - words[i - 1].end) > GAP_THRESHOLD) { newSegs.push(cur); cur = [words[i]]; }
-        else cur.push(words[i]);
-      }
-      newSegs.push(cur);
-    }
-    segments.splice(0, segments.length, ...newSegs);
-    editModeWords.splice(0, editModeWords.length, ...finalWords.map(w => ({ ...w })));
-    Object.keys(insertions).forEach(k => delete insertions[k]);
-
-    exitEditMode();
-    const parts = [];
-    if (addedCount) parts.push(`${addedCount} added`);
-    if (deletedCount) parts.push(`${deletedCount} deleted`);
-    editStatus.textContent = parts.length ? `Saved (${parts.join(', ')})` : 'Saved';
-    setTimeout(() => { editStatus.textContent = ''; }, 2500);
-  });
-
-  bulkApplyBtn.addEventListener('click', () => {
+  // Bulk textarea auto-applies on blur (no button needed)
+  function applyBulkText() {
     const segWords = segments[currentSegIdx] || [];
     const tokens = bulkTextarea.value.trim().split(/\s+/).filter(Boolean);
-    if (!tokens.length) { bulkStatus.textContent = 'Nothing to apply.'; return; }
+    if (!tokens.length) return;
 
     if (tokens.length === segWords.length) {
-      // Same count — 1:1 text swap, timestamps unchanged
       tokens.forEach((tok, i) => {
         const gi = words.indexOf(segWords[i]);
         if (gi >= 0) editModeWords[gi] = { ...editModeWords[gi], word: tok };
       });
-      bulkStatus.style.color = 'var(--green)';
-      bulkStatus.textContent = `${tokens.length} words updated`;
     } else {
-      // Different count — delete original words, insert new ones with redistributed timestamps
       const segStart = segWords[0]?.start ?? 0;
       const segEnd = segWords[segWords.length - 1]?.end ?? segStart + 1;
       const dur = (segEnd - segStart) / tokens.length;
-
-      // Mark all original segment words as deleted
       segWords.forEach(w => {
         const gi = words.indexOf(w);
         if (gi >= 0) editModeWords[gi] = { ...editModeWords[gi], _deleted: true };
       });
-
-      // Replace any existing insertions at pos 0 for this segment with the new words
       if (!insertions[currentSegIdx]) insertions[currentSegIdx] = {};
       insertions[currentSegIdx][0] = tokens.map((tok, i) => ({
         word: tok,
         start: +(segStart + i * dur).toFixed(3),
         end: +(segStart + (i + 1) * dur).toFixed(3),
       }));
-
-      bulkStatus.style.color = 'var(--green)';
-      bulkStatus.textContent = `Replaced with ${tokens.length} words (was ${segWords.length}), timestamps redistributed`;
     }
 
     renderSegmentChips();
-    refreshBulkTextarea();
-  });
+    scheduleAutoSave();
+  }
+
+  bulkTextarea.addEventListener('blur', applyBulkText);
 
   prevBtn.addEventListener('click', () => goToSegment(currentSegIdx - 1));
   nextBtn.addEventListener('click', () => goToSegment(currentSegIdx + 1));
