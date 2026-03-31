@@ -503,13 +503,19 @@ When 2+ versions have alignment data, a **"Compare Versions"** button appears be
 
 The intended iterative workflow: clean → align → edit → align again → compare both → repeat until all words are green.
 
-### ASR Transcription section — standalone card before cleaning
+### ASR Transcription — dedicated page `/transcribe.html`
 
-`renderAsrSection(audioId, state, container, pageContainer)` in `detail.js` renders as its own **`.detail-section.asr-transcription-card`** card, positioned **before** the cleaning section in `renderUnifiedWorkSection`. This ordering reflects the pipeline: generate transcript (ASR) → clean → align.
+ASR transcription lives on its own page (`transcribe.html` + `src/transcribe.js`), not embedded in the detail page. The detail page shows an `.asr-link-card` with a purple **"🎙 Generate Transcript with ASR"** link button that navigates to `/transcribe.html?id=<audioId>`.
 
-**Do not move `renderAsrSection` back inside `cleanSection`** — it was previously nested there which was architecturally wrong (cleaning processes existing text; ASR generates new text from audio).
+**`transcribe.html` / `src/transcribe.js`** — standalone page with full auth + library loading:
+- File info card with audio player at top
+- Three provider buttons (Gemini, Whisper, Yiddish Labs) — same `transcribeAudio()` call from `alignment.js`
+- After transcription: inline result display (RTL Hebrew text) + "Open in Detail Page →" link
+- Previously generated ASR versions listed below with truncated previews
+- Header has "← Back to File" link and "ASR Settings" link to main page
+- `vite.config.js` entry point: `transcribe: resolve(__dirname, 'transcribe.html')`
 
-Visual design: purple left border (`border-left: 3px solid var(--purple)`), header with 🎙 icon in a purple-dim circle + "Generate Transcript" title + description line, provider buttons as `.asr-provider-btn` (purple-tinted pill style), a small `.asr-config-note` linking back to the main page ASR Settings (provider config is NOT embedded per-detail-page).
+**Do not re-embed `renderAsrSection` in `detail.js`** — it was extracted to its own page to reduce detail page complexity and make the transcription workflow a distinct step.
 
 ### ASR Transcription providers — three options, configured globally via toolbar
 A global **"ASR Settings"** button in the main toolbar opens the config modal (same modal used by benchmark). Settings persist in `state.transcribeProviders` (localStorage). Three providers:
@@ -556,19 +562,37 @@ Each ASR version tab is **editable** (auto-saves to Supabase via `syncAsr`), **a
 ### Manual version text is always loaded from the transcript, never from a stale cache
 In `renderVersionContent`, `type === 'manual'` versions skip the `version.text` check entirely and always load from `transcript.text` (or R2/Supabase if not yet in memory), caching on the `transcript` object rather than the `version` object. This ensures the Manual tab always matches "View Transcript Independently" (`detail?tid=`). Non-manual versions (`cleaned`, `edited`, etc.) still use `version.text` as before.
 
+### Mobile responsiveness
+
+The app is fully responsive across phone/tablet/desktop:
+
+**Header (all sizes):** Single-row, sticky. On ≤640px, toolbar buttons collapse into a `⋯` (`#btn-toolbar-more`) overflow dropdown — only Sign Out stays always visible. Toggle adds `.overflow-open` to `.toolbar`.
+
+**Filter bar (≤640px):** Hidden by default. A `#btn-filter-toggle` button (shows active filter name) toggles `.is-open` on `#filter-bar` to reveal a full-width column drawer. Closes automatically when a pill is tapped.
+
+**Table:** On ≤480px, `.data-table` is hidden and `.card-view` shows instead (`buildCardView` in `table.js`). On 481–768px, table scrolls horizontally (`overflow-x: auto`, `min-width: 640px`).
+
+**Detail page sections (≤640px):** Each `.detail-section` has a collapsible `▾` toggle via `addCollapseBehavior()`. Mapping auto-collapses when already mapped; Processing collapses when approved. Toggle adds `.is-collapsed` which hides `.section-body` / `.detail-section-content`.
+
+**Touch targets:** Pagination buttons 44px, action buttons 44px (card view), word chips 36px, filter pills 36px.
+
 ## Build Rules
 - Vite + vanilla JS ESM. No frameworks.
 - Named exports only. No default exports.
 - Modules import only from `src/utils.js`, `src/state.js`, and `src/db.js` as shared deps.
 - `.env` holds `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` — baked in at build time by Vite.
+- Five Vite entry points: `main` (index.html), `detail` (detail.html), `login` (login.html), `admin` (admin.html), `transcribe` (transcribe.html). Add new top-level pages here.
 
 ## File Structure
 
 ```
 jem-asr-app/
-├── index.html                  # Single page shell
+├── index.html                  # Main table page
 ├── detail.html                 # Per-file detail page
-├── style.css                   # Light theme, RTL, responsive
+├── transcribe.html             # Dedicated ASR transcription page
+├── admin.html                  # Admin: library + member management
+├── login.html                  # Auth page
+├── style.css                   # Light theme, RTL, responsive (mobile-first media queries)
 ├── .env                        # VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY (build-time)
 ├── src/
 │   ├── app.js                  # Entry: load catalog from Supabase, init state, wire everything
@@ -577,9 +601,10 @@ jem-asr-app/
 │   ├── table.js                # Unified table: filters, sort, pagination, bulk select
 │   ├── mapping.js              # Matching algorithm, suggested matches, search modal
 │   ├── cleaning.js             # 5-pass regex cleaner, clean rate, batch clean
-│   ├── alignment.js            # RunPod API calls, confidence parsing, batch align
+│   ├── alignment.js            # RunPod API calls, confidence parsing, batch align + transcribeAudio()
 │   ├── review.js               # Diff viewer, inline editing, approve/reject
 │   ├── benchmark.js            # ASR API config, WER/CER calculator, comparison table
+│   ├── transcribe.js           # Standalone ASR transcription page logic
 │   ├── detail.js               # Per-file detail page logic
 │   └── utils.js                # parseHebrewDate, normalizeYiddish, levenshtein, CSV
 ├── functions/api/
