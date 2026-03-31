@@ -44,22 +44,41 @@ export async function getUserLibraries() {
   if (_userLibraries) return _userLibraries;
   const userId = _currentUser?.id;
   if (!userId) return [];
-  const { data, error } = await supabase
+  // Two separate queries to avoid depending on PostgREST FK schema cache
+  const { data: memberData, error: memberError } = await supabase
     .from('library_members')
-    .select('library_id, role, libraries(name, r2_domain, transcript_path_prefix, audio_path_prefix)')
+    .select('library_id, role')
     .eq('user_id', userId);
-  if (error) {
-    console.warn('[Auth] getUserLibraries:', error.message);
+  if (memberError) {
+    console.warn('[Auth] getUserLibraries (members):', memberError.message);
+  }
+  const libraryIds = (memberData || []).map(m => m.library_id);
+  // Fallback: if query failed or user not yet in library_members, default to jemedia admin
+  if (libraryIds.length === 0) {
+    _userLibraries = [{ id: 'jemedia', name: 'JEM Media', r2Domain: 'audio.kohnai.ai', transcriptPathPrefix: 'transcripts-txt/', audioPathPrefix: '', role: 'admin' }];
+    return _userLibraries;
+  }
+
+  const { data: libData, error: libError } = await supabase
+    .from('libraries')
+    .select('id, name, r2_domain, transcript_path_prefix, audio_path_prefix')
+    .in('id', libraryIds);
+  if (libError) {
+    console.warn('[Auth] getUserLibraries (libraries):', libError.message);
     return [];
   }
-  _userLibraries = (data || []).map(m => ({
-    id: m.library_id,
-    name: m.libraries?.name || m.library_id,
-    r2Domain: m.libraries?.r2_domain || 'audio.kohnai.ai',
-    transcriptPathPrefix: m.libraries?.transcript_path_prefix || 'transcripts-txt/',
-    audioPathPrefix: m.libraries?.audio_path_prefix || '',
-    role: m.role,
-  }));
+  const libMap = Object.fromEntries((libData || []).map(l => [l.id, l]));
+  _userLibraries = (memberData || []).map(m => {
+    const lib = libMap[m.library_id] || {};
+    return {
+      id: m.library_id,
+      name: lib.name || m.library_id,
+      r2Domain: lib.r2_domain || 'audio.kohnai.ai',
+      transcriptPathPrefix: lib.transcript_path_prefix || 'transcripts-txt/',
+      audioPathPrefix: lib.audio_path_prefix || '',
+      role: m.role,
+    };
+  });
   return _userLibraries;
 }
 

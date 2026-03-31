@@ -13,6 +13,7 @@ export default defineConfig({
         login: resolve(__dirname, 'login.html'),
         admin: resolve(__dirname, 'admin.html'),
         transcribe: resolve(__dirname, 'transcribe.html'),
+        dashboard: resolve(__dirname, 'dashboard.html'),
       },
     },
   },

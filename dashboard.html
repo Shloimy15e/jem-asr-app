@@ -312,9 +312,9 @@
     import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
     // Config injected at build time via vite env vars
-    const SUPABASE_URL = '__SUPABASE_URL__';
-    const SUPABASE_ANON = '__SUPABASE_ANON_KEY__';
-    const STRIPE_LINK = '__STRIPE_PAYMENT_LINK__';
+    const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+    const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    const STRIPE_LINK = import.meta.env.VITE_STRIPE_PAYMENT_LINK || '';
 
     const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 

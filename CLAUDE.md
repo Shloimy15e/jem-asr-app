@@ -408,7 +408,7 @@ The app uses Supabase Auth (email + password). `src/auth.js` exports `checkAuth(
 The app supports multiple independent libraries (datasets). Migration `20260331000000_add_multi_tenancy.sql` adds `libraries` and `library_members` tables and a `library_id` column to all 8 content tables (defaulting to `'jemedia'` for existing rows). RLS policies restrict each table to `library_id IN (SELECT public.user_library_ids())`.
 
 **`src/auth.js`** exports four library context helpers:
-- `getUserLibraries()` — fetches `library_members` joined to `libraries` for the current user. Returns `[{id, name, r2Domain, transcriptPathPrefix, audioPathPrefix, role}]`. Cached for the session.
+- `getUserLibraries()` — fetches library memberships in **two separate queries** (first `library_members`, then `libraries` by IDs) rather than a single join. This avoids failures caused by PostgREST FK schema cache misses. Falls back to a hardcoded `jemedia` admin entry if the user has no rows in `library_members`. Returns `[{id, name, r2Domain, transcriptPathPrefix, audioPathPrefix, role}]`. Cached for the session.
 - `getActiveLibrary()` — reads `localStorage['active-library']`, validated against cached memberships.
 - `setActiveLibrary(id)` — writes to localStorage; the page reloads to switch context.
 - `getActiveLibraryConfig()` — returns full config object for the active library.
@@ -436,7 +436,7 @@ The app supports multiple independent libraries (datasets). Migration `202603310
 - `add_library_member(p_library_id, p_email, p_role)` — looks up user by email, upserts membership, returns UUID
 - `get_library_members(p_library_id)` — returns `(user_id, email, role, created_at)` for all members
 
-`vite.config.js` has four entry points: `main` (index.html), `detail` (detail.html), `login` (login.html), `admin` (admin.html). If you add a new top-level HTML page you must add it here.
+`vite.config.js` has five entry points: `main` (index.html), `detail` (detail.html), `login` (login.html), `admin` (admin.html), `dashboard` (dashboard.html). If you add a new top-level HTML page you must add it here.
 
 ### Word view karaoke scroll only fires when word view is visible
 The `timeupdate` handler in `renderWordView` calls `scrollIntoView` on the active word chip **only if** the word view container is currently in the viewport (`container.getBoundingClientRect()`). This prevents the top audio player from dragging the page down to the word chips while the user is viewing the player section.
@@ -595,7 +595,7 @@ The app is fully responsive across phone/tablet/desktop:
 
 **Header (all sizes):** Single-row, sticky. On ≤640px, toolbar buttons collapse into a `⋯` (`#btn-toolbar-more`) overflow dropdown — only Sign Out stays always visible. Toggle adds `.overflow-open` to `.toolbar`.
 
-**Filter bar (≤640px):** Hidden by default. A `#btn-filter-toggle` button (shows active filter name) toggles `.is-open` on `#filter-bar` to reveal a full-width column drawer. Closes automatically when a pill is tapped.
+**Filter bar (≤640px):** Hidden by default. A `#btn-filter-toggle` button (shows active filter name) toggles `.is-open` on `#filter-bar` to reveal a full-width column drawer. Closes automatically when a pill is tapped. The `.filter-controls` div (year/month/type selects + search input) stacks vertically (`flex-direction: column`) with all children at `width: 100%` — this prevents the horizontal overflow that would otherwise occur from the hardcoded `width: 260px` on `.search-input`.
 
 **Table:** On ≤480px, `.data-table` is hidden and `.card-view` shows instead (`buildCardView` in `table.js`). On 481–768px, table scrolls horizontally (`overflow-x: auto`, `min-width: 640px`).
 
@@ -608,7 +608,7 @@ The app is fully responsive across phone/tablet/desktop:
 - Named exports only. No default exports.
 - Modules import only from `src/utils.js`, `src/state.js`, and `src/db.js` as shared deps.
 - `.env` holds `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` — baked in at build time by Vite.
-- Five Vite entry points: `main` (index.html), `detail` (detail.html), `login` (login.html), `admin` (admin.html), `transcribe` (transcribe.html). Add new top-level pages here.
+- Six Vite entry points: `main` (index.html), `detail` (detail.html), `login` (login.html), `admin` (admin.html), `transcribe` (transcribe.html), `dashboard` (dashboard.html). Add new top-level pages here.
 
 ## File Structure
 

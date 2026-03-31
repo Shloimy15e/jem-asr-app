@@ -64,20 +64,8 @@ async function getOrCreateUser(env, phone) {
   return newRows[0];
 }
 
-/** Deduct credits atomically. Returns updated credits balance. */
+/** Deduct credits atomically via RPC. Returns updated credits balance. */
 async function deductCredit(env, phone) {
-  // Use RPC or direct update — we do a conditional update (credits > 0)
-  const rows = await sbFetch(
-    env,
-    `whatsapp_users?phone=eq.${phone}&credits=gt.0&select=credits`,
-    {
-      method: 'PATCH',
-      headers: { Prefer: 'return=representation' },
-      body: JSON.stringify({ credits: null }), // placeholder — see note below
-    }
-  );
-  // Supabase doesn't support "credits - 1" directly in REST; use RPC instead
-  // We'll call a Postgres function for atomic decrement
   const result = await sbFetch(env, 'rpc/decrement_whatsapp_credits', {
     method: 'POST',
     body: JSON.stringify({ p_phone: phone }),
