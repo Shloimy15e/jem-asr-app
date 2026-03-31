@@ -51,6 +51,16 @@ let filterMonth = '';
 let filterType = '';
 let selectedIds = new Set();
 const PAGE_SIZE = 50;
+let _filteredTotal = 0;
+
+function updateURL() {
+  const params = new URLSearchParams();
+  if (currentFilter && currentFilter !== 'all') params.set('filter', currentFilter);
+  if (currentPage > 1) params.set('page', String(currentPage));
+  if (searchTerm) params.set('q', searchTerm);
+  const qs = params.toString();
+  window.history.replaceState(null, '', qs ? '?' + qs : window.location.pathname);
+}
 
 let _container = null;
 let _onRowExpand = null;
@@ -387,6 +397,7 @@ function buildTable(rows) {
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.className = 'select-all-cb';
+      cb.setAttribute('aria-label', 'Select all rows');
       cb.checked = rows.length > 0 && rows.every(r => selectedIds.has(r.id));
       cb.addEventListener('change', () => {
         if (cb.checked) {
@@ -444,6 +455,7 @@ function buildTable(rows) {
           cb.type = 'checkbox';
           cb.className = 'row-checkbox';
           cb.checked = selectedIds.has(row.id);
+          cb.setAttribute('aria-label', 'Select ' + (row.name || row.id));
           cb.addEventListener('change', (e) => {
             e.stopPropagation();
             if (cb.checked) {
@@ -580,6 +592,7 @@ function buildTable(rows) {
             playBtn.className = 'action-btn row-play-btn';
             playBtn.textContent = '\u25B6';
             playBtn.title = 'Play';
+            playBtn.setAttribute('aria-label', 'Play audio');
             playBtn.addEventListener('click', (e) => {
               e.stopPropagation();
               toggleInlinePlay(playBtn, playUrl, row.id);
@@ -592,7 +605,12 @@ function buildTable(rows) {
           btn.textContent = 'Open';
           btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            window.open(`/detail.html?id=${encodeURIComponent(row.id)}`, '_blank');
+            const url = `/detail.html?id=${encodeURIComponent(row.id)}`;
+            if (e.ctrlKey || e.metaKey) {
+              window.open(url, '_blank');
+            } else {
+              window.location.href = url;
+            }
           });
           td.appendChild(btn);
           break;
@@ -603,8 +621,8 @@ function buildTable(rows) {
       tr.appendChild(td);
     });
 
-    tr.addEventListener('click', () => {
-      if (_onRowExpand) _onRowExpand(row.id);
+    tr.addEventListener('click', (e) => {
+      if (_onRowExpand) _onRowExpand(row.id, e);
     });
 
     tbody.appendChild(tr);
@@ -684,14 +702,24 @@ function buildCardView(rows) {
     openBtn.textContent = 'Open';
     openBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      window.open(`/detail.html?id=${encodeURIComponent(row.id)}`, '_blank');
+      const url = `/detail.html?id=${encodeURIComponent(row.id)}`;
+      if (e.ctrlKey || e.metaKey) {
+        window.open(url, '_blank');
+      } else {
+        window.location.href = url;
+      }
     });
     actions.appendChild(openBtn);
 
     card.appendChild(actions);
 
-    card.addEventListener('click', () => {
-      window.open(`/detail.html?id=${encodeURIComponent(row.id)}`, '_blank');
+    card.addEventListener('click', (e) => {
+      const url = `/detail.html?id=${encodeURIComponent(row.id)}`;
+      if (e.ctrlKey || e.metaKey) {
+        window.open(url, '_blank');
+      } else {
+        window.location.href = url;
+      }
     });
 
     container.appendChild(card);
@@ -712,7 +740,7 @@ function buildPagination(totalRows) {
   prevBtn.textContent = 'Prev';
   prevBtn.disabled = currentPage <= 1;
   prevBtn.addEventListener('click', () => {
-    if (currentPage > 1) { currentPage--; updateTable(); }
+    if (currentPage > 1) { currentPage--; updateURL(); updateTable(); }
   });
 
   const pageInfo = document.createElement('span');
@@ -724,7 +752,7 @@ function buildPagination(totalRows) {
   nextBtn.textContent = 'Next';
   nextBtn.disabled = currentPage >= totalPages;
   nextBtn.addEventListener('click', () => {
-    if (currentPage < totalPages) { currentPage++; updateTable(); }
+    if (currentPage < totalPages) { currentPage++; updateURL(); updateTable(); }
   });
 
   nav.appendChild(prevBtn);
@@ -763,7 +791,7 @@ function updateFilterPills() {
 
 function updateBulkCount() {
   const el = document.getElementById('bulk-selection-count');
-  if (el) el.textContent = `${selectedIds.size} selected`;
+  if (el) el.textContent = `${selectedIds.size} of ${_filteredTotal} selected`;
 }
 
 function _fireRowSelect() {
@@ -780,6 +808,12 @@ function renderTable(container, options = {}) {
 
   if (options.filter) currentFilter = options.filter;
 
+  // Read initial state from URL query params
+  const initParams = new URLSearchParams(window.location.search);
+  if (initParams.has('filter')) currentFilter = initParams.get('filter');
+  if (initParams.has('page')) currentPage = parseInt(initParams.get('page') || '1', 10);
+  if (initParams.has('q')) searchTerm = initParams.get('q') || '';
+
   // Wire filter pills
   const pills = document.querySelectorAll('.filter-pill');
   pills.forEach(pill => {
@@ -787,6 +821,7 @@ function renderTable(container, options = {}) {
       currentFilter = pill.getAttribute('data-filter');
       currentPage = 1;
       selectedIds.clear();
+      updateURL();
       updateTable();
       _fireRowSelect();
       if (_container) _container.scrollTo({ top: 0, behavior: 'smooth' });
@@ -802,6 +837,7 @@ function renderTable(container, options = {}) {
     yearSelect.addEventListener('change', () => {
       filterYear = yearSelect.value;
       currentPage = 1;
+      updateURL();
       updateTable();
     });
   }
@@ -809,6 +845,7 @@ function renderTable(container, options = {}) {
     monthSelect.addEventListener('change', () => {
       filterMonth = monthSelect.value;
       currentPage = 1;
+      updateURL();
       updateTable();
     });
   }
@@ -816,6 +853,7 @@ function renderTable(container, options = {}) {
     typeSelect.addEventListener('change', () => {
       filterType = typeSelect.value;
       currentPage = 1;
+      updateURL();
       updateTable();
     });
   }
@@ -826,6 +864,7 @@ function renderTable(container, options = {}) {
     const debouncedSearch = debounce((val) => {
       searchTerm = val;
       currentPage = 1;
+      updateURL();
       updateTable();
     }, 250);
     searchInput.addEventListener('input', (e) => {
@@ -853,6 +892,9 @@ function updateTable() {
 
   // Apply sort
   rows = sortRows(rows);
+
+  // Track filtered total for bulk count display
+  _filteredTotal = rows.length;
 
   // Stop any playing inline audio before clearing
   stopInlinePlayer();

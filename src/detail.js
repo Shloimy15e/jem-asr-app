@@ -3,7 +3,7 @@ import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary,
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
 import { alignRow, transcribeAudio } from './alignment.js';
-import { buildAsrConfigPanel } from './asr-config.js';
+
 import { formatConfidence, getConfidenceLevel, generateSRT, generateVTT, downloadFile } from './utils.js';
 import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration } from './db.js';
 
@@ -32,6 +32,7 @@ function renderSpeedBar(playerEl, speeds) {
     const btn = document.createElement('button');
     btn.className = 'speed-btn' + (speed === 1 ? ' active' : '');
     btn.textContent = speed + 'x';
+    btn.setAttribute('aria-label', 'Set playback speed to ' + speed + 'x');
     btn.addEventListener('click', () => {
       playerEl.playbackRate = speed;
       speedBar.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
@@ -83,9 +84,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Back button
   document.getElementById('btn-back').addEventListener('click', () => {
-    window.close();
-    // If window.close() is blocked (not opened by script), go to index
-    window.location.href = '/';
+    if (window.history.length > 1) {
+      window.history.back();
+    } else {
+      window.location.href = '/';
+    }
   });
 
   // Load data from Supabase (single source of truth)
@@ -313,6 +316,24 @@ function renderDetailPage(audioId, audio, state, container) {
       renderUnifiedWorkSection(audioId, state, workSection.content, container, playerEl, activeVersionRef);
       container.appendChild(workSection.el);
     }
+  } else {
+    // === Benchmark file: show locked approve affordance ===
+    const benchSection = createSection('Review');
+    const benchNote = document.createElement('p');
+    benchNote.className = 'text-secondary';
+    benchNote.style.cssText = 'font-size:0.85rem;margin-bottom:10px;';
+    benchNote.textContent = 'This is a benchmark file. It is reserved for accuracy testing only and cannot be approved into the training set.';
+    benchSection.content.appendChild(benchNote);
+
+    const disabledApprove = document.createElement('button');
+    disabledApprove.textContent = 'Approve';
+    disabledApprove.disabled = true;
+    disabledApprove.title = 'Benchmark files cannot be approved — they are reserved for accuracy testing only';
+    disabledApprove.setAttribute('aria-disabled', 'true');
+    disabledApprove.className = 'btn btn-secondary';
+    benchSection.content.appendChild(disabledApprove);
+
+    container.appendChild(benchSection.el);
   }
 }
 
@@ -534,7 +555,13 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
         const tab = document.createElement('button');
         tab.className = 'version-tab';
         tab.dataset.versionId = v.id;
-        tab.textContent = v.type.charAt(0).toUpperCase() + v.type.slice(1);
+        let tabLabel = v.type.charAt(0).toUpperCase() + v.type.slice(1);
+        if (v.type === 'asr') {
+          // Show model name if available, and mark as draft (not yet approved)
+          if (v.model) tabLabel = 'ASR (' + v.model + ')';
+          tabLabel += ' — draft';
+        }
+        tab.textContent = tabLabel;
         if (v.id === activeVersionId) tab.classList.add('active');
         tab.addEventListener('click', () => {
           activeVersionId = v.id;
@@ -977,22 +1004,11 @@ function renderAsrSection(audioId, state, container, pageContainer) {
   }
   card.appendChild(btnBar);
 
-  // Collapsible config — subtle link style, not a full button
-  const configToggle = document.createElement('button');
-  configToggle.className = 'asr-config-toggle-link';
-  configToggle.textContent = 'Configure providers…';
-  card.appendChild(configToggle);
-
-  const configPanel = document.createElement('div');
-  configPanel.className = 'asr-provider-config';
-  configPanel.hidden = true;
-  buildAsrConfigPanel(configPanel);
-
-  configToggle.addEventListener('click', () => {
-    configPanel.hidden = !configPanel.hidden;
-    configToggle.textContent = configPanel.hidden ? 'Configure providers…' : 'Hide config';
-  });
-  card.appendChild(configPanel);
+  // Provider config lives in the main app Settings, not per-file
+  const configNote = document.createElement('p');
+  configNote.className = 'asr-config-note';
+  configNote.innerHTML = 'Configure providers in <a href="/" class="asr-settings-link">ASR Settings</a> on the main page.';
+  card.appendChild(configNote);
 
   container.appendChild(card);
 }
@@ -1029,6 +1045,21 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
   const step = getPipelineStep(audioId);
   const iterCount = getIterationCount(audioId);
   container.appendChild(renderPipelineStepper(step, iterCount));
+
+  // ── Next-step hint ──
+  const currentStatus = getStatus(audioId);
+  const nextStepHints = {
+    'mapped':  'Next: run Cleaning to prepare the transcript',
+    'cleaned': 'Next: run Alignment to get word timestamps',
+    'aligned': 'Next: review and approve in the Review section',
+  };
+  if (nextStepHints[currentStatus]) {
+    const hint = document.createElement('p');
+    hint.className = 'next-step-hint';
+    hint.style.cssText = 'font-size:0.8rem;color:var(--text-secondary);margin-top:4px;';
+    hint.textContent = nextStepHints[currentStatus];
+    container.appendChild(hint);
+  }
 
   // ── Progress card (when alignment exists) ──
   if (alignment) {
@@ -1089,18 +1120,40 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     alignBar.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;';
     const alignBtn = document.createElement('button');
     alignBtn.className = 'action-btn action-btn-primary';
+    const audioName = state.audio.find(a => a.id === audioId)?.name || audioId;
+    const alignLabel = alignment ? `Re-align ${audioName}` : `Run alignment for ${audioName}`;
     alignBtn.textContent = alignment ? 'Re-Align' : 'Run Alignment';
+    alignBtn.setAttribute('aria-label', alignLabel);
     alignBtn.addEventListener('click', async () => {
       alignBtn.textContent = 'Aligning (may take ~2.5 min)...';
       alignBtn.disabled = true;
+      // Remove any previous error message
+      const prevErr = alignBar.parentNode?.querySelector('.alignment-error-msg');
+      if (prevErr) prevErr.remove();
+      alignBtn.classList.remove('btn-error');
       try {
         const textForAlignment = await getCurrentText();
         const currentVersionId = activeVersionRef?.id || null;
-        await alignRow(audioId, getState(), textForAlignment, currentVersionId);
+        await alignRow(audioId, getState(), textForAlignment, currentVersionId, (attempt, maxRetries) => {
+          if (attempt === 1) {
+            alignBtn.textContent = 'Warming up GPU (may take ~2 min)…';
+          } else {
+            alignBtn.textContent = `Retrying… (${attempt}/${maxRetries})`;
+          }
+        });
       } catch (err) {
         console.error('[Alignment] Failed for', audioId, ':', err);
-        alignBtn.textContent = `Alignment failed (${err.message}) — click to retry`;
+        // Persistent error state
+        alignBtn.textContent = 'Alignment failed — retry?';
         alignBtn.disabled = false;
+        alignBtn.classList.add('btn-error');
+        const errMsg = document.createElement('p');
+        errMsg.className = 'alignment-error-msg';
+        const isUrlPatternError = err.message && err.message.includes('string did not match');
+        errMsg.textContent = isUrlPatternError
+          ? 'Audio file URL error — the file may not be uploaded to R2 storage yet.'
+          : 'Alignment failed after multiple attempts. The GPU server may be warming up or unavailable. Wait a minute and try again.';
+        alignBar.parentNode.insertBefore(errMsg, alignBar.nextSibling);
         return;
       }
       const s = getState();
@@ -1149,12 +1202,12 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       placeholder.remove();
       renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl, activeVersionRef);
       renderIterationHistory(audioId, container, pageContainer, playerEl);
-      renderApproveBar(audioId, container);
+      renderApproveBar(audioId, container, pageContainer);
     });
   } else if (alignment) {
     renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef);
     renderIterationHistory(audioId, container, pageContainer, playerEl);
-    renderApproveBar(audioId, container);
+    renderApproveBar(audioId, container, pageContainer);
   } else {
     const placeholder = document.createElement('div');
     placeholder.className = 'word-view-placeholder';
@@ -1343,7 +1396,7 @@ function renderIterationHistory(audioId, container, pageContainer, playerEl) {
   container.appendChild(wrap);
 }
 
-function renderApproveBar(audioId, container) {
+function renderApproveBar(audioId, container, pageContainer) {
   const approveBar = document.createElement('div');
   approveBar.className = 'seg-approve-bar';
   const approveBtn = document.createElement('button');
@@ -1353,12 +1406,23 @@ function renderApproveBar(audioId, container) {
   approveStatus.style.fontSize = '0.85rem';
   approveBar.appendChild(approveBtn);
   approveBar.appendChild(approveStatus);
+
+  // Re-clean & Re-align button -- shown only when status is rejected
+  const reCleanBtn = document.createElement('button');
+  reCleanBtn.className = 'btn btn-secondary';
+  reCleanBtn.style.cssText = 'margin-left:8px;';
+  reCleanBtn.textContent = 'Re-clean & Re-align';
+  reCleanBtn.title = 'Clear rejection, return file to mapped state for re-cleaning and re-alignment';
+  reCleanBtn.style.display = 'none';
+  approveBar.appendChild(reCleanBtn);
+
   container.appendChild(approveBar);
 
   function sync() {
     const s = getState();
     const review = s.reviews?.[audioId];
     const isApproved = review?.status === 'approved';
+    const isRejected = review?.status === 'rejected';
     approveBtn.textContent = isApproved ? '✓ Approved for Training' : 'Approve for Training';
     approveBtn.className = isApproved
       ? 'btn btn-secondary seg-approve-btn'
@@ -1367,9 +1431,15 @@ function renderApproveBar(audioId, container) {
       const date = review.reviewedAt ? new Date(review.reviewedAt).toLocaleDateString() : '';
       const by = review.approvedBy || '';
       approveStatus.textContent = [by, date ? 'on ' + date : ''].filter(Boolean).join(' ');
+      approveStatus.style.color = '';
+    } else if (isRejected) {
+      approveStatus.textContent = 'Rejected — needs re-cleaning';
+      approveStatus.style.color = 'var(--red)';
     } else {
       approveStatus.textContent = '';
+      approveStatus.style.color = '';
     }
+    reCleanBtn.style.display = isRejected ? '' : 'none';
   }
   sync();
 
@@ -1382,6 +1452,18 @@ function renderApproveBar(audioId, container) {
       updateState('reviews', audioId, { status: 'approved', approvedBy: getCurrentUser(), reviewedAt: new Date().toISOString() });
     }
     sync();
+  });
+
+  reCleanBtn.addEventListener('click', () => {
+    // Clear rejection -- return to mapped/cleaned state so the file can be re-processed
+    updateState('reviews', audioId, null);
+    sync();
+    // Re-render full detail page if pageContainer is available
+    if (pageContainer) {
+      const s = getState();
+      const audio = s.audio.find(a => a.id === audioId);
+      if (audio) renderDetailPage(audioId, audio, s, pageContainer);
+    }
   });
 }
 
@@ -1988,7 +2070,10 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     const playPauseBtn = document.createElement('button');
     playPauseBtn.className = 'btn btn-secondary seg-nav-btn';
     playPauseBtn.style.cssText = 'font-size:1rem;min-width:38px;';
-    const updatePlayBtn = () => { playPauseBtn.textContent = playerEl.paused ? '▶' : '⏸'; };
+    const updatePlayBtn = () => {
+      playPauseBtn.textContent = playerEl.paused ? '▶' : '⏸';
+      playPauseBtn.setAttribute('aria-label', playerEl.paused ? 'Play audio' : 'Pause audio');
+    };
     updatePlayBtn();
     playPauseBtn.addEventListener('click', () => { if (playerEl.paused) playerEl.play(); else playerEl.pause(); });
     playerEl.addEventListener('play', updatePlayBtn);
@@ -2128,7 +2213,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   });
   viewer.appendChild(legend);
 
-  renderApproveBar(audioId, viewer);
+  renderApproveBar(audioId, viewer, pageContainer);
 
   // ── Save as edited version ──
   if (cleaning) {

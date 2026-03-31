@@ -48,6 +48,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     libSelector.style.display = '';
     libSelector.addEventListener('change', () => {
+      const newLib = libraries.find(l => l.id === libSelector.value)?.name || libSelector.value;
+      if (!confirm(`Switch to "${newLib}"? Any unsaved offline work in the current library will not be migrated.`)) {
+        // Revert selector to current active library
+        libSelector.value = activeLib;
+        return;
+      }
       setActiveLibrary(libSelector.value);
       location.reload();
     });
@@ -90,7 +96,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   let expandedRow = null;
 
-  function onRowExpand(audioId) {
+  function onRowExpand(audioId, e) {
     const state = getState();
     const audio = state.audio.find(a => a.id === audioId);
     if (!audio) return;
@@ -113,7 +119,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Navigate to detail page for all non-unmapped, non-benchmark rows
     if (status === 'mapped' || status === 'cleaned' || status === 'aligned' || status === 'approved') {
       expandedRow = null;
-      window.open(`/detail.html?id=${encodeURIComponent(audioId)}`, '_blank');
+      const detailUrl = `/detail.html?id=${encodeURIComponent(audioId)}`;
+      if (e && (e.ctrlKey || e.metaKey)) {
+        window.open(detailUrl, '_blank');
+      } else {
+        window.location.href = detailUrl;
+      }
       return;
     }
 
@@ -262,9 +273,23 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ── Render table ────────────────────────────────────────────────
 
+  const bulkCleanBtn = document.getElementById('btn-clean-selected');
+
+  function updateBulkCleanBtn() {
+    const selected = getSelectedRows();
+    if (bulkCleanBtn) {
+      bulkCleanBtn.disabled = selected.length === 0;
+      bulkCleanBtn.title = selected.length === 0 ? 'Select rows first' : 'Clean selected files';
+    }
+  }
+
   renderTable(tableContainer, {
     onRowExpand,
+    onRowSelect: () => updateBulkCleanBtn(),
   });
+
+  // Initialize button state
+  updateBulkCleanBtn();
 
   // ── Bulk actions ────────────────────────────────────────────────
 
@@ -275,12 +300,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     const bar = document.getElementById('bulk-selection-count');
     const originalText = bar.textContent;
 
-    await batchClean(selected, getState(), (done, total, elapsed) => {
+    const { succeeded, failed } = await batchClean(selected, getState(), (done, total, elapsed) => {
       bar.textContent = `Cleaning ${done} / ${total}${elapsed ? ` (${elapsed}s)` : ''}...`;
     });
 
     bar.textContent = originalText;
     updateTable();
+    if (failed.length > 0) {
+      console.warn('[BulkClean] Failed files:', failed);
+      alert(`Cleaned ${succeeded} files. ${failed.length} failed — check console for details.`);
+    }
   });
 
   document.getElementById('btn-align-selected').addEventListener('click', async () => {
@@ -350,6 +379,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       return getStatus(a.id) === 'approved' && !a.isBenchmark;
     });
     if (approved.length === 0) return;
+
+    const approvedFiles = approved;
+    const totalHours = approvedFiles.reduce((sum, a) => sum + (a.duration_minutes || 0), 0) / 60;
+    if (!confirm(`Export ${approvedFiles.length} approved files (≈${totalHours.toFixed(1)} hrs) as training CSV?`)) return;
 
     const columns = [
       { label: 'Audio ID', key: 'id' },

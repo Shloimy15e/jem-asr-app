@@ -70,6 +70,15 @@ export function buildAsrConfigPanel(container) {
   const geminiTitle = document.createElement('div');
   geminiTitle.className = 'asr-provider-title';
   geminiTitle.textContent = 'Gemini (fine-tuned via Vertex AI)';
+  {
+    const providers = getState().transcribeProviders || {};
+    const g = providers.gemini || {};
+    const isConfigured = !!(g.projectId && g.endpointId);
+    const statusSpan = document.createElement('span');
+    statusSpan.textContent = isConfigured ? ' ✓ Configured' : ' ○ Not configured';
+    statusSpan.style.cssText = `font-size: 0.75rem; color: ${isConfigured ? 'var(--green)' : 'var(--text-secondary)'}; margin-left: 8px;`;
+    geminiTitle.appendChild(statusSpan);
+  }
   geminiBlock.appendChild(geminiTitle);
   geminiBlock.appendChild(secretsNote('🔒 SA JSON stored as Cloudflare Worker secret GEMINI_SA_JSON — set via CLI, not here.'));
   container.appendChild(geminiBlock);
@@ -87,6 +96,12 @@ export function buildAsrConfigPanel(container) {
   const whisperTitle = document.createElement('div');
   whisperTitle.className = 'asr-provider-title';
   whisperTitle.textContent = 'Whisper (RunPod)';
+  {
+    const statusSpan = document.createElement('span');
+    statusSpan.textContent = ' ✓ Ready';
+    statusSpan.style.cssText = 'font-size: 0.75rem; color: var(--green); margin-left: 8px;';
+    whisperTitle.appendChild(statusSpan);
+  }
   whisperBlock.appendChild(whisperTitle);
   whisperBlock.appendChild(secretsNote('No credentials needed — uses the existing align.kohnai.ai endpoint.'));
   container.appendChild(whisperBlock);
@@ -97,6 +112,15 @@ export function buildAsrConfigPanel(container) {
   const ylTitle = document.createElement('div');
   ylTitle.className = 'asr-provider-title';
   ylTitle.textContent = 'Yiddish Labs';
+  {
+    const providers = getState().transcribeProviders || {};
+    const yl = providers.yiddishLabs || {};
+    const isConfigured = !!(yl.endpoint);
+    const statusSpan = document.createElement('span');
+    statusSpan.textContent = isConfigured ? ' ✓ Configured' : ' ○ Not configured';
+    statusSpan.style.cssText = `font-size: 0.75rem; color: ${isConfigured ? 'var(--green)' : 'var(--text-secondary)'}; margin-left: 8px;`;
+    ylTitle.appendChild(statusSpan);
+  }
   ylBlock.appendChild(ylTitle);
   ylBlock.appendChild(secretsNote('🔒 API key stored as Cloudflare Worker secret YL_API_KEY — set via CLI, not here.'));
   container.appendChild(ylBlock);

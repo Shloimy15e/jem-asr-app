@@ -139,7 +139,7 @@ function splitTextIntoChunks(text) {
 
 // Send one alignment request to the CF Worker with retry logic.
 // Returns the parsed response data object.
-async function doAlignRequest(requestBody, chunkLabel) {
+async function doAlignRequest(requestBody, chunkLabel, onProgress) {
   const MAX_RETRIES = 15; // GPU cold start can take ~2.5 min; 15×10s = 150s covers it
   const RETRY_DELAY_MS = 10000;
   const FETCH_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -158,6 +158,7 @@ async function doAlignRequest(requestBody, chunkLabel) {
       clearTimeout(timeoutId);
       console.warn(`[Align${chunkLabel}] Network error on attempt ${attempt}/${MAX_RETRIES}: ${err.message}`);
       if (attempt < MAX_RETRIES) {
+        if (onProgress) onProgress(attempt, MAX_RETRIES);
         await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
         continue;
       }
@@ -167,6 +168,7 @@ async function doAlignRequest(requestBody, chunkLabel) {
     if (response.status === 502 || response.status === 504) {
       console.warn(`[Align${chunkLabel}] Got ${response.status} on attempt ${attempt}/${MAX_RETRIES} — retrying in ${RETRY_DELAY_MS / 1000}s...`);
       if (attempt < MAX_RETRIES) {
+        if (onProgress) onProgress(attempt, MAX_RETRIES);
         await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
         continue;
       }
@@ -197,7 +199,7 @@ function buildRequestBody(audioResult, chunkText) {
   );
 }
 
-export async function alignRow(audioId, state, textOverride = null, versionId = null) {
+export async function alignRow(audioId, state, textOverride = null, versionId = null, onProgress = null) {
   const url = getAudioUrl(audioId, state);
   if (!url) throw new Error(`No audio URL for ${audioId}`);
 
@@ -278,7 +280,7 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
 
     const audioResult = await fetchAudioForAlignment(url, audioStart, chunkAudioEnd, audioDuration);
     const requestBody = buildRequestBody(audioResult, requestText);
-    const data = await doAlignRequest(requestBody, chunkLabel);
+    const data = await doAlignRequest(requestBody, chunkLabel, onProgress);
 
     let rawWords = data.timestamps || [];
     if (rawWords.length === 0 && data.segments) {

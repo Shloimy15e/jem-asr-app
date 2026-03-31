@@ -128,17 +128,31 @@ async function fetchTranscriptText(transcript) {
 export async function batchClean(audioIds, state, onProgress) {
   const total = audioIds.length;
   const startTime = Date.now();
+  const failed = [];
+  let succeeded = 0;
 
   for (let i = 0; i < total; i++) {
     const audioId = audioIds[i];
     const mapping = state.mappings[audioId];
-    if (!mapping) { if (onProgress) onProgress(i + 1, total); continue; }
+    if (!mapping) {
+      failed.push({ id: audioId, reason: 'No transcript mapping' });
+      if (onProgress) onProgress(i + 1, total);
+      continue;
+    }
 
     const transcript = state.transcripts.find(t => t.id === mapping.transcriptId);
-    if (!transcript) { if (onProgress) onProgress(i + 1, total); continue; }
+    if (!transcript) {
+      failed.push({ id: audioId, reason: 'Transcript not found' });
+      if (onProgress) onProgress(i + 1, total);
+      continue;
+    }
 
     const rawText = await fetchTranscriptText(transcript);
-    if (!rawText) { if (onProgress) onProgress(i + 1, total); continue; }
+    if (!rawText) {
+      failed.push({ id: audioId, reason: 'Could not fetch transcript text' });
+      if (onProgress) onProgress(i + 1, total);
+      continue;
+    }
 
     const cleanedText = cleanText(rawText);
     const cleanRate = calculateCleanRate(rawText, cleanedText);
@@ -176,9 +190,11 @@ export async function batchClean(audioIds, state, onProgress) {
       });
     }
 
+    succeeded++;
     if (onProgress) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       onProgress(i + 1, total, elapsed);
     }
   }
+  return { succeeded, failed };
 }

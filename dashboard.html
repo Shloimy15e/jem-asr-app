@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard — JEM ASR</title>
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    body { background: var(--bg); min-height: 100vh; }
+
+    .dash-wrap {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 32px 24px 80px;
+    }
+
+    .dash-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 32px;
+    }
+
+    .dash-title {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.4px;
+    }
+
+    .dash-card {
+      background: var(--surface);
+      border-radius: var(--radius-lg);
+      padding: 22px 24px;
+      margin-bottom: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .dash-card-title {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin-bottom: 14px;
+    }
+
+    .credits-display {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .credits-number {
+      font-size: 3rem;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -2px;
+      line-height: 1;
+    }
+
+    .credits-label {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .credits-low { color: var(--orange); }
+    .credits-empty { color: var(--red); }
+
+    .buy-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 14px;
+      padding: 10px 22px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 999px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: opacity 0.15s;
+    }
+    .buy-btn:hover { opacity: 0.88; }
+
+    /* API key field */
+    .key-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .key-box {
+      flex: 1;
+      padding: 11px 14px;
+      background: var(--bg);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.88rem;
+      font-family: var(--font-mono, monospace);
+      color: var(--text);
+      letter-spacing: 0.02em;
+      user-select: all;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .key-copy-btn {
+      flex-shrink: 0;
+      padding: 10px 18px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      border: none;
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .key-copy-btn:hover { background: var(--accent); color: #fff; }
+
+    .key-generate-btn {
+      width: 100%;
+      margin-top: 12px;
+      padding: 11px;
+      background: var(--surface-hover);
+      color: var(--text-secondary);
+      border: 1.5px dashed var(--border);
+      border-radius: var(--radius);
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .key-generate-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+    .key-hint {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 8px;
+    }
+
+    /* Download section */
+    .download-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .download-btn {
+      flex: 1;
+      min-width: 140px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 18px 16px;
+      background: var(--surface-hover);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.15s;
+    }
+    .download-btn:hover { border-color: var(--accent); background: var(--accent-dim); }
+
+    .download-icon {
+      font-size: 1.8rem;
+      line-height: 1;
+    }
+
+    .download-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .download-sub {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    /* Usage list */
+    .usage-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.84rem;
+    }
+    .usage-row:last-child { border-bottom: none; }
+    .usage-time { color: var(--text-muted); font-size: 0.78rem; }
+    .usage-provider {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 999px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      font-size: 0.7rem;
+      font-weight: 600;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: rgba(28,28,30,0.9);
+      color: #fff;
+      padding: 10px 22px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      opacity: 0;
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .loading-inline {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+      padding: 8px 0;
+    }
+    .loading-inline::before {
+      content: '';
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.65s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <a href="/" class="app-title" style="text-decoration:none">JEM ASR</a>
+    <div class="toolbar">
+      <button id="btn-logout" class="toolbar-btn">Sign Out</button>
+    </div>
+  </header>
+
+  <div class="dash-wrap">
+    <div class="dash-header">
+      <div class="dash-title">Dashboard</div>
+    </div>
+
+    <!-- Credits Card -->
+    <div class="dash-card">
+      <div class="dash-card-title">Credits</div>
+      <div id="credits-content">
+        <div class="loading-inline">Loading balance…</div>
+      </div>
+    </div>
+
+    <!-- API Key Card -->
+    <div class="dash-card">
+      <div class="dash-card-title">Desktop App API Key</div>
+      <div id="apikey-content">
+        <div class="loading-inline">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Download Desktop App -->
+    <div class="dash-card">
+      <div class="dash-card-title">Download Desktop App</div>
+      <div class="download-row">
+        <a class="download-btn" id="download-win" href="#" target="_blank">
+          <span class="download-icon">🖥️</span>
+          <span class="download-label">Windows</span>
+          <span class="download-sub">Yiddish Voice.exe</span>
+        </a>
+        <a class="download-btn" id="download-mac" href="#" style="opacity:0.5;pointer-events:none">
+          <span class="download-icon">🍎</span>
+          <span class="download-label">macOS</span>
+          <span class="download-sub">Coming soon</span>
+        </a>
+      </div>
+      <p style="font-size:0.78rem;color:var(--text-muted);margin-top:12px">
+        The desktop app records your voice and auto-pastes Yiddish text anywhere.
+        Press <kbd style="padding:1px 5px;background:var(--surface-hover);border-radius:4px;font-family:monospace">Ctrl+Shift+Space</kbd> to transcribe.
+      </p>
+    </div>
+
+    <!-- Recent Usage -->
+    <div class="dash-card">
+      <div class="dash-card-title">Recent Usage</div>
+      <div id="usage-content">
+        <div class="loading-inline">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script type="module">
+    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+
+    // Config injected at build time via vite env vars
+    const SUPABASE_URL = '__SUPABASE_URL__';
+    const SUPABASE_ANON = '__SUPABASE_ANON_KEY__';
+    const STRIPE_LINK = '__STRIPE_PAYMENT_LINK__';
+
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+    // ── Auth check ───────────────────────────────────────────────────
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { window.location.href = '/login.html'; }
+
+    const user = session.user;
+
+    document.getElementById('btn-logout').addEventListener('click', async () => {
+      await sb.auth.signOut();
+      window.location.href = '/login.html';
+    });
+
+    // ── Toast ─────────────────────────────────────────────────────────
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2200);
+    }
+
+    // ── Load API key ──────────────────────────────────────────────────
+    async function loadApiKey() {
+      const res = await fetch('/api/desktop/credits', {
+        headers: { Authorization: '' }, // probe without key to get 401
+      }).catch(() => null);
+
+      // Check Supabase for existing key
+      const { data: rows } = await sb
+        .from('api_keys')
+        .select('key,credits,created_at')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      const apiKey = rows?.[0];
+
+      const container = document.getElementById('apikey-content');
+
+      if (apiKey) {
+        container.innerHTML = `
+          <div class="key-row">
+            <div class="key-box" id="key-display" title="Click to select">${maskKey(apiKey.key)}</div>
+            <button class="key-copy-btn" id="copy-key-btn">Copy</button>
+          </div>
+          <p class="key-hint">Keep this secret. Use it in the Yiddish Voice desktop app.</p>
+        `;
+        document.getElementById('copy-key-btn').addEventListener('click', () => {
+          navigator.clipboard.writeText(apiKey.key).then(() => showToast('API key copied!'));
+        });
+        document.getElementById('key-display').addEventListener('click', () => {
+          document.getElementById('key-display').textContent = apiKey.key;
+        });
+      } else {
+        container.innerHTML = `
+          <p style="font-size:0.88rem;color:var(--text-secondary);margin-bottom:4px">You don't have an API key yet.</p>
+          <button class="key-generate-btn" id="gen-key-btn">+ Generate API Key</button>
+        `;
+        document.getElementById('gen-key-btn').addEventListener('click', generateKey);
+      }
+    }
+
+    function maskKey(key) {
+      if (key.length <= 12) return key;
+      return key.slice(0, 12) + '••••••••••••' + key.slice(-4);
+    }
+
+    async function generateKey() {
+      const btn = document.getElementById('gen-key-btn');
+      if (btn) btn.textContent = 'Generating…';
+      try {
+        const { data, error } = await sb.rpc('generate_api_key', {
+          p_email: user.email,
+          p_user_id: user.id,
+        });
+        if (error) throw new Error(error.message);
+        showToast('API key generated!');
+        loadApiKey();
+        loadCredits();
+      } catch (err) {
+        showToast('Error: ' + err.message);
+      }
+    }
+
+    // ── Load credits ──────────────────────────────────────────────────
+    async function loadCredits() {
+      const { data: rows } = await sb
+        .from('api_keys')
+        .select('credits')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      const credits = rows?.[0]?.credits ?? null;
+      const container = document.getElementById('credits-content');
+
+      if (credits === null) {
+        container.innerHTML = `<p style="color:var(--text-muted);font-size:0.88rem">Generate an API key to see your balance.</p>`;
+        return;
+      }
+
+      const colorClass = credits === 0 ? 'credits-empty' : credits < 20 ? 'credits-low' : '';
+      const stripeLink = STRIPE_LINK !== '__STRIPE_PAYMENT_LINK__'
+        ? `${STRIPE_LINK}?client_reference_id=desktop_${user.id}`
+        : '#';
+
+      container.innerHTML = `
+        <div class="credits-display">
+          <span class="credits-number ${colorClass}">${credits}</span>
+          <span class="credits-label">credits remaining</span>
+        </div>
+        ${credits < 50 ? `<a href="${stripeLink}" target="_blank" class="buy-btn">Add Credits →</a>` : ''}
+      `;
+    }
+
+    // ── Load recent usage ─────────────────────────────────────────────
+    async function loadUsage() {
+      const { data: rows } = await sb
+        .from('api_key_usage')
+        .select('created_at,provider,status,credits_used')
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      const container = document.getElementById('usage-content');
+
+      if (!rows?.length) {
+        container.innerHTML = `<p style="color:var(--text-muted);font-size:0.85rem;padding:8px 0">No transcriptions yet.</p>`;
+        return;
+      }
+
+      container.innerHTML = rows.map(r => `
+        <div class="usage-row">
+          <div>
+            <span class="usage-provider">${r.provider || 'gemini'}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:0.8rem;color:${r.status === 'ok' ? 'var(--green)' : 'var(--red)'}">
+              ${r.status === 'ok' ? '−1 credit' : r.status}
+            </span>
+            <span class="usage-time">${formatTime(r.created_at)}</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function formatTime(iso) {
+      const d = new Date(iso);
+      const now = new Date();
+      const diffMin = Math.floor((now - d) / 60000);
+      if (diffMin < 1) return 'just now';
+      if (diffMin < 60) return diffMin + 'm ago';
+      if (diffMin < 1440) return Math.floor(diffMin / 60) + 'h ago';
+      return d.toLocaleDateString();
+    }
+
+    // ── Run all ───────────────────────────────────────────────────────
+    await Promise.all([loadApiKey(), loadCredits(), loadUsage()]);
+  </script>
+</body>
+</html>

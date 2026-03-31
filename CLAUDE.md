@@ -449,18 +449,30 @@ The `timeupdate` handler pauses at the end of the current segment **only when th
 `renderTrimControls` sets `document.body.style.userSelect = 'none'` on `mousedown` and clears it on `mouseup`. Without this, the browser treats the drag as text selection and interrupts it. Always restore `userSelect` in the `onEnd` handler.
 
 ### Mobile card view opens detail page
-At ≤480px the table switches to card view (`buildCardView` in `table.js`). Each card has an **"Open"** button and the card itself is clickable — both navigate to `detail.html?id=<audioId>` in a new tab. The old inline-expand behavior is removed.
+At ≤480px the table switches to card view (`buildCardView` in `table.js`). Each card has an **"Open"** button and the card itself is clickable — both navigate to `detail.html?id=<audioId>` **in the same tab**. Ctrl/Cmd+click opens in a new tab.
 
 ### Row click and keyboard behavior by status
-Clicking a table row calls `onRowExpand(audioId)` in `app.js`, which dispatches based on status:
+Clicking a table row calls `onRowExpand(audioId, e)` in `app.js`, which dispatches based on status:
 - `unmapped` → expands inline to show mapping suggestions + Search Transcripts button
-- `mapped` / `cleaned` → navigates directly to `detail.html?id=` in a new tab (no inline panel)
+- `mapped` / `cleaned` → navigates directly to `detail.html?id=` **in the same tab** (Ctrl/Cmd+click for new tab)
 - `aligned` / `approved` → expands inline to show the review panel + Open Detail Page button
 - `benchmark` → expands inline to show benchmark tools
 
 **Arrow keys** (`↑`/`↓`) only highlight/select rows — they do NOT trigger expansion or navigation. Only `Enter` or a click expands/navigates.
 
 The inline mapping bar (Linked to / Unlink / Change Transcript / Split Transcript) has been removed from all expanded panels — those controls are on the detail page.
+
+### Filter, page, and search state in URL
+`table.js` uses `history.replaceState` to keep `?filter=`, `?page=`, and `?q=` in sync with the current view. On init, these are read from `URLSearchParams` so a page refresh restores position. The detail page back button uses `history.back()` to return to the table preserving this state.
+
+### Rejected file recovery
+When a file is rejected in the review section, a **"Re-clean & Re-align"** button appears in the approve bar. Clicking it calls `updateState('reviews', audioId, null)` to clear the rejection and re-renders the detail page so the user can iterate.
+
+### Library switch confirmation
+`app.js` shows a `confirm()` dialog before calling `location.reload()` when the user switches libraries, to prevent accidental loss of unsaved offline work.
+
+### Bulk clean button state
+The bulk **Clean** button is disabled (with tooltip "Select rows first") when no rows are selected. After bulk clean, a summary dialog reports any per-file failures.
 
 ### Table column visibility handles compound filter keys
 Column `showWhen` functions use `filterMatchesStatus(filter, statuses)` which extracts the status portion from compound keys like `'fifty-unmapped'` or `'50hr-mapped'`. This ensures columns like `firstLine` correctly show/hide when viewing 50hr sub-filters.
@@ -497,7 +509,7 @@ The intended iterative workflow: clean → align → edit → align again → co
 
 **Do not move `renderAsrSection` back inside `cleanSection`** — it was previously nested there which was architecturally wrong (cleaning processes existing text; ASR generates new text from audio).
 
-Visual design: purple left border (`border-left: 3px solid var(--purple)`), header with 🎙 icon in a purple-dim circle + "Generate Transcript" title + description line, provider buttons as `.asr-provider-btn` (purple-tinted pill style), "Configure providers…" as a `.asr-config-toggle-link` (underlined text link, not a button).
+Visual design: purple left border (`border-left: 3px solid var(--purple)`), header with 🎙 icon in a purple-dim circle + "Generate Transcript" title + description line, provider buttons as `.asr-provider-btn` (purple-tinted pill style), a small `.asr-config-note` linking back to the main page ASR Settings (provider config is NOT embedded per-detail-page).
 
 ### ASR Transcription providers — three options, configured globally via toolbar
 A global **"ASR Settings"** button in the main toolbar opens the config modal (same modal used by benchmark). Settings persist in `state.transcribeProviders` (localStorage). Three providers:
