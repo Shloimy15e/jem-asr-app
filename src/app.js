@@ -31,6 +31,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('app-title').textContent = `${activeLibConfig.name} ASR Workbench`;
   document.title = `${activeLibConfig.name} ASR Workbench`;
 
+  // Show Admin link if user has admin role in any library
+  if (libraries.some(l => l.role === 'admin')) {
+    const adminBtn = document.getElementById('btn-admin');
+    if (adminBtn) adminBtn.style.display = '';
+  }
+
   const libSelector = document.getElementById('library-selector');
   if (libraries.length > 1) {
     for (const lib of libraries) {
