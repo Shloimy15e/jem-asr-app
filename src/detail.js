@@ -13,9 +13,13 @@ async function loadFullText(transcript) {
   if (transcript.text) return transcript.text;
   let text = null;
   if (transcript.r2TranscriptLink) {
-    const filename = transcript.r2TranscriptLink.split('/').pop();
-    const res = await fetch('/api/transcript?name=' + encodeURIComponent(filename)).catch(() => null);
-    if (res?.ok) text = await res.text().catch(() => null);
+    try {
+      const parsed = new URL(transcript.r2TranscriptLink);
+      const path = parsed.pathname.replace(/^\//, ''); // strip leading slash
+      const params = new URLSearchParams({ name: path, domain: parsed.hostname });
+      const res = await fetch('/api/transcript?' + params).catch(() => null);
+      if (res?.ok) text = await res.text().catch(() => null);
+    } catch { /* fall through to db fallback */ }
   }
   if (!text && transcript.id) {
     text = await loadTranscriptText(transcript.id);

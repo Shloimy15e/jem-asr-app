@@ -29,16 +29,17 @@ export async function onRequestGet(context) {
   }
 
   // Validate the optional domain parameter against the allowlist
-  let r2Base = DEFAULT_R2_BASE;
+  let r2Url;
   if (domainParam) {
     const allowedDomains = getAllowedDomains(context.env);
     if (!allowedDomains.includes(domainParam)) {
       return new Response('Forbidden: domain not in allowed list', { status: 403 });
     }
-    r2Base = `https://${domainParam}/transcripts-txt/`;
+    // name is the full path when domain is provided
+    r2Url = `https://${domainParam}/${name}`;
+  } else {
+    r2Url = DEFAULT_R2_BASE + encodeURIComponent(name);
   }
-
-  const r2Url = r2Base + encodeURIComponent(name);
 
   try {
     const resp = await fetch(r2Url, { cf: { cacheTtl: 0 } });
