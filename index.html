@@ -18,10 +18,15 @@
       <input type="file" id="import-file-input" accept=".json" hidden />
       <button id="btn-export-csv" class="toolbar-btn" title="Export Approved as CSV">Export CSV</button>
       <button id="btn-logout" class="toolbar-btn" title="Sign out">Sign Out</button>
+      <button id="btn-toolbar-more" title="More options" aria-label="More toolbar options">&#8943;</button>
     </div>
   </header>
 
-  <nav class="filter-bar">
+  <button id="btn-filter-toggle" aria-expanded="false" aria-controls="filter-bar">
+    <span>&#9776; Filter</span>
+    <span class="filter-toggle-active-label" id="filter-toggle-label"></span>
+  </button>
+  <nav class="filter-bar" id="filter-bar">
     <div class="filter-group">
       <span class="filter-group-label">50hr Collection</span>
       <div class="filter-pills">

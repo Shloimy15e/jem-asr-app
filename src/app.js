@@ -291,6 +291,54 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Initialize button state
   updateBulkCleanBtn();
 
+  // ── Mobile filter drawer toggle ─────────────────────────────────
+
+  const filterToggleBtn = document.getElementById('btn-filter-toggle');
+  const filterBar = document.getElementById('filter-bar');
+  const filterToggleLabel = document.getElementById('filter-toggle-label');
+
+  function updateFilterToggleLabel() {
+    // Show the active filter name in the toggle button
+    const activeEl = filterBar && filterBar.querySelector('.filter-pill.active');
+    if (filterToggleLabel && activeEl) {
+      filterToggleLabel.textContent = activeEl.textContent.replace(/\d+/g, '').trim();
+    }
+  }
+
+  if (filterToggleBtn && filterBar) {
+    filterToggleBtn.addEventListener('click', () => {
+      const isOpen = filterBar.classList.toggle('is-open');
+      filterToggleBtn.setAttribute('aria-expanded', String(isOpen));
+    });
+    // Close drawer when a pill is clicked
+    filterBar.addEventListener('click', (e) => {
+      if (e.target.closest('.filter-pill')) {
+        filterBar.classList.remove('is-open');
+        filterToggleBtn.setAttribute('aria-expanded', 'false');
+        updateFilterToggleLabel();
+      }
+    });
+    updateFilterToggleLabel();
+  }
+
+  // ── Mobile toolbar overflow menu ────────────────────────────────
+
+  const toolbarMoreBtn = document.getElementById('btn-toolbar-more');
+  const toolbar = toolbarMoreBtn && toolbarMoreBtn.closest('.toolbar');
+
+  if (toolbarMoreBtn && toolbar) {
+    toolbarMoreBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toolbar.classList.toggle('overflow-open');
+    });
+    // Close when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!toolbar.contains(e.target)) {
+        toolbar.classList.remove('overflow-open');
+      }
+    });
+  }
+
   // ── Bulk actions ────────────────────────────────────────────────
 
   document.getElementById('btn-clean-selected').addEventListener('click', async () => {

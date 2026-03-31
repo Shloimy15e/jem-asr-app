@@ -272,6 +272,7 @@ function renderDetailPage(audioId, audio, state, container) {
 
   // === Section: Audio Player ===
   const playerSection = createSection('Audio Player');
+  addCollapseBehavior(playerSection.el, playerSection.header, false);
   const audioUrl = audio.r2Link || audio.driveLink;
   if (audioUrl) {
     const playerEl = document.createElement('audio');
@@ -305,6 +306,8 @@ function renderDetailPage(audioId, audio, state, container) {
   // === Section: Mapping ===
   if (!audio.isBenchmark) {
     const mappingSection = createSection('Transcript Mapping');
+    // Collapse mapping on mobile if already mapped or further along
+    addCollapseBehavior(mappingSection.el, mappingSection.header, status !== 'unmapped');
     const activeVersionRef = { id: getBestVersion(audioId)?.id || null };
     renderMappingSection(audioId, state, mappingSection.content, container, activeVersionRef);
     container.appendChild(mappingSection.el);
@@ -312,6 +315,8 @@ function renderDetailPage(audioId, audio, state, container) {
     // === Section: Cleaning + Alignment + Word View (unified) ===
     if (state.mappings[audioId]) {
       const workSection = createSection('Processing');
+      // Collapse processing on mobile only when fully approved
+      addCollapseBehavior(workSection.el, workSection.header, status === 'approved');
       const playerEl = container.querySelector('.audio-player');
       renderUnifiedWorkSection(audioId, state, workSection.content, container, playerEl, activeVersionRef);
       container.appendChild(workSection.el);
@@ -319,6 +324,8 @@ function renderDetailPage(audioId, audio, state, container) {
   } else {
     // === Benchmark file: show locked approve affordance ===
     const benchSection = createSection('Review');
+    // Review/Approve: never collapse by default
+    addCollapseBehavior(benchSection.el, benchSection.header, false);
     const benchNote = document.createElement('p');
     benchNote.className = 'text-secondary';
     benchNote.style.cssText = 'font-size:0.85rem;margin-bottom:10px;';
@@ -347,7 +354,25 @@ function createSection(title) {
   const content = document.createElement('div');
   content.className = 'detail-section-content';
   el.appendChild(content);
-  return { el, content };
+  return { el, header, content };
+}
+
+function addCollapseBehavior(section, header, collapseByDefault) {
+  header.style.cursor = 'pointer';
+  const collapseIcon = document.createElement('span');
+  collapseIcon.className = 'section-collapse-icon';
+  collapseIcon.textContent = '▾';
+  header.appendChild(collapseIcon);
+
+  header.addEventListener('click', (e) => {
+    if (e.target === header || e.target === collapseIcon) {
+      section.classList.toggle('is-collapsed');
+    }
+  });
+
+  if (window.innerWidth <= 640 && collapseByDefault) {
+    section.classList.add('is-collapsed');
+  }
 }
 
 function renderMappingSection(audioId, state, container, pageContainer, activeVersionRef) {
