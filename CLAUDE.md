@@ -732,6 +732,9 @@ Each chunk retries **15 times** on 502/504 HTTP errors AND network-level errors 
 
 **Do not reduce `MAX_RETRIES` below 15.** RunPod scales to zero when idle. A cold GPU returns 502 for ~2.5 minutes before becoming ready. With only 3 retries (the old value), alignment would always fail on a cold GPU.
 
+### Alignment failure: "The string did not match the expected pattern."
+This browser DOMException (Safari/WebKit) means the audio file has no `r2_link` in the DB and the code fell back to `driveLink` (Google Drive), which is CORS-blocked. The fix: set `r2_link` in Supabase for the affected file. The R2 file likely already exists at `https://audio.kohnai.ai/training/<encoded-filename>.mp3` — confirm with a HEAD request, then run: `UPDATE audio_files SET r2_link = '<url>' WHERE id = '<id>'` via `npx supabase db query --linked`. `fetchAudioForAlignment` now catches this and surfaces a clear error message pointing to the missing `r2_link`.
+
 ### benchmark.js
 ```javascript
 renderAsrConfig(container, state)
