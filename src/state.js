@@ -289,6 +289,24 @@ export function getAlignedVersions(audioId) {
   return getVersions(audioId).filter(v => v.alignment && v.alignment.words);
 }
 
+// Derives the current pipeline step from version data (no stored state needed).
+// Steps: 'clean' → 'align' → 'review' → 'approved'
+export function getPipelineStep(audioId) {
+  const versions = getVersions(audioId);
+  if (!versions || versions.length === 0) return 'clean';
+  if (versions.some(v => v.review?.status === 'approved')) return 'approved';
+  const best = getBestVersion(audioId);
+  if (!best) return 'clean';
+  if (best.alignment?.avgConfidence != null) return 'review';
+  if (best.type === 'cleaned' || best.type === 'edited' || best.type === 'asr') return 'align';
+  return 'clean';
+}
+
+// Returns how many full clean→align cycles have been completed.
+export function getIterationCount(audioId) {
+  return getVersions(audioId).filter(v => v.alignment?.avgConfidence != null).length;
+}
+
 function syncLegacyKeys(audioId) {
   const versions = state.transcriptVersions[audioId] || [];
   const manual = versions.find(v => v.type === 'manual');

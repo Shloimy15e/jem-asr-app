@@ -1,4 +1,4 @@
-import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions } from './state.js';
+import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions, getPipelineStep, getIterationCount } from './state.js';
 import { checkAuth, signOut } from './auth.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
@@ -951,9 +951,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
   const cleaning = state.cleaning[audioId];
   const alignment = state.alignments[audioId];
 
-  // ── Cleaning buttons ──
-  // Returns the text of the currently selected version tab. For manual versions
-  // (or no selection), loads the raw transcript from R2 / Supabase.
+  // ── Shared text helpers ──
   async function getCurrentText() {
     const selectedId = activeVersionRef?.id;
     if (selectedId) {
@@ -963,8 +961,6 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
         return selected.text;
       }
     }
-    // Manual version selected, no version selected, or version has no text yet —
-    // load from the raw transcript record (R2 → Supabase fallback)
     const m = getState().mappings[audioId];
     if (!m) return '';
     const t = getState().transcripts.find(tr => tr.id === m.transcriptId);
@@ -977,25 +973,17 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     return c?.originalText || await getCurrentText();
   }
 
-  // ── Collapsible pipeline tools (cleaning + ASR) ──
-  const toolsDetails = document.createElement('details');
-  toolsDetails.className = 'pipeline-tools-details';
-  const toolsSummary = document.createElement('summary');
-  toolsSummary.className = 'pipeline-tools-summary';
-  toolsSummary.textContent = 'Pipeline Tools (Cleaning & ASR)';
-  toolsDetails.appendChild(toolsSummary);
-  const toolsInner = document.createElement('div');
-  toolsInner.className = 'pipeline-tools-inner';
-  toolsDetails.appendChild(toolsInner);
-  container.appendChild(toolsDetails);
+  // ── Pipeline stepper ──
+  const step = getPipelineStep(audioId);
+  const iterCount = getIterationCount(audioId);
+  container.appendChild(renderPipelineStepper(step, iterCount));
 
-  const cleanLabel = document.createElement('div');
-  cleanLabel.className = 'section-sublabel';
-  cleanLabel.textContent = 'Cleaning — click a pass to preview changes line by line';
-  toolsInner.appendChild(cleanLabel);
+  // ── Progress card (when alignment exists) ──
+  if (alignment) {
+    container.appendChild(renderProgressCard(alignment));
+  }
 
-  const btnBar = document.createElement('div');
-  btnBar.className = 'clean-btn-bar';
+  // ── Step panels ──
   const passes = [
     { label: 'Remove [brackets]',        fn: cleanBrackets },
     { label: 'Remove (parentheses)',      fn: cleanParentheses },
@@ -1006,80 +994,124 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     { label: 'Remove ellipsis (…)',       fn: cleanEllipsis },
     { label: 'Clean whitespace',          fn: cleanWhitespace },
   ];
-  passes.forEach(pass => {
-    const btn = document.createElement('button');
-    btn.className = 'action-btn clean-pass-btn';
-    btn.textContent = pass.label;
-    btn.addEventListener('click', async () => {
-      btn.disabled = true;
-      const origLabel = btn.textContent;
-      btn.textContent = 'Loading...';
-      try {
-        const rawOriginal = await getOriginalText();
-        const currentText = await getCurrentText();
-        const previewText = pass.fn(currentText);
-        openPassPreviewModal(audioId, pass.label, currentText, previewText, rawOriginal, pageContainer);
-      } finally {
-        btn.textContent = origLabel;
-        btn.disabled = false;
-      }
+
+  function buildPassButtons(targetEl) {
+    const btnBar = document.createElement('div');
+    btnBar.className = 'clean-btn-bar';
+    passes.forEach(pass => {
+      const btn = document.createElement('button');
+      btn.className = 'action-btn clean-pass-btn';
+      btn.textContent = pass.label;
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const origLabel = btn.textContent;
+        btn.textContent = 'Loading...';
+        try {
+          const rawOriginal = await getOriginalText();
+          const currentText = await getCurrentText();
+          const previewText = pass.fn(currentText);
+          openPassPreviewModal(audioId, pass.label, currentText, previewText, rawOriginal, pageContainer);
+        } finally {
+          btn.textContent = origLabel;
+          btn.disabled = false;
+        }
+      });
+      btnBar.appendChild(btn);
     });
-    btnBar.appendChild(btn);
-  });
-  const cleanAllBtn = document.createElement('button');
-  cleanAllBtn.className = 'action-btn action-btn-primary clean-pass-btn';
-  cleanAllBtn.textContent = 'Clean All (no preview)';
-  cleanAllBtn.addEventListener('click', async () => {
-    cleanAllBtn.textContent = 'Cleaning...';
-    cleanAllBtn.disabled = true;
-    await batchClean([audioId], getState(), () => {});
-    const s = getState();
-    renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
-  });
-  btnBar.appendChild(cleanAllBtn);
-  toolsInner.appendChild(btnBar);
-
-  // ── ASR Transcription (inside pipeline tools) ──
-  renderAsrSection(audioId, state, toolsInner, pageContainer);
-
-  // ── Alignment button ──
-  const alignBar = document.createElement('div');
-  alignBar.style.cssText = 'display:flex;gap:8px;align-items:center;margin:10px 0;flex-wrap:wrap;';
-
-  const alignBtn = document.createElement('button');
-  alignBtn.className = 'action-btn action-btn-primary';
-  alignBtn.textContent = alignment ? 'Re-Align' : 'Run Alignment';
-  alignBtn.addEventListener('click', async () => {
-    alignBtn.textContent = 'Aligning (may take ~2.5 min)...';
-    alignBtn.disabled = true;
-    try {
-      const textForAlignment = await getCurrentText();
-      const currentVersionId = activeVersionRef?.id || null;
-      await alignRow(audioId, getState(), textForAlignment, currentVersionId);
-    } catch (err) {
-      console.error('[Alignment] Failed for', audioId, ':', err);
-      alignBtn.textContent = `Alignment failed (${err.message}) — click to retry`;
-      alignBtn.disabled = false;
-      return;
-    }
-    const s = getState();
-    renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
-  });
-  alignBar.appendChild(alignBtn);
-
-  if (alignment) {
-    const info = document.createElement('span');
-    info.className = 'text-secondary';
-    info.style.fontSize = '0.82rem';
-    info.textContent = `Avg: ${formatConfidence(alignment.avgConfidence)} | Low: ${alignment.lowConfidenceCount} words`;
-    alignBar.appendChild(info);
+    const cleanAllBtn = document.createElement('button');
+    cleanAllBtn.className = 'action-btn action-btn-primary clean-pass-btn';
+    cleanAllBtn.textContent = 'Clean All (no preview)';
+    cleanAllBtn.addEventListener('click', async () => {
+      cleanAllBtn.textContent = 'Cleaning...';
+      cleanAllBtn.disabled = true;
+      await batchClean([audioId], getState(), () => {});
+      const s = getState();
+      renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
+    });
+    btnBar.appendChild(cleanAllBtn);
+    targetEl.appendChild(btnBar);
   }
-  container.appendChild(alignBar);
 
-  // ── Unified Word View (diff + karaoke in one) ──
-  if (cleaning || alignment) {
+  function buildAlignButton(targetEl) {
+    const alignBar = document.createElement('div');
+    alignBar.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;';
+    const alignBtn = document.createElement('button');
+    alignBtn.className = 'action-btn action-btn-primary';
+    alignBtn.textContent = alignment ? 'Re-Align' : 'Run Alignment';
+    alignBtn.addEventListener('click', async () => {
+      alignBtn.textContent = 'Aligning (may take ~2.5 min)...';
+      alignBtn.disabled = true;
+      try {
+        const textForAlignment = await getCurrentText();
+        const currentVersionId = activeVersionRef?.id || null;
+        await alignRow(audioId, getState(), textForAlignment, currentVersionId);
+      } catch (err) {
+        console.error('[Alignment] Failed for', audioId, ':', err);
+        alignBtn.textContent = `Alignment failed (${err.message}) — click to retry`;
+        alignBtn.disabled = false;
+        return;
+      }
+      const s = getState();
+      renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
+    });
+    alignBar.appendChild(alignBtn);
+    if (alignment) {
+      const info = document.createElement('span');
+      info.className = 'text-secondary';
+      info.style.fontSize = '0.82rem';
+      info.textContent = `Avg: ${formatConfidence(alignment.avgConfidence)} | Low: ${alignment.lowConfidenceCount} words`;
+      alignBar.appendChild(info);
+    }
+    targetEl.appendChild(alignBar);
+  }
+
+  // ── STEP: clean ── show cleaning tools + ASR, next-step CTA → Align
+  if (step === 'clean' || step === 'align') {
+    const cleanSection = document.createElement('div');
+    cleanSection.style.cssText = 'margin-bottom:16px;';
+
+    const cleanLabel = document.createElement('div');
+    cleanLabel.className = 'section-sublabel';
+    cleanLabel.textContent = 'Cleaning — click a pass to preview changes line by line';
+    cleanSection.appendChild(cleanLabel);
+
+    buildPassButtons(cleanSection);
+
+    // ASR Transcription
+    renderAsrSection(audioId, state, cleanSection, pageContainer);
+
+    container.appendChild(cleanSection);
+
+    // ── Align section (always shown below cleaning) ──
+    const alignSection = document.createElement('div');
+    alignSection.style.cssText = 'margin-top:10px;';
+    buildAlignButton(alignSection);
+    container.appendChild(alignSection);
+
+    // Next Step CTA: if cleaned text exists but no alignment yet
+    if (step === 'align') {
+      const nextBar = document.createElement('div');
+      nextBar.className = 'next-step-bar';
+      const hint = document.createElement('span');
+      hint.className = 'text-secondary';
+      hint.style.fontSize = '0.82rem';
+      hint.textContent = 'Text is cleaned — run alignment to get word timestamps.';
+      nextBar.appendChild(hint);
+      container.appendChild(nextBar);
+    } else {
+      // Step is 'clean' — show hint
+      const hint = document.createElement('div');
+      hint.className = 'text-secondary';
+      hint.style.cssText = 'margin-top:8px;font-size:0.82rem;';
+      hint.textContent = 'Start by running "Clean All" or individual passes, then run alignment.';
+      container.appendChild(hint);
+    }
+  }
+
+  // ── STEP: review or approved ── show word view + re-clean / re-align shortcuts
+  if (step === 'review' || step === 'approved') {
+    // Word view
     if (alignment && !alignment.words) {
-      // Words not loaded at startup — fetch lazily
       const placeholder = document.createElement('div');
       placeholder.className = 'text-secondary';
       placeholder.style.cssText = 'padding:12px;font-size:0.9rem;';
@@ -1091,9 +1123,108 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
         placeholder.remove();
         renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl, activeVersionRef);
       });
-    } else {
+    } else if (alignment) {
       renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef);
     }
+
+    // ── Re-work section: Re-Clean + Re-Align shortcuts ──
+    const reworkBar = document.createElement('div');
+    reworkBar.className = 'next-step-bar';
+    reworkBar.style.cssText = 'flex-direction:column;align-items:flex-start;gap:10px;';
+
+    const reworkLabel = document.createElement('div');
+    reworkLabel.className = 'section-sublabel';
+    reworkLabel.style.marginBottom = '0';
+    reworkLabel.textContent = 'Start another round';
+    reworkBar.appendChild(reworkLabel);
+
+    const reworkBtns = document.createElement('div');
+    reworkBtns.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;';
+
+    // Quick Re-Clean dropdown
+    const quickCleanWrap = document.createElement('div');
+    quickCleanWrap.className = 'quick-clean-wrap';
+
+    const quickCleanBtn = document.createElement('button');
+    quickCleanBtn.className = 'action-btn';
+    quickCleanBtn.innerHTML = 'Re-Clean ▾';
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'quick-clean-dropdown';
+
+    passes.forEach(pass => {
+      const item = document.createElement('button');
+      item.className = 'quick-clean-item';
+      item.textContent = pass.label;
+      item.addEventListener('click', async () => {
+        dropdown.classList.remove('open');
+        item.textContent = 'Running...';
+        item.disabled = true;
+        try {
+          const rawOriginal = await getOriginalText();
+          const currentText = await getCurrentText();
+          const previewText = pass.fn(currentText);
+          openPassPreviewModal(audioId, pass.label, currentText, previewText, rawOriginal, pageContainer);
+        } finally {
+          item.textContent = pass.label;
+          item.disabled = false;
+        }
+      });
+      dropdown.appendChild(item);
+    });
+
+    const divider = document.createElement('hr');
+    divider.className = 'quick-clean-divider';
+    dropdown.appendChild(divider);
+
+    const cleanAllItem = document.createElement('button');
+    cleanAllItem.className = 'quick-clean-item';
+    cleanAllItem.textContent = 'Clean All (no preview)';
+    cleanAllItem.addEventListener('click', async () => {
+      dropdown.classList.remove('open');
+      cleanAllItem.textContent = 'Cleaning...';
+      cleanAllItem.disabled = true;
+      await batchClean([audioId], getState(), () => {});
+      const s = getState();
+      renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
+    });
+    dropdown.appendChild(cleanAllItem);
+
+    quickCleanWrap.appendChild(quickCleanBtn);
+    quickCleanWrap.appendChild(dropdown);
+
+    quickCleanBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dropdown.classList.toggle('open');
+    });
+    document.addEventListener('click', () => dropdown.classList.remove('open'), { once: false, capture: false });
+
+    reworkBtns.appendChild(quickCleanWrap);
+
+    // Re-Align button
+    const reAlignBtn = document.createElement('button');
+    reAlignBtn.className = 'action-btn action-btn-primary';
+    reAlignBtn.textContent = 'Re-Align';
+    reAlignBtn.addEventListener('click', async () => {
+      reAlignBtn.textContent = 'Aligning...';
+      reAlignBtn.disabled = true;
+      try {
+        const textForAlignment = await getCurrentText();
+        const currentVersionId = activeVersionRef?.id || null;
+        await alignRow(audioId, getState(), textForAlignment, currentVersionId);
+      } catch (err) {
+        console.error('[Alignment] Failed for', audioId, ':', err);
+        reAlignBtn.textContent = `Failed — click to retry`;
+        reAlignBtn.disabled = false;
+        return;
+      }
+      const s = getState();
+      renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
+    });
+    reworkBtns.appendChild(reAlignBtn);
+
+    reworkBar.appendChild(reworkBtns);
+    container.appendChild(reworkBar);
   }
 
   // ── Compare Versions button ──
@@ -1110,13 +1241,106 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     compareBar.appendChild(compareBtn);
     container.appendChild(compareBar);
   } else if (alignedVersions.length === 1 && alignment) {
-    // Only one version has alignment stored on it — hint to align another
     const hint = document.createElement('div');
     hint.className = 'text-secondary';
     hint.style.cssText = 'margin-top:8px;font-size:0.82rem;';
     hint.textContent = 'Tip: Edit the text, align again, then compare both aligned versions side by side.';
     container.appendChild(hint);
   }
+}
+
+function renderPipelineStepper(step, iterCount) {
+  const steps = [
+    { id: 'clean',    label: 'Clean',   num: '1' },
+    { id: 'align',    label: 'Align',   num: '2' },
+    { id: 'review',   label: 'Review',  num: '3' },
+    { id: 'approved', label: 'Approve', num: '✓' },
+  ];
+  const order = steps.map(s => s.id);
+  const activeIdx = order.indexOf(step);
+
+  const stepper = document.createElement('div');
+  stepper.className = 'pipeline-stepper';
+
+  steps.forEach((s, i) => {
+    const stepEl = document.createElement('div');
+    const isCompleted = i < activeIdx;
+    const isActive = i === activeIdx;
+    stepEl.className = 'pipeline-step' + (isActive ? ' active' : '') + (isCompleted ? ' completed' : '');
+
+    const circle = document.createElement('div');
+    circle.className = 'pipeline-step-circle';
+    circle.textContent = isCompleted ? '✓' : s.num;
+
+    const label = document.createElement('div');
+    label.className = 'pipeline-step-label';
+    label.textContent = s.label;
+
+    stepEl.appendChild(circle);
+    stepEl.appendChild(label);
+    stepper.appendChild(stepEl);
+
+    if (i < steps.length - 1) {
+      const connector = document.createElement('div');
+      connector.className = 'pipeline-connector' + (isCompleted ? ' completed' : '');
+      stepper.appendChild(connector);
+    }
+  });
+
+  if (iterCount > 1) {
+    const badge = document.createElement('div');
+    badge.className = 'pipeline-iteration-badge';
+    badge.textContent = `Round ${iterCount}`;
+    stepper.appendChild(badge);
+  }
+
+  return stepper;
+}
+
+function renderProgressCard(alignment) {
+  const card = document.createElement('div');
+  card.className = 'pipeline-progress-card';
+
+  const words = alignment.words ?? [];
+  const total = words.length;
+  const highConf = words.filter(w => (w.confidence ?? w.probability ?? w.score ?? 0) >= 0.8).length;
+  const pct = total > 0 ? Math.round((highConf / total) * 100) : 0;
+  const low = alignment.lowConfidenceCount ?? 0;
+
+  const header = document.createElement('div');
+  header.className = 'pipeline-progress-header';
+
+  const statConf = document.createElement('span');
+  statConf.className = 'pipeline-progress-stat';
+  statConf.innerHTML = `<strong>${pct}%</strong> high-confidence words`;
+  header.appendChild(statConf);
+
+  if (low > 0) {
+    const statLow = document.createElement('span');
+    statLow.className = 'pipeline-progress-stat';
+    statLow.innerHTML = `&nbsp;·&nbsp;<strong style="color:var(--red)">${low}</strong> low-confidence`;
+    header.appendChild(statLow);
+  }
+
+  if (alignment.alignedAt) {
+    const statDate = document.createElement('span');
+    statDate.className = 'pipeline-progress-stat';
+    statDate.style.marginLeft = 'auto';
+    statDate.textContent = `Aligned ${new Date(alignment.alignedAt).toLocaleDateString()}`;
+    header.appendChild(statDate);
+  }
+
+  card.appendChild(header);
+
+  const barWrap = document.createElement('div');
+  barWrap.className = 'pipeline-progress-bar-wrap';
+  const barFill = document.createElement('div');
+  barFill.className = 'pipeline-progress-bar-fill' + (pct >= 80 ? '' : pct >= 50 ? ' bar-mid' : ' bar-low');
+  barFill.style.width = pct + '%';
+  barWrap.appendChild(barFill);
+  card.appendChild(barWrap);
+
+  return card;
 }
 
 function renderCompareView(audioId, alignedVersions, container, pageContainer, playerEl) {
