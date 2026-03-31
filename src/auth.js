@@ -5,6 +5,8 @@ const supabase = createClient(
   import.meta.env.VITE_SUPABASE_ANON_KEY,
 );
 
+let _currentUser = null;
+
 // Redirects to /login.html if no active session. Returns the session if valid.
 export async function checkAuth() {
   const { data: { session } } = await supabase.auth.getSession();
@@ -12,7 +14,13 @@ export async function checkAuth() {
     window.location.href = '/login.html';
     return null;
   }
+  _currentUser = session.user;
   return session;
+}
+
+// Returns the email of the currently authenticated user, or 'user' as fallback.
+export function getCurrentUser() {
+  return _currentUser?.email || _currentUser?.id || 'user';
 }
 
 export async function signIn(email, password) {

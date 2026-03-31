@@ -1,5 +1,5 @@
 import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions, getPipelineStep, getIterationCount } from './state.js';
-import { checkAuth, signOut } from './auth.js';
+import { checkAuth, signOut, getCurrentUser } from './auth.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
 import { alignRow, transcribeAudio } from './alignment.js';
@@ -469,7 +469,7 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
               parentVersionId: version.id,
               sourceTranscriptId: version.sourceTranscriptId,
               text,
-              createdBy: 'user',
+              createdBy: getCurrentUser(),
             });
             const s = getState();
             renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
@@ -488,7 +488,7 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
               parentVersionId: version.id,
               sourceTranscriptId: version.sourceTranscriptId || manual?.sourceTranscriptId,
               text: newText,
-              createdBy: 'user',
+              createdBy: getCurrentUser(),
             });
             const s = getState();
             const audio = s.audio.find(a => a.id === audioId);
@@ -620,7 +620,7 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       addVersion(audioId, {
         type: 'manual',
         text: '',
-        createdBy: 'user',
+        createdBy: getCurrentUser(),
       });
       const s = getState();
       // Create a synthetic mapping so the pipeline can proceed
@@ -629,7 +629,7 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
           transcriptId: null,
           confidence: 1.0,
           matchReason: 'created-from-scratch',
-          confirmedBy: 'user',
+          confirmedBy: getCurrentUser(),
           confirmedAt: new Date().toISOString(),
         });
       }
@@ -846,7 +846,7 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
         text: finalText,
         originalText: rawOriginal,
         cleanRate: calculateCleanRate(rawOriginal, finalText),
-        createdBy: 'user',
+        createdBy: getCurrentUser(),
       });
     }
     closeModal();
@@ -1248,7 +1248,14 @@ function renderIterationHistory(audioId, container, pageContainer, playerEl) {
     const low = v.alignment?.lowConfidenceCount ?? '?';
     const date = v.alignment?.alignedAt ? new Date(v.alignment.alignedAt).toLocaleDateString() : '';
     const typeLabel = v.type === 'manual' ? 'original' : v.type;
-    detail.textContent = `${conf} avg · ${low} low · ${typeLabel}${date ? ' · ' + date : ''}`;
+    const byLabel = v.createdBy && v.createdBy !== 'system' && v.createdBy !== 'imported' ? v.createdBy : '';
+    detail.textContent = [
+      `${conf} avg`,
+      `${low} low`,
+      typeLabel,
+      byLabel,
+      date,
+    ].filter(Boolean).join(' · ');
 
     const actions = document.createElement('span');
     actions.className = 'iteration-row-actions';
@@ -1296,14 +1303,16 @@ function renderApproveBar(audioId, container) {
 
   function sync() {
     const s = getState();
-    const isApproved = s.reviews?.[audioId]?.status === 'approved';
+    const review = s.reviews?.[audioId];
+    const isApproved = review?.status === 'approved';
     approveBtn.textContent = isApproved ? '✓ Approved for Training' : 'Approve for Training';
     approveBtn.className = isApproved
       ? 'btn btn-secondary seg-approve-btn'
       : 'btn btn-primary seg-approve-btn';
     if (isApproved) {
-      const at = s.reviews[audioId].reviewedAt;
-      approveStatus.textContent = at ? 'Approved ' + new Date(at).toLocaleDateString() : 'Approved';
+      const date = review.reviewedAt ? new Date(review.reviewedAt).toLocaleDateString() : '';
+      const by = review.approvedBy || '';
+      approveStatus.textContent = [by, date ? 'on ' + date : ''].filter(Boolean).join(' ');
     } else {
       approveStatus.textContent = '';
     }
@@ -1316,7 +1325,7 @@ function renderApproveBar(audioId, container) {
     if (isApproved) {
       updateState('reviews', audioId, { ...s.reviews[audioId], status: 'rejected', reviewedAt: new Date().toISOString() });
     } else {
-      updateState('reviews', audioId, { status: 'approved', reviewedAt: new Date().toISOString() });
+      updateState('reviews', audioId, { status: 'approved', approvedBy: getCurrentUser(), reviewedAt: new Date().toISOString() });
     }
     sync();
   });
@@ -1839,7 +1848,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       saveBtn.className = 'btn btn-secondary';
       saveBtn.textContent = 'Save Cleaned Text as Edited Version';
       saveBtn.addEventListener('click', () => {
-        addVersion(audioId, { type: 'edited', text: cleaning.cleanedText, alignment: alignment || undefined, createdBy: 'user-review' });
+        addVersion(audioId, { type: 'edited', text: cleaning.cleanedText, alignment: alignment || undefined, createdBy: getCurrentUser() });
         const s = getState();
         renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
       });
@@ -2092,7 +2101,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     saveBtn.className = 'btn btn-secondary';
     saveBtn.textContent = 'Save Cleaned Text as Edited Version';
     saveBtn.addEventListener('click', () => {
-      addVersion(audioId, { type: 'edited', text: cleaning.cleanedText, alignment: alignment || undefined, createdBy: 'user-review' });
+      addVersion(audioId, { type: 'edited', text: cleaning.cleanedText, alignment: alignment || undefined, createdBy: getCurrentUser() });
       const s = getState();
       renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
     });

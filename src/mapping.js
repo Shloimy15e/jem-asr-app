@@ -1,5 +1,6 @@
 import { getState, updateState } from './state.js';
 import { deleteMapping } from './db.js';
+import { getCurrentUser } from './auth.js';
 import { truncateWords, formatConfidence } from './utils.js';
 
 const CONTENT_TYPES = ['sicha', 'maamar', 'farbrengen'];
@@ -132,7 +133,7 @@ export function linkMatch(audioId, transcriptId, score, reason) {
     transcriptId,
     confidence: score,
     matchReason: reason,
-    confirmedBy: 'user',
+    confirmedBy: getCurrentUser(),
     confirmedAt: new Date().toISOString(),
   });
 }
