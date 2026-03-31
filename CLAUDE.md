@@ -321,6 +321,12 @@ The app enforces: no "Approve" button on these rows (both UI and `approveAll()` 
 ### Non-JEM library IDs break the `byId` sort
 The startup sort in `db.js` originally used `parseInt(a.id.slice(2))` which assumed JEM-format IDs like `0016` (all-numeric). IDs like `satmar-001` slice to `tmar-001` → `NaN`, causing the sort to produce an empty-looking array and the app to show "Failed to load data." Fixed: `byId` now does `parseInt(a.id)` (full string) for numeric IDs, falling back to lexicographic comparison — so any library with non-numeric IDs works correctly.
 
+### Default filter is 'fifty' — shows nothing in libraries with no 50hr files
+`table.js` defaults `currentFilter = 'fifty'`, which only shows `is_selected_50hr = true` files. Libraries like `satmar` and `training` have no 50hr files, so the table appeared empty. Fixed in `app.js`: after loading, if `remote.audio.some(a => a.isSelected50hr)` is false, `renderTable` is called with `filter: 'all'`. JEM Media is unaffected (it has 200 50hr files).
+
+### Transcript proxy uses filename-only by default — breaks for non-standard paths
+`/api/transcript?name=` originally extracted just the filename from `r2TranscriptLink` and prepended `audio.kohnai.ai/transcripts-txt/`. For new libraries whose transcripts live at custom paths (e.g. `hoshana-5710/transcripts/transcript.txt`), this produces a wrong URL. Fixed: `loadFullText` in `detail.js` now passes `?name=<full-path>&domain=<host>` to the proxy. The proxy (`functions/api/transcript.js`) treats `name` as the full path when `domain` is explicitly provided, constructing `https://<domain>/<name>` directly.
+
 ### R2 custom domain (audio.kohnai.ai) only serves pre-existing objects
 New objects uploaded to the `jem-asr-audio` R2 bucket via `wrangler r2 object put` do NOT appear at `audio.kohnai.ai` — they return 404 even though they exist in the bucket. The `r2.dev` public URL (`pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev`) works for all objects. New library audio files should use the `r2.dev` URL in their `r2_link` column. The `ALLOWED_R2_DOMAINS` Pages secret includes both domains: `audio.kohnai.ai,pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev`.
 
