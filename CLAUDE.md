@@ -361,12 +361,28 @@ Speed buttons appear in two places, using the `.speed-btn` / `.word-view-speed-b
 
 Both use a shared `renderSpeedBar(playerEl, speeds)` helper in `detail.js`. They set `audioElement.playbackRate` and toggle the `.active` class on the clicked button.
 
-### Word view inline word editing
-In `detail.js` `renderWordView()`, an **"Edit Words"** toggle button switches between play mode and edit mode:
-- Edit mode: clicking a chip opens an inline `<input>`; Tab advances to next word; Enter/Escape commits/cancels
-- A bulk RTL textarea shows all words space-joined; "Apply Text to Words" maps back by position (warns on count mismatch)
-- "Save Word Edits" calls `updateState('alignments', audioId, { ...alignment, words: editModeWords })` AND `setVersionAlignment()` to sync the active version's alignment, AND `updateVersion(audioId, versionId, { text: newText })` to rebuild the version's text string from the final words array so the transcript tab reflects the edits
-- Seek-click handlers are stored as `chip._seekHandler` and disabled/restored on mode toggle
+### Word view inline word editing (always-on, auto-save)
+In `detail.js` `renderWordView()`, word chips are **always directly editable** — there is no "Edit Words" toggle or "Save Word Edits" button:
+- Click any chip → opens inline `<input>`; Tab advances to next word; Enter/Escape commits/cancels; Delete on empty input deletes the word
+- After every commit (word edit, delete, or insert), `scheduleAutoSave()` fires a 1.5s debounced `commitEdits()` that persists changes to state + Supabase
+- A bulk RTL textarea below the chips shows all words space-joined; it auto-applies on blur (no button). Same-count edits preserve timestamps; different count redistributes timestamps evenly across the segment time range
+- `commitEdits()` rebuilds the final word array from `editModeWords` + `insertions`, calls `updateState('alignments', ...)`, `setVersionAlignment()`, and `updateVersion(audioId, versionId, { text: newText })`
+- `editMode` is a `const = true` — all chip rendering always uses edit affordances; do not add a mode toggle back
+
+### Pipeline stepper and iterative cleaning workflow
+`renderUnifiedWorkSection()` in `detail.js` renders all pipeline tools unconditionally (no step-gating):
+1. **Pipeline stepper** — `renderPipelineStepper(step, iterCount)` shows Clean→Align→Review→Approve with green/active/gray states. `getPipelineStep(audioId)` derives the step from version data. Shows "Round N" badge when `getIterationCount() > 1`.
+2. **Progress card** — `renderProgressCard(alignment)` shows % high-confidence words + color bar (green ≥80%, orange ≥50%, red <50%) when alignment exists.
+3. **Cleaning section** — always visible (8 pass buttons + Clean All + ASR section).
+4. **Align button** — always visible.
+5. **Word view** — shown when alignment exists; dashed placeholder when not.
+6. **Iteration History** — `renderIterationHistory()` renders a collapsible list of all aligned versions (v1, v2...) with confidence, date, `createdBy`. Each non-current row has "Compare with current" linking to `renderCompareView`.
+7. **Approve bar** — `renderApproveBar(audioId, container)` standalone function (extracted from `renderWordView`); always shown below word view. Stores `approvedBy: getCurrentUser()` on approve.
+
+**Iteration numbering:** Each version has an `iteration: number` field. `getNextIteration(audioId)` returns `max(iteration) + 1`. `batchClean()` bumps the iteration when re-cleaning after an alignment already exists. `migrateToVersions()` assigns `iteration: 1` to all legacy versions.
+
+### User attribution
+`src/auth.js` exports `getCurrentUser()` which returns the logged-in user's email (cached from `checkAuth()`). All user-initiated version creates use `createdBy: getCurrentUser()` instead of hardcoded `'user'`. Mapping uses `confirmedBy: getCurrentUser()`. The approve bar stores `approvedBy: getCurrentUser()` and displays "email on date".
 
 ### Word view export buttons (SRT / VTT / Karaoke HTML)
 Three export buttons appear in the word view toolbar: **SRT**, **VTT**, and **🎤 Karaoke**.
