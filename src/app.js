@@ -72,6 +72,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const state = initState({ audio: remote.audio, transcripts: remote.transcripts });
   mergeSupabaseData(remote);
 
+  // If no 50hr files in this library, default filter to 'all'
+  const has50hr = remote.audio.some(a => a.isSelected50hr);
+
   const modalOverlay = document.getElementById('modal-overlay');
   const modalContent = document.getElementById('modal-content');
   const modalClose = document.getElementById('modal-close');
@@ -286,6 +289,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderTable(tableContainer, {
     onRowExpand,
     onRowSelect: () => updateBulkCleanBtn(),
+    filter: has50hr ? 'fifty' : 'all',
   });
 
   // Initialize button state
