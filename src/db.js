@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { getActiveLibrary } from './auth.js';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -23,6 +24,7 @@ function toAudioRow(a) {
     type: a.type || null,
     is_selected_50hr: a.isSelected50hr || false,
     is_benchmark: a.isBenchmark || false,
+    library_id: getActiveLibrary() || 'jemedia',
   };
 }
 
@@ -51,6 +53,7 @@ export async function syncMapping(audioId, mapping, audioEntry) {
       match_reason: mapping.matchReason,
       confirmed_by: mapping.confirmedBy,
       // confirmed_at is not a column — created_at is auto-set on insert
+      library_id: getActiveLibrary() || 'jemedia',
     },
     { onConflict: 'audio_id' },
   );
@@ -74,6 +77,7 @@ export async function syncCleaning(audioId, cleaningData, audioEntry) {
       clean_rate: cleaningData.cleanRate,
       created_at: cleaningData.cleanedAt || new Date().toISOString(),
       created_by: 'system',
+      library_id: getActiveLibrary() || 'jemedia',
     },
     { onConflict: 'audio_id,version' },
   );
@@ -90,6 +94,7 @@ export async function syncEdited(audioId, text, audioEntry) {
       text,
       created_at: new Date().toISOString(),
       created_by: 'user',
+      library_id: getActiveLibrary() || 'jemedia',
     },
     { onConflict: 'audio_id,version' },
   );
@@ -108,6 +113,7 @@ export async function syncAsr(audioId, text, modelName, audioEntry) {
       text,
       created_at: new Date().toISOString(),
       created_by: modelName || 'asr',
+      library_id: getActiveLibrary() || 'jemedia',
     },
     { onConflict: 'audio_id,version' },
   );
@@ -124,6 +130,7 @@ export async function syncAlignment(audioId, alignmentData, audioEntry) {
       avg_confidence: alignmentData.avgConfidence,
       low_confidence_count: alignmentData.lowConfidenceCount,
       aligned_at: alignmentData.alignedAt,
+      library_id: getActiveLibrary() || 'jemedia',
     },
     { onConflict: 'audio_id' },
   );
@@ -139,6 +146,7 @@ export async function syncReview(audioId, reviewData, audioEntry) {
       status: reviewData.status,
       edited_text: reviewData.editedText || null,
       reviewed_at: reviewData.reviewedAt,
+      library_id: getActiveLibrary() || 'jemedia',
     },
     { onConflict: 'audio_id' },
   );
@@ -223,6 +231,7 @@ export async function bulkSyncAudioFiles(audioArray) {
       ...toAudioRow(a),
       // Seeding includes duration — detail page will correct later if needed
       duration_minutes: a.estMinutes || null,
+      library_id: getActiveLibrary() || 'jemedia',
     }));
     const { error } = await supabase.from('audio_files').upsert(rows, { onConflict: 'id' });
     if (error) console.warn('[DB] bulkSyncAudioFiles:', error.message);
@@ -240,6 +249,7 @@ export async function bulkSyncTranscripts(transcriptArray) {
       first_line: t.firstLine || null,
       drive_link: t.driveLink || null,
       r2_transcript_link: t.r2TranscriptLink || null,
+      library_id: getActiveLibrary() || 'jemedia',
     }));
     const { error } = await supabase.from('transcripts').upsert(rows, { onConflict: 'id' });
     if (error) console.warn('[DB] bulkSyncTranscripts:', error.message);
@@ -296,6 +306,7 @@ export async function splitTranscript(originalId) {
       r2_transcript_link: orig.r2_transcript_link,
       text: orig.text || null,
       source_transcript_id: orig.source_transcript_id || originalId,
+      library_id: getActiveLibrary() || 'jemedia',
     })
     .select()
     .single();
@@ -323,6 +334,7 @@ export async function bulkSyncMappings(mappingsObj) {
     match_reason: m.matchReason,
     confirmed_by: m.confirmedBy,
     // no confirmed_at column — created_at is auto-set
+    library_id: getActiveLibrary() || 'jemedia',
   }));
   for (let i = 0; i < rows.length; i += CHUNK) {
     // onConflict: don't overwrite user-confirmed mappings with imported ones
@@ -336,12 +348,15 @@ export async function bulkSyncMappings(mappingsObj) {
 
 // ── Bulk load from Supabase on startup ──────────────────────────────
 // Fetch all rows from a table, paginating through Supabase's 1000-row server limit.
-async function fetchAll(table, columns = '*') {
+// When libraryId is provided, filters rows to that library only.
+async function fetchAll(table, columns = '*', libraryId = null) {
   const PAGE = 1000;
   let all = [];
   let from = 0;
   while (true) {
-    const { data, error } = await supabase.from(table).select(columns).range(from, from + PAGE - 1);
+    let query = supabase.from(table).select(columns).range(from, from + PAGE - 1);
+    if (libraryId) query = query.eq('library_id', libraryId);
+    const { data, error } = await query;
     if (error) { console.warn(`[DB] fetchAll ${table}:`, error.message); break; }
     if (!data || data.length === 0) break;
     all = all.concat(data);
@@ -353,8 +368,10 @@ async function fetchAll(table, columns = '*') {
 
 // Returns the full catalog (audio + transcripts arrays) plus all work data.
 // This is now the PRIMARY source — app.js no longer uses data.json.
+// libraryId defaults to the active library from auth context.
 
-export async function loadFromSupabase() {
+export async function loadFromSupabase(libraryId = null) {
+  const lib = libraryId || getActiveLibrary();
   try {
     const [
       audioData,
@@ -364,12 +381,12 @@ export async function loadFromSupabase() {
       reviewsData,
       editsData,
     ] = await Promise.all([
-      fetchAll('audio_files'),
-      fetchAll('transcripts', 'id,name,year,month,day,first_line,drive_link,r2_transcript_link,source_transcript_id'),
-      fetchAll('mappings'),
-      fetchAll('alignments', 'audio_id,avg_confidence,low_confidence_count,aligned_at'),
-      fetchAll('reviews'),
-      fetchAll('transcript_edits'),
+      fetchAll('audio_files', '*', lib),
+      fetchAll('transcripts', 'id,name,year,month,day,first_line,drive_link,r2_transcript_link,source_transcript_id', lib),
+      fetchAll('mappings', '*', lib),
+      fetchAll('alignments', 'audio_id,avg_confidence,low_confidence_count,aligned_at', lib),
+      fetchAll('reviews', '*', lib),
+      fetchAll('transcript_edits', '*', lib),
     ]);
 
     // errors are logged inside fetchAll

@@ -1,5 +1,5 @@
 import { initState, getState, getStatus, exportState, importState, mergeSupabaseData } from './state.js';
-import { checkAuth, signOut } from './auth.js';
+import { checkAuth, signOut, getUserLibraries, getActiveLibrary, setActiveLibrary } from './auth.js';
 import { loadFromSupabase } from './db.js';
 import { renderTable, updateTable, getSelectedRows } from './table.js';
 import { renderSuggestedMatches, linkMatch, renderSearchModal } from './mapping.js';
@@ -18,11 +18,40 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('btn-logout')?.addEventListener('click', signOut);
 
+  // Load library memberships and wire the selector
+  const libraries = await getUserLibraries();
+  if (libraries.length === 0) {
+    document.getElementById('table-container').innerHTML =
+      '<div style="padding:2rem;text-align:center;color:#f87171;">You have no library access. Contact an administrator.</div>';
+    return;
+  }
+
+  const activeLib = getActiveLibrary();
+  const activeLibConfig = libraries.find(l => l.id === activeLib) || libraries[0];
+  document.getElementById('app-title').textContent = `${activeLibConfig.name} ASR Workbench`;
+  document.title = `${activeLibConfig.name} ASR Workbench`;
+
+  const libSelector = document.getElementById('library-selector');
+  if (libraries.length > 1) {
+    for (const lib of libraries) {
+      const opt = document.createElement('option');
+      opt.value = lib.id;
+      opt.textContent = lib.name;
+      if (lib.id === activeLib) opt.selected = true;
+      libSelector.appendChild(opt);
+    }
+    libSelector.style.display = '';
+    libSelector.addEventListener('change', () => {
+      setActiveLibrary(libSelector.value);
+      location.reload();
+    });
+  }
+
   const tableContainer = document.getElementById('table-container');
-  tableContainer.innerHTML = '<div style="padding:3rem;text-align:center;color:var(--text-secondary,#8888aa)">Loading from Supabase…</div>';
+  tableContainer.innerHTML = '<div class="loading-state">Loading…</div>';
 
   // Supabase is the single source of truth — no data.json needed
-  const remote = await loadFromSupabase();
+  const remote = await loadFromSupabase(activeLib);
   if (!remote?.audio?.length) {
     tableContainer.innerHTML = '<div style="padding:2rem;text-align:center;color:#f87171;">Failed to load data from Supabase. Please refresh.</div>';
     return;

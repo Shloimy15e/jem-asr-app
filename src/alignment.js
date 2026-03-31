@@ -1,4 +1,5 @@
 import { updateState, setVersionAlignment } from './state.js';
+import { isLibraryR2Url } from './auth.js';
 
 const ALIGN_ENDPOINT = '/api/align';
 
@@ -59,7 +60,7 @@ async function fetchAudioForAlignment(url, trimStart, trimEnd, audioDuration) {
 
   // For all R2 audio (trimmed or not), pass the URL to the CF Worker.
   // The Worker fetches from R2 with no inbound size limit and handles trimming server-side.
-  if (url.includes('audio.kohnai.ai')) {
+  if (isLibraryR2Url(url)) {
     return { audioUrl: url, trimStart: hasTrim ? trimStart : undefined, trimEnd: hasTrim ? trimEnd : undefined, audioDuration: hasTrim ? audioDuration : undefined };
   }
 

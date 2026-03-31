@@ -7,6 +7,15 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
+// Returns the set of allowed R2 hostnames.
+// Reads ALLOWED_R2_DOMAINS env var (comma-separated) if set; falls back to default.
+function getAllowedDomains(env) {
+  if (env?.ALLOWED_R2_DOMAINS) {
+    return env.ALLOWED_R2_DOMAINS.split(',').map(d => d.trim()).filter(Boolean);
+  }
+  return ['audio.kohnai.ai'];
+}
+
 export async function onRequestOptions() {
   return new Response(null, { headers: CORS_HEADERS });
 }
@@ -19,11 +28,12 @@ export async function onRequestGet(context) {
     return new Response('Missing ?url= parameter', { status: 400 });
   }
 
-  // Only allow proxying from audio.kohnai.ai
+  // Only allow proxying from approved R2 domains
   try {
     const parsed = new URL(url);
-    if (parsed.hostname !== 'audio.kohnai.ai') {
-      return new Response('Forbidden: only audio.kohnai.ai URLs allowed', { status: 403 });
+    const allowedDomains = getAllowedDomains(context.env);
+    if (!allowedDomains.includes(parsed.hostname)) {
+      return new Response('Forbidden: URL domain not in allowed list', { status: 403 });
     }
     if (parsed.protocol !== 'https:') {
       return new Response('Forbidden: only https URLs allowed', { status: 400 });

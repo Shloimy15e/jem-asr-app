@@ -1,10 +1,27 @@
 import { syncStateKey, syncEdited, syncAsr } from './db.js';
+import { getActiveLibrary } from './auth.js';
 
-const STORAGE_KEY = 'jem-asr-state';
+// Per-library localStorage key so switching libraries never mingles data.
+// Falls back to the legacy key when no library context is set yet.
+function getStorageKey() {
+  const lib = getActiveLibrary();
+  return lib ? `asr-state-${lib}` : 'jem-asr-state';
+}
 
 let state = null;
 
 export function initState(data) {
+  // One-time migration: move old 'jem-asr-state' key to the library-scoped key
+  // when the active library is 'jemedia' and the new key doesn't exist yet.
+  const activeLib = getActiveLibrary();
+  if (activeLib === 'jemedia') {
+    const legacy = localStorage.getItem('jem-asr-state');
+    const newKey = 'asr-state-jemedia';
+    if (legacy && !localStorage.getItem(newKey)) {
+      localStorage.setItem(newKey, legacy);
+      localStorage.removeItem('jem-asr-state');
+    }
+  }
   const saved = loadFromStorage();
   state = {
     audio: data.audio || [],
@@ -549,7 +566,8 @@ export function exportState() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `jem-asr-state-${new Date().toISOString().slice(0, 10)}.json`;
+  const lib = getActiveLibrary() || 'asr';
+  a.download = `${lib}-state-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -607,7 +625,7 @@ function saveToStorage() {
       trims: state.trims,
       audioNames: state.audioNames,
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(persist));
+    localStorage.setItem(getStorageKey(), JSON.stringify(persist));
   } catch (e) {
     console.warn('Failed to save state to localStorage:', e);
   }
@@ -615,7 +633,7 @@ function saveToStorage() {
 
 function loadFromStorage() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(getStorageKey());
     return raw ? JSON.parse(raw) : {};
   } catch (e) {
     console.warn('Failed to load state from localStorage:', e);

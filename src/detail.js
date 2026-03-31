@@ -1,5 +1,5 @@
 import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions, getPipelineStep, getIterationCount } from './state.js';
-import { checkAuth, signOut, getCurrentUser } from './auth.js';
+import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, setActiveLibrary, getActiveLibraryConfig, isLibraryR2Url } from './auth.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
 import { alignRow, transcribeAudio } from './alignment.js';
@@ -47,6 +47,30 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('btn-logout')?.addEventListener('click', signOut);
 
+  // Load library memberships and wire the selector
+  const libraries = await getUserLibraries();
+  const activeLib = getActiveLibrary();
+  const activeLibConfig = (libraries.find(l => l.id === activeLib) || libraries[0]) || null;
+  if (activeLibConfig) {
+    document.getElementById('app-title').textContent = `${activeLibConfig.name} ASR Workbench`;
+    document.title = `${activeLibConfig.name} ASR — Detail`;
+  }
+  const libSelector = document.getElementById('library-selector');
+  if (libraries.length > 1 && libSelector) {
+    for (const lib of libraries) {
+      const opt = document.createElement('option');
+      opt.value = lib.id;
+      opt.textContent = lib.name;
+      if (lib.id === activeLib) opt.selected = true;
+      libSelector.appendChild(opt);
+    }
+    libSelector.style.display = '';
+    libSelector.addEventListener('change', () => {
+      setActiveLibrary(libSelector.value);
+      location.href = '/';
+    });
+  }
+
   const params = new URLSearchParams(window.location.search);
   const audioId = params.get('id');
   const transcriptId = params.get('tid');
@@ -68,7 +92,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   page.innerHTML = '<div class="loading-state">Loading…</div>';
   let remote;
   try {
-    remote = await loadFromSupabase();
+    remote = await loadFromSupabase(activeLib);
   } catch (err) {
     page.innerHTML = `<div class="empty-state"><div class="empty-state-title">Failed to load data: ${err.message}</div></div>`;
     return;
@@ -873,29 +897,55 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
 }
 
 // ── ASR Transcription Section ────────────────────────────────────────────────
-// Renders provider buttons and collapsible config. Creates/updates an 'asr' version.
+// Renders a standalone card with provider buttons and collapsible config.
+// Creates/updates an 'asr' version per provider. Lives BEFORE the cleaning section.
 
 function renderAsrSection(audioId, state, container, pageContainer) {
   const audio = state.audio.find(a => a.id === audioId);
   const audioUrl = audio?.r2Link || audio?.driveLink || null;
 
-  const label = document.createElement('div');
-  label.className = 'section-sublabel';
-  label.textContent = 'ASR — generate a transcript from audio without a reference text';
-  container.appendChild(label);
+  // Card wrapper — visually distinct from cleaning/alignment sections
+  const card = document.createElement('div');
+  card.className = 'detail-section asr-transcription-card';
 
-  const btnBar = document.createElement('div');
-  btnBar.className = 'asr-btn-bar';
+  // Header: icon + title + description
+  const header = document.createElement('div');
+  header.className = 'asr-card-header';
 
+  const iconEl = document.createElement('div');
+  iconEl.className = 'asr-card-icon';
+  iconEl.textContent = '🎙';
+
+  const headerText = document.createElement('div');
+  headerText.className = 'asr-card-header-text';
+
+  const titleEl = document.createElement('div');
+  titleEl.className = 'asr-card-title';
+  titleEl.textContent = 'Generate Transcript';
+
+  const descEl = document.createElement('div');
+  descEl.className = 'asr-card-desc';
+  descEl.textContent = 'Run an ASR model to produce a transcript from audio — no reference text needed';
+
+  headerText.appendChild(titleEl);
+  headerText.appendChild(descEl);
+  header.appendChild(iconEl);
+  header.appendChild(headerText);
+  card.appendChild(header);
+
+  // Provider buttons
   const PROVIDERS = [
     { key: 'gemini',      label: 'Gemini (fine-tuned)',  providerArg: 'gemini' },
     { key: 'whisper',     label: 'Whisper (RunPod)',      providerArg: 'whisper' },
     { key: 'yiddishLabs', label: 'Yiddish Labs',          providerArg: 'yiddish-labs' },
   ];
 
+  const btnBar = document.createElement('div');
+  btnBar.className = 'asr-provider-btns';
+
   for (const { key, label: btnLabel, providerArg } of PROVIDERS) {
     const btn = document.createElement('button');
-    btn.className = 'action-btn';
+    btn.className = 'asr-provider-btn';
     btn.textContent = btnLabel;
     btn.addEventListener('click', async () => {
       if (!audioUrl) { alert('No audio URL for this file.'); return; }
@@ -925,13 +975,13 @@ function renderAsrSection(audioId, state, container, pageContainer) {
     });
     btnBar.appendChild(btn);
   }
-  container.appendChild(btnBar);
+  card.appendChild(btnBar);
 
-  // Collapsible config panel
+  // Collapsible config — subtle link style, not a full button
   const configToggle = document.createElement('button');
-  configToggle.className = 'action-btn asr-config-toggle';
-  configToggle.textContent = 'Configure ASR Providers';
-  container.appendChild(configToggle);
+  configToggle.className = 'asr-config-toggle-link';
+  configToggle.textContent = 'Configure providers…';
+  card.appendChild(configToggle);
 
   const configPanel = document.createElement('div');
   configPanel.className = 'asr-provider-config';
@@ -940,9 +990,11 @@ function renderAsrSection(audioId, state, container, pageContainer) {
 
   configToggle.addEventListener('click', () => {
     configPanel.hidden = !configPanel.hidden;
-    configToggle.textContent = configPanel.hidden ? 'Configure ASR Providers' : 'Hide ASR Config';
+    configToggle.textContent = configPanel.hidden ? 'Configure providers…' : 'Hide config';
   });
-  container.appendChild(configPanel);
+  card.appendChild(configPanel);
+
+  container.appendChild(card);
 }
 
 // ── End ASR Section ──────────────────────────────────────────────────────────
@@ -1065,6 +1117,9 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     targetEl.appendChild(alignBar);
   }
 
+  // ── ASR Transcription section — generates a transcript from audio ──
+  renderAsrSection(audioId, state, container, pageContainer);
+
   // ── Cleaning section (always visible) ──
   const cleanSection = document.createElement('div');
   cleanSection.style.cssText = 'margin-bottom:14px;';
@@ -1073,7 +1128,6 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
   cleanLabel.textContent = 'Cleaning — click a pass to preview changes line by line';
   cleanSection.appendChild(cleanLabel);
   buildPassButtons(cleanSection);
-  renderAsrSection(audioId, state, cleanSection, pageContainer);
   container.appendChild(cleanSection);
 
   // ── Align section (always visible) ──
@@ -1640,7 +1694,7 @@ function startKaraokeVideoExport(words, playerEl, audioName, onStatus, onDone) {
       let audioSrc = rawSrc;
       try {
         const u = new URL(rawSrc, location.href);
-        if (u.hostname === 'audio.kohnai.ai') audioSrc = `/api/audio?url=${encodeURIComponent(rawSrc)}`;
+        if (isLibraryR2Url(rawSrc)) audioSrc = `/api/audio?url=${encodeURIComponent(rawSrc)}`;
       } catch { /* keep rawSrc */ }
 
       // Fetch and decode audio

@@ -1,6 +1,6 @@
 import { getState, updateState } from './state.js';
 import { deleteMapping } from './db.js';
-import { getCurrentUser } from './auth.js';
+import { getCurrentUser, getActiveLibrary } from './auth.js';
 import { truncateWords, formatConfidence } from './utils.js';
 
 const CONTENT_TYPES = ['sicha', 'maamar', 'farbrengen'];
@@ -162,7 +162,8 @@ export function unlinkMatch(audioId) {
       trims: state.trims,
       audioNames: state.audioNames,
     };
-    localStorage.setItem('jem-asr-state', JSON.stringify(persist));
+    const lib = getActiveLibrary();
+    localStorage.setItem(lib ? `asr-state-${lib}` : 'jem-asr-state', JSON.stringify(persist));
   } catch(e) { /* ignore quota/serialization errors */ }
 }
 

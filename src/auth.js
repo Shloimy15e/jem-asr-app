@@ -6,6 +6,7 @@ const supabase = createClient(
 );
 
 let _currentUser = null;
+let _userLibraries = null;
 
 // Redirects to /login.html if no active session. Returns the session if valid.
 export async function checkAuth() {
@@ -32,4 +33,80 @@ export async function signIn(email, password) {
 export async function signOut() {
   await supabase.auth.signOut();
   window.location.href = '/login.html';
+}
+
+// ── Library context ──────────────────────────────────────────────────
+
+// Returns all libraries the current user has access to.
+// Result is [{id, name, r2Domain, transcriptPathPrefix, audioPathPrefix, role}].
+// Cached for the session lifetime.
+export async function getUserLibraries() {
+  if (_userLibraries) return _userLibraries;
+  const userId = _currentUser?.id;
+  if (!userId) return [];
+  const { data, error } = await supabase
+    .from('library_members')
+    .select('library_id, role, libraries(name, r2_domain, transcript_path_prefix, audio_path_prefix)')
+    .eq('user_id', userId);
+  if (error) {
+    console.warn('[Auth] getUserLibraries:', error.message);
+    return [];
+  }
+  _userLibraries = (data || []).map(m => ({
+    id: m.library_id,
+    name: m.libraries?.name || m.library_id,
+    r2Domain: m.libraries?.r2_domain || 'audio.kohnai.ai',
+    transcriptPathPrefix: m.libraries?.transcript_path_prefix || 'transcripts-txt/',
+    audioPathPrefix: m.libraries?.audio_path_prefix || '',
+    role: m.role,
+  }));
+  return _userLibraries;
+}
+
+// Returns the ID of the currently active library.
+// Validates the stored value against the user's memberships; falls back to first.
+export function getActiveLibrary() {
+  const stored = localStorage.getItem('active-library');
+  if (stored) {
+    // If we have cached libraries, validate; otherwise trust the stored value
+    if (_userLibraries) {
+      const valid = _userLibraries.some(l => l.id === stored);
+      if (valid) return stored;
+      // Stored value not in memberships — fall through to first
+    } else {
+      return stored;
+    }
+  }
+  // Fall back to first library in the user's membership list
+  if (_userLibraries && _userLibraries.length > 0) {
+    const first = _userLibraries[0].id;
+    localStorage.setItem('active-library', first);
+    return first;
+  }
+  return null;
+}
+
+// Sets the active library and persists to localStorage.
+export function setActiveLibrary(id) {
+  localStorage.setItem('active-library', id);
+}
+
+// Returns the full config object for the active library, or a default fallback.
+export function getActiveLibraryConfig() {
+  const id = getActiveLibrary();
+  if (_userLibraries && id) {
+    return _userLibraries.find(l => l.id === id) || null;
+  }
+  // Fallback for early calls before getUserLibraries() resolves
+  return { id: id || 'jemedia', name: 'ASR Workbench', r2Domain: 'audio.kohnai.ai', transcriptPathPrefix: 'transcripts-txt/', audioPathPrefix: '' };
+}
+
+// Returns true when the given URL points to the active library's R2 bucket.
+export function isLibraryR2Url(url) {
+  try {
+    const config = getActiveLibraryConfig();
+    return new URL(url).hostname === config?.r2Domain;
+  } catch {
+    return false;
+  }
 }

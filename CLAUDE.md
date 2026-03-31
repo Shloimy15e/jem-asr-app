@@ -398,6 +398,26 @@ Three export buttons appear in the word view toolbar: **SRT**, **VTT**, and **�
 ### Authentication — all pages require login
 The app uses Supabase Auth (email + password). `src/auth.js` exports `checkAuth()`, `signIn()`, `signOut()`. Both `app.js` and `detail.js` call `await checkAuth()` at the very top of their `DOMContentLoaded` handler — this redirects to `/login.html` if there is no active session. `login.html` + `src/login.js` handle the login form. Supabase RLS on all tables requires the `authenticated` role (migration `20260324000000_require_auth.sql`); the anon key alone cannot read any data. To add a new user: POST to `/auth/v1/admin/users` with the service role key, then trigger `/auth/v1/recover` to send a password-reset email.
 
+### Multi-tenancy — library-scoped access control
+The app supports multiple independent libraries (datasets). Migration `20260331000000_add_multi_tenancy.sql` adds `libraries` and `library_members` tables and a `library_id` column to all 8 content tables (defaulting to `'jemedia'` for existing rows). RLS policies restrict each table to `library_id IN (SELECT public.user_library_ids())`.
+
+**`src/auth.js`** exports four library context helpers:
+- `getUserLibraries()` — fetches `library_members` joined to `libraries` for the current user. Returns `[{id, name, r2Domain, transcriptPathPrefix, audioPathPrefix, role}]`. Cached for the session.
+- `getActiveLibrary()` — reads `localStorage['active-library']`, validated against cached memberships.
+- `setActiveLibrary(id)` — writes to localStorage; the page reloads to switch context.
+- `getActiveLibraryConfig()` — returns full config object for the active library.
+- `isLibraryR2Url(url)` — returns true when the URL hostname matches the active library's `r2Domain`. Used in `alignment.js`, `benchmark.js`, `detail.js` instead of hardcoded `audio.kohnai.ai`.
+
+**Startup flow** (both `app.js` and `detail.js`): call `getUserLibraries()` after `checkAuth()`. If empty → show "No library access" and return. Wire `<select id="library-selector">` in the header (hidden when user has only 1 library). Set page title to `${libraryName} ASR Workbench`.
+
+**Data isolation:** `loadFromSupabase(libraryId)` passes the active library to every `fetchAll()` call as `.eq('library_id', libraryId)`. All sync/upsert helpers (`syncMapping`, `syncCleaning`, `syncEdited`, `syncAlignment`, `syncReview`, `toAudioRow`, `splitTranscript`, bulk helpers) include `library_id: getActiveLibrary()` in their payloads.
+
+**localStorage keys:** `saveToStorage()` / `loadFromStorage()` use `asr-state-${libraryId}` instead of `jem-asr-state`. `initState()` runs a one-time migration: if `jem-asr-state` exists and active library is `jemedia`, it moves the data to `asr-state-jemedia` and removes the old key.
+
+**To add a new library:** Insert a row in `libraries`, insert rows in `library_members` for the relevant users — done via Supabase dashboard. No app-level admin UI needed.
+
+**Workers SSRF allowlist:** `functions/api/audio.js` and `functions/api/align.js` read `context.env.ALLOWED_R2_DOMAINS` (comma-separated) to determine which R2 hostnames are allowed. Defaults to `audio.kohnai.ai` when unset. `functions/api/transcript.js` accepts an optional `?domain=` param validated against the same allowlist.
+
 `vite.config.js` has three entry points: `main` (index.html), `detail` (detail.html), `login` (login.html). If you add a new top-level HTML page you must add it here.
 
 ### Word view karaoke scroll only fires when word view is visible

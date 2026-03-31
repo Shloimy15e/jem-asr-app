@@ -8,7 +8,8 @@
 </head>
 <body>
   <header class="app-header">
-    <h1 class="app-title">JEM ASR Workbench</h1>
+    <h1 class="app-title" id="app-title">ASR Workbench</h1>
+    <select id="library-selector" class="library-selector" title="Active library" style="display:none"></select>
     <div class="toolbar">
       <button id="btn-asr-settings" class="toolbar-btn" title="Configure ASR providers">ASR Settings</button>
       <button id="btn-export-state" class="toolbar-btn" title="Export State (JSON)">Export State</button>
@@ -52,12 +53,12 @@
     <!-- Table rendered by src/table.js -->
   </main>
 
-  <footer class="bulk-action-bar" id="bulk-action-bar">
+  <div class="bulk-action-bar" id="bulk-action-bar">
     <span class="bulk-selection-count" id="bulk-selection-count">0 selected</span>
-    <button class="bulk-btn" id="btn-clean-selected">Clean Selected</button>
-    <button class="bulk-btn" id="btn-align-selected">Align Selected</button>
-    <button class="bulk-btn bulk-btn-approve" id="btn-approve-selected">Approve Selected</button>
-  </footer>
+    <button class="bulk-btn" id="btn-clean-selected">Clean</button>
+    <button class="bulk-btn" id="btn-align-selected">Align</button>
+    <button class="bulk-btn bulk-btn-approve" id="btn-approve-selected">Approve</button>
+  </div>
 
   <div class="modal-overlay" id="modal-overlay" hidden>
     <div class="modal" id="modal">

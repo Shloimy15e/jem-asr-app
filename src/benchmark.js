@@ -1,5 +1,6 @@
 import { getState, updateState } from './state.js';
 import { calculateWER, normalizeYiddish, levenshtein } from './utils.js';
+import { isLibraryR2Url } from './auth.js';
 
 // ── ASR Config Modal ────────────────────────────────────────────────
 
@@ -130,7 +131,7 @@ export async function runBenchmark(benchmarkAudioIds, state, onProgress) {
     }
 
     let audioUrl = audio.r2Link || audio.driveLink;
-    if (audioUrl && audioUrl.includes('audio.kohnai.ai')) {
+    if (audioUrl && isLibraryR2Url(audioUrl)) {
       audioUrl = '/api/audio?url=' + encodeURIComponent(audioUrl);
     }
     let audioBlob;
