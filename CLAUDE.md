@@ -327,6 +327,11 @@ The startup sort in `db.js` originally used `parseInt(a.id.slice(2))` which assu
 ### Transcript proxy uses filename-only by default — breaks for non-standard paths
 `/api/transcript?name=` originally extracted just the filename from `r2TranscriptLink` and prepended `audio.kohnai.ai/transcripts-txt/`. For new libraries whose transcripts live at custom paths (e.g. `hoshana-5710/transcripts/transcript.txt`), this produces a wrong URL. Fixed: `loadFullText` in `detail.js` now passes `?name=<full-path>&domain=<host>` to the proxy. The proxy (`functions/api/transcript.js`) treats `name` as the full path when `domain` is explicitly provided, constructing `https://<domain>/<name>` directly.
 
+### Audio player must route through /api/audio proxy — never set src directly
+`detail.js` sets `playerEl.src` for the main audio player. For JEM files on `audio.kohnai.ai` this accidentally worked because the browser could reach the URL, but for `r2.dev` URLs it fails with CORS errors. The player src must always be `/api/audio?url=<encoded>` for any R2 URL. Fixed: player src now uses `isLibraryR2Url(audioUrl)` to detect R2 URLs and proxies them.
+
+`isLibraryR2Url()` in `auth.js` matches the library's configured `r2Domain` **and** any `*.r2.dev` hostname — both must be included since new library files use the public `r2.dev` URL.
+
 ### R2 custom domain (audio.kohnai.ai) only serves pre-existing objects
 New objects uploaded to the `jem-asr-audio` R2 bucket via `wrangler r2 object put` do NOT appear at `audio.kohnai.ai` — they return 404 even though they exist in the bucket. The `r2.dev` public URL (`pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev`) works for all objects. New library audio files should use the `r2.dev` URL in their `r2_link` column. The `ALLOWED_R2_DOMAINS` Pages secret includes both domains: `audio.kohnai.ai,pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev`.
 
