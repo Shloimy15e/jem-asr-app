@@ -1,4 +1,4 @@
-import { updateState, getVersions, addVersion, updateVersion } from './state.js';
+import { updateState, getVersions, addVersion, updateVersion, getNextIteration } from './state.js';
 import { loadTranscriptText } from './db.js';
 
 // Individual cleaning passes
@@ -152,14 +152,18 @@ export async function batchClean(audioIds, state, onProgress) {
       cleanRate,
       cleanedAt: new Date().toISOString(),
     });
-    // Create or update a cleaned version so version tabs stay in sync
+    // Create or update a cleaned version so version tabs stay in sync.
+    // Bump the iteration number when re-cleaning after alignment (a new round).
     const versions = getVersions(audioId);
     const existingCleaned = versions.find(v => v.type === 'cleaned');
+    const hasAlignment = versions.some(v => v.alignment?.avgConfidence != null);
+    const iteration = hasAlignment ? getNextIteration(audioId) : (existingCleaned?.iteration || 1);
     if (existingCleaned) {
       updateVersion(audioId, existingCleaned.id, {
         text: cleanedText,
         originalText,
         cleanRate,
+        iteration,
       });
     } else {
       addVersion(audioId, {
@@ -167,6 +171,7 @@ export async function batchClean(audioIds, state, onProgress) {
         text: cleanedText,
         originalText,
         cleanRate,
+        iteration,
         createdBy: 'system',
       });
     }

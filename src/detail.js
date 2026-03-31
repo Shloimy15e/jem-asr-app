@@ -1065,187 +1065,47 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     targetEl.appendChild(alignBar);
   }
 
-  // ── STEP: clean ── show cleaning tools + ASR, next-step CTA → Align
-  if (step === 'clean' || step === 'align') {
-    const cleanSection = document.createElement('div');
-    cleanSection.style.cssText = 'margin-bottom:16px;';
+  // ── Cleaning section (always visible) ──
+  const cleanSection = document.createElement('div');
+  cleanSection.style.cssText = 'margin-bottom:14px;';
+  const cleanLabel = document.createElement('div');
+  cleanLabel.className = 'section-sublabel';
+  cleanLabel.textContent = 'Cleaning — click a pass to preview changes line by line';
+  cleanSection.appendChild(cleanLabel);
+  buildPassButtons(cleanSection);
+  renderAsrSection(audioId, state, cleanSection, pageContainer);
+  container.appendChild(cleanSection);
 
-    const cleanLabel = document.createElement('div');
-    cleanLabel.className = 'section-sublabel';
-    cleanLabel.textContent = 'Cleaning — click a pass to preview changes line by line';
-    cleanSection.appendChild(cleanLabel);
+  // ── Align section (always visible) ──
+  const alignSection = document.createElement('div');
+  alignSection.style.cssText = 'margin-bottom:14px;';
+  buildAlignButton(alignSection);
+  container.appendChild(alignSection);
 
-    buildPassButtons(cleanSection);
-
-    // ASR Transcription
-    renderAsrSection(audioId, state, cleanSection, pageContainer);
-
-    container.appendChild(cleanSection);
-
-    // ── Align section (always shown below cleaning) ──
-    const alignSection = document.createElement('div');
-    alignSection.style.cssText = 'margin-top:10px;';
-    buildAlignButton(alignSection);
-    container.appendChild(alignSection);
-
-    // Next Step CTA: if cleaned text exists but no alignment yet
-    if (step === 'align') {
-      const nextBar = document.createElement('div');
-      nextBar.className = 'next-step-bar';
-      const hint = document.createElement('span');
-      hint.className = 'text-secondary';
-      hint.style.fontSize = '0.82rem';
-      hint.textContent = 'Text is cleaned — run alignment to get word timestamps.';
-      nextBar.appendChild(hint);
-      container.appendChild(nextBar);
-    } else {
-      // Step is 'clean' — show hint
-      const hint = document.createElement('div');
-      hint.className = 'text-secondary';
-      hint.style.cssText = 'margin-top:8px;font-size:0.82rem;';
-      hint.textContent = 'Start by running "Clean All" or individual passes, then run alignment.';
-      container.appendChild(hint);
-    }
-  }
-
-  // ── STEP: review or approved ── show word view + re-clean / re-align shortcuts
-  if (step === 'review' || step === 'approved') {
-    // Word view
-    if (alignment && !alignment.words) {
-      const placeholder = document.createElement('div');
-      placeholder.className = 'text-secondary';
-      placeholder.style.cssText = 'padding:12px;font-size:0.9rem;';
-      placeholder.textContent = 'Loading word timestamps...';
-      container.appendChild(placeholder);
-      loadAlignmentWords(audioId).then(words => {
-        const fullAlignment = words ? { ...alignment, words } : alignment;
-        if (words) updateState('alignments', audioId, fullAlignment);
-        placeholder.remove();
-        renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl, activeVersionRef);
-      });
-    } else if (alignment) {
-      renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef);
-    }
-
-    // ── Re-work section: Re-Clean + Re-Align shortcuts ──
-    const reworkBar = document.createElement('div');
-    reworkBar.className = 'next-step-bar';
-    reworkBar.style.cssText = 'flex-direction:column;align-items:flex-start;gap:10px;';
-
-    const reworkLabel = document.createElement('div');
-    reworkLabel.className = 'section-sublabel';
-    reworkLabel.style.marginBottom = '0';
-    reworkLabel.textContent = 'Start another round';
-    reworkBar.appendChild(reworkLabel);
-
-    const reworkBtns = document.createElement('div');
-    reworkBtns.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;';
-
-    // Quick Re-Clean dropdown
-    const quickCleanWrap = document.createElement('div');
-    quickCleanWrap.className = 'quick-clean-wrap';
-
-    const quickCleanBtn = document.createElement('button');
-    quickCleanBtn.className = 'action-btn';
-    quickCleanBtn.innerHTML = 'Re-Clean ▾';
-
-    const dropdown = document.createElement('div');
-    dropdown.className = 'quick-clean-dropdown';
-
-    passes.forEach(pass => {
-      const item = document.createElement('button');
-      item.className = 'quick-clean-item';
-      item.textContent = pass.label;
-      item.addEventListener('click', async () => {
-        dropdown.classList.remove('open');
-        item.textContent = 'Running...';
-        item.disabled = true;
-        try {
-          const rawOriginal = await getOriginalText();
-          const currentText = await getCurrentText();
-          const previewText = pass.fn(currentText);
-          openPassPreviewModal(audioId, pass.label, currentText, previewText, rawOriginal, pageContainer);
-        } finally {
-          item.textContent = pass.label;
-          item.disabled = false;
-        }
-      });
-      dropdown.appendChild(item);
+  // ── Word view (always visible when alignment exists, placeholder otherwise) ──
+  if (alignment && !alignment.words) {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'text-secondary';
+    placeholder.style.cssText = 'padding:12px;font-size:0.9rem;';
+    placeholder.textContent = 'Loading word timestamps...';
+    container.appendChild(placeholder);
+    loadAlignmentWords(audioId).then(words => {
+      const fullAlignment = words ? { ...alignment, words } : alignment;
+      if (words) updateState('alignments', audioId, fullAlignment);
+      placeholder.remove();
+      renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl, activeVersionRef);
+      renderIterationHistory(audioId, container, pageContainer, playerEl);
+      renderApproveBar(audioId, container);
     });
-
-    const divider = document.createElement('hr');
-    divider.className = 'quick-clean-divider';
-    dropdown.appendChild(divider);
-
-    const cleanAllItem = document.createElement('button');
-    cleanAllItem.className = 'quick-clean-item';
-    cleanAllItem.textContent = 'Clean All (no preview)';
-    cleanAllItem.addEventListener('click', async () => {
-      dropdown.classList.remove('open');
-      cleanAllItem.textContent = 'Cleaning...';
-      cleanAllItem.disabled = true;
-      await batchClean([audioId], getState(), () => {});
-      const s = getState();
-      renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
-    });
-    dropdown.appendChild(cleanAllItem);
-
-    quickCleanWrap.appendChild(quickCleanBtn);
-    quickCleanWrap.appendChild(dropdown);
-
-    quickCleanBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      dropdown.classList.toggle('open');
-    });
-    document.addEventListener('click', () => dropdown.classList.remove('open'), { once: false, capture: false });
-
-    reworkBtns.appendChild(quickCleanWrap);
-
-    // Re-Align button
-    const reAlignBtn = document.createElement('button');
-    reAlignBtn.className = 'action-btn action-btn-primary';
-    reAlignBtn.textContent = 'Re-Align';
-    reAlignBtn.addEventListener('click', async () => {
-      reAlignBtn.textContent = 'Aligning...';
-      reAlignBtn.disabled = true;
-      try {
-        const textForAlignment = await getCurrentText();
-        const currentVersionId = activeVersionRef?.id || null;
-        await alignRow(audioId, getState(), textForAlignment, currentVersionId);
-      } catch (err) {
-        console.error('[Alignment] Failed for', audioId, ':', err);
-        reAlignBtn.textContent = `Failed — click to retry`;
-        reAlignBtn.disabled = false;
-        return;
-      }
-      const s = getState();
-      renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
-    });
-    reworkBtns.appendChild(reAlignBtn);
-
-    reworkBar.appendChild(reworkBtns);
-    container.appendChild(reworkBar);
-  }
-
-  // ── Compare Versions button ──
-  const alignedVersions = getAlignedVersions(audioId);
-  if (alignedVersions.length >= 2) {
-    const compareBar = document.createElement('div');
-    compareBar.style.cssText = 'margin-top:12px;';
-    const compareBtn = document.createElement('button');
-    compareBtn.className = 'action-btn action-btn-primary';
-    compareBtn.textContent = `Compare Versions (${alignedVersions.length} aligned)`;
-    compareBtn.addEventListener('click', () => {
-      renderCompareView(audioId, alignedVersions, container, pageContainer, playerEl);
-    });
-    compareBar.appendChild(compareBtn);
-    container.appendChild(compareBar);
-  } else if (alignedVersions.length === 1 && alignment) {
-    const hint = document.createElement('div');
-    hint.className = 'text-secondary';
-    hint.style.cssText = 'margin-top:8px;font-size:0.82rem;';
-    hint.textContent = 'Tip: Edit the text, align again, then compare both aligned versions side by side.';
-    container.appendChild(hint);
+  } else if (alignment) {
+    renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef);
+    renderIterationHistory(audioId, container, pageContainer, playerEl);
+    renderApproveBar(audioId, container);
+  } else {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'word-view-placeholder';
+    placeholder.textContent = 'Run alignment above to see word-level timestamps and confidence scores.';
+    container.appendChild(placeholder);
   }
 }
 
@@ -1341,6 +1201,125 @@ function renderProgressCard(alignment) {
   card.appendChild(barWrap);
 
   return card;
+}
+
+function renderIterationHistory(audioId, container, pageContainer, playerEl) {
+  const alignedVersions = getAlignedVersions(audioId);
+  if (alignedVersions.length === 0) return;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'iteration-history';
+
+  const header = document.createElement('div');
+  header.className = 'iteration-history-header';
+  const headerTitle = document.createElement('span');
+  headerTitle.textContent = `Iteration History (${alignedVersions.length})`;
+  const chevron = document.createElement('span');
+  chevron.className = 'iteration-history-chevron';
+  chevron.textContent = '▸';
+  header.appendChild(chevron);
+  header.appendChild(headerTitle);
+  wrap.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'iteration-history-body';
+  body.style.display = 'none';
+  wrap.appendChild(body);
+
+  header.addEventListener('click', () => {
+    const open = body.style.display !== 'none';
+    body.style.display = open ? 'none' : 'block';
+    chevron.textContent = open ? '▸' : '▾';
+  });
+
+  alignedVersions.forEach((v, i) => {
+    const iterNum = v.iteration || (i + 1);
+    const isLast = i === alignedVersions.length - 1;
+    const row = document.createElement('div');
+    row.className = 'iteration-row' + (isLast ? ' current' : '');
+
+    const badge = document.createElement('span');
+    badge.className = 'iteration-badge';
+    badge.textContent = `v${iterNum}`;
+
+    const detail = document.createElement('span');
+    detail.className = 'iteration-row-detail';
+    const conf = v.alignment?.avgConfidence != null ? formatConfidence(v.alignment.avgConfidence) : '—';
+    const low = v.alignment?.lowConfidenceCount ?? '?';
+    const date = v.alignment?.alignedAt ? new Date(v.alignment.alignedAt).toLocaleDateString() : '';
+    const typeLabel = v.type === 'manual' ? 'original' : v.type;
+    detail.textContent = `${conf} avg · ${low} low · ${typeLabel}${date ? ' · ' + date : ''}`;
+
+    const actions = document.createElement('span');
+    actions.className = 'iteration-row-actions';
+
+    if (!isLast) {
+      const compareBtn = document.createElement('button');
+      compareBtn.className = 'action-btn';
+      compareBtn.style.cssText = 'font-size:0.75rem;padding:2px 8px;';
+      compareBtn.textContent = 'Compare with current';
+      compareBtn.addEventListener('click', () => {
+        const current = alignedVersions[alignedVersions.length - 1];
+        // Remove existing compare view and open fresh
+        container.querySelector('.compare-view')?.remove();
+        renderCompareView(audioId, [v, current], container, pageContainer, playerEl);
+      });
+      actions.appendChild(compareBtn);
+    } else {
+      const cur = document.createElement('span');
+      cur.className = 'text-secondary';
+      cur.style.fontSize = '0.75rem';
+      cur.textContent = 'current';
+      actions.appendChild(cur);
+    }
+
+    row.appendChild(badge);
+    row.appendChild(detail);
+    row.appendChild(actions);
+    body.appendChild(row);
+  });
+
+  container.appendChild(wrap);
+}
+
+function renderApproveBar(audioId, container) {
+  const approveBar = document.createElement('div');
+  approveBar.className = 'seg-approve-bar';
+  const approveBtn = document.createElement('button');
+  approveBtn.className = 'btn btn-primary seg-approve-btn';
+  const approveStatus = document.createElement('span');
+  approveStatus.className = 'text-secondary';
+  approveStatus.style.fontSize = '0.85rem';
+  approveBar.appendChild(approveBtn);
+  approveBar.appendChild(approveStatus);
+  container.appendChild(approveBar);
+
+  function sync() {
+    const s = getState();
+    const isApproved = s.reviews?.[audioId]?.status === 'approved';
+    approveBtn.textContent = isApproved ? '✓ Approved for Training' : 'Approve for Training';
+    approveBtn.className = isApproved
+      ? 'btn btn-secondary seg-approve-btn'
+      : 'btn btn-primary seg-approve-btn';
+    if (isApproved) {
+      const at = s.reviews[audioId].reviewedAt;
+      approveStatus.textContent = at ? 'Approved ' + new Date(at).toLocaleDateString() : 'Approved';
+    } else {
+      approveStatus.textContent = '';
+    }
+  }
+  sync();
+
+  approveBtn.addEventListener('click', () => {
+    const s = getState();
+    const isApproved = s.reviews?.[audioId]?.status === 'approved';
+    if (isApproved) {
+      updateState('reviews', audioId, { ...s.reviews[audioId], status: 'rejected', reviewedAt: new Date().toISOString() });
+    } else {
+      updateState('reviews', audioId, { status: 'approved', reviewedAt: new Date().toISOString() });
+    }
+    sync();
+  });
 }
 
 function renderCompareView(audioId, alignedVersions, container, pageContainer, playerEl) {
@@ -2103,45 +2082,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   });
   viewer.appendChild(legend);
 
-  // ── Approve for training bar ──
-  const approveBar = document.createElement('div');
-  approveBar.className = 'seg-approve-bar';
-  const approveBtn = document.createElement('button');
-  approveBtn.className = 'btn btn-primary seg-approve-btn';
-  const approveStatus = document.createElement('span');
-  approveStatus.className = 'text-secondary';
-  approveStatus.style.fontSize = '0.85rem';
-  approveBar.appendChild(approveBtn);
-  approveBar.appendChild(approveStatus);
-  viewer.appendChild(approveBar);
-
-  function syncApproveBar() {
-    const s = getState();
-    const isApproved = s.reviews?.[audioId]?.status === 'approved';
-    approveBtn.textContent = isApproved ? '✓ Approved for Training' : 'Approve for Training';
-    approveBtn.className = isApproved
-      ? 'btn btn-secondary seg-approve-btn'
-      : 'btn btn-primary seg-approve-btn';
-    if (isApproved) {
-      const at = s.reviews[audioId].reviewedAt;
-      approveStatus.textContent = at ? 'Approved ' + new Date(at).toLocaleDateString() : 'Approved';
-    } else {
-      approveStatus.textContent = '';
-    }
-  }
-  syncApproveBar();
-
-  approveBtn.addEventListener('click', () => {
-    const s = getState();
-    const isApproved = s.reviews?.[audioId]?.status === 'approved';
-    if (isApproved) {
-      // Un-approve
-      updateState('reviews', audioId, { ...s.reviews[audioId], status: 'rejected', reviewedAt: new Date().toISOString() });
-    } else {
-      updateState('reviews', audioId, { status: 'approved', reviewedAt: new Date().toISOString() });
-    }
-    syncApproveBar();
-  });
+  renderApproveBar(audioId, viewer);
 
   // ── Save as edited version ──
   if (cleaning) {

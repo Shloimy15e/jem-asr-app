@@ -3038,11 +3038,104 @@ details[open] > .pipeline-tools-summary::before {
   }
 }
 
+/* ── Iteration History ────────────────────────────────── */
+.iteration-history {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 14px 0;
+  overflow: hidden;
+}
+
+.iteration-history-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  user-select: none;
+  background: var(--surface-alt);
+}
+
+.iteration-history-header:hover {
+  background: var(--surface-hover);
+}
+
+.iteration-history-chevron {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.iteration-history-body {
+  padding: 6px 0;
+}
+
+.iteration-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  font-size: 0.82rem;
+  border-left: 3px solid transparent;
+}
+
+.iteration-row.current {
+  border-left-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.iteration-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--gray-dim);
+  color: var(--gray);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.iteration-row.current .iteration-badge {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.iteration-row-detail {
+  flex: 1;
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iteration-row-actions {
+  flex-shrink: 0;
+}
+
+/* ── Word view placeholder (no alignment yet) ─────────── */
+.word-view-placeholder {
+  padding: 18px 16px;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  background: var(--surface-alt);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  margin: 8px 0;
+  text-align: center;
+}
+
 @media (max-width: 480px) {
   .pipeline-step-label {
     display: none;
   }
   .pipeline-stepper {
     padding: 10px 12px;
+  }
+  .iteration-row-detail {
+    display: none;
   }
 }

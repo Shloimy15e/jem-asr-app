@@ -91,6 +91,10 @@ function migrateToVersions() {
         };
       }
     }
+    // Assign iteration: 1 to all existing versions that lack the field
+    for (const v of versions) {
+      if (!v.iteration) v.iteration = 1;
+    }
   }
 }
 
@@ -302,9 +306,27 @@ export function getPipelineStep(audioId) {
   return 'clean';
 }
 
-// Returns how many full clean→align cycles have been completed.
+// Returns the next iteration number for a new version in this audio's pipeline.
+// Looks at the max stored iteration field; defaults to 1 if none exist yet.
+export function getNextIteration(audioId) {
+  const versions = getVersions(audioId);
+  let max = 0;
+  for (const v of versions) {
+    if (v.iteration && v.iteration > max) max = v.iteration;
+  }
+  return max + 1;
+}
+
+// Returns the current (highest) iteration number across all versions.
 export function getIterationCount(audioId) {
-  return getVersions(audioId).filter(v => v.alignment?.avgConfidence != null).length;
+  const versions = getVersions(audioId);
+  let max = 0;
+  for (const v of versions) {
+    if (v.iteration && v.iteration > max) max = v.iteration;
+  }
+  // Fall back to counting aligned versions (for data that predates iteration field)
+  if (max === 0) return versions.filter(v => v.alignment?.avgConfidence != null).length;
+  return max;
 }
 
 function syncLegacyKeys(audioId) {
