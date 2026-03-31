@@ -279,6 +279,39 @@ export async function loadTranscriptText(transcriptId) {
   return data.text || null;
 }
 
+export async function loadSegmentApprovals(audioId) {
+  const { data, error } = await supabase
+    .from('segment_approvals')
+    .select('segment_hash')
+    .eq('audio_id', audioId);
+  if (error) { console.warn('[DB] loadSegmentApprovals:', error.message); return []; }
+  return (data || []).map(r => r.segment_hash);
+}
+
+export async function syncSegmentApproval(audioId, segHash, approved, approvedBy, audioEntry) {
+  if (!segHash) return;
+  await ensureAudioFile(audioEntry);
+  if (approved) {
+    const { error } = await supabase.from('segment_approvals').upsert(
+      {
+        audio_id: audioId,
+        segment_hash: segHash,
+        approved_at: new Date().toISOString(),
+        approved_by: approvedBy || 'user',
+        library_id: getActiveLibrary() || 'jemedia',
+      },
+      { onConflict: 'audio_id,segment_hash' },
+    );
+    if (error) console.warn('[DB] syncSegmentApproval (approve):', error.message);
+  } else {
+    const { error } = await supabase.from('segment_approvals')
+      .delete()
+      .eq('audio_id', audioId)
+      .eq('segment_hash', segHash);
+    if (error) console.warn('[DB] syncSegmentApproval (unapprove):', error.message);
+  }
+}
+
 // ── Split transcript ─────────────────────────────────────────────────
 // Creates a new transcript record derived from an existing one.
 // The new record gets source_transcript_id = originalId for traceability.

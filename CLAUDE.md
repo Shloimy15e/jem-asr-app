@@ -112,12 +112,13 @@ Matching score (0–1.0):
 - firstLine contains matching content type keyword → +0.05
 
 ### 2. Cleaning — *"Strip the editor's notes, keep only the spoken words"*
-Transcripts were prepared by human editors who added notes, section headers, and markers. Nine cleaning passes remove all of that:
+Transcripts were prepared by human editors who added notes, section headers, and markers. Ten cleaning passes remove all of that:
 - `[brackets]` → removed
 - `(parenthetical notes)` → removed
 - Section markers like `סעיף א׳` and `* * *` → removed
 - Surrounding quotation marks (Hebrew/English/French) → stripped
-- Hyphens/dashes (em-dash, en-dash, multiples) → normalized
+- **Dashes → space** (`cleanDashesToSpace`) — replaces all dash/hyphen chars with a space, preserving word separation ("word-word" → "word word"). Use this when you want the two words to stay separate and intelligible.
+- Hyphens/dashes (em-dash, en-dash, multiples) → removed entirely (`cleanHyphens`) — use this when the dash is decorative and no space is needed
 - Question mark artifacts (multiple ???) → collapsed
 - Ellipsis patterns (... and …) → removed
 - Zero-width characters, smart quotes → normalized
@@ -199,7 +200,8 @@ stateDiagram-v2
 | `mappings` | `audio_id` | Audio → transcript links. Columns: `transcript_id`, `confidence`, `match_reason`, `confirmed_by`, `created_at` |
 | `alignments` | `audio_id` | Word timestamps + confidence scores |
 | `reviews` | `audio_id` | Approval status + `edited_text` (user's corrected text) + `reviewed_at` |
-| `transcript_edits` | `(audio_id, version)` | Versioned transcript text. `version` is TEXT: `'cleaned'` (from cleaning passes) or `'edited'` (user-edited text saved from the detail page). Columns: `text`, `original_text`, `clean_rate`, `created_at`, `created_by` |
+| `transcript_edits` | `(audio_id, version)` | Versioned transcript text. `version` is TEXT: `'cleaned'` (status tracking) or `'edited'` (the unified working version updated by both cleaning passes and manual edits). Columns: `text`, `original_text`, `clean_rate`, `created_at`, `created_by` |
+| `segment_approvals` | `(audio_id, segment_hash)` | Persistent per-segment approval state. `segment_hash` is the space-joined word text of the segment. Approved state survives re-alignment as long as text is unchanged. |
 | `asr_models` | `id` | ASR model configurations |
 | `benchmark_results` | `id` | WER/CER benchmark run results |
 
@@ -436,11 +438,28 @@ The app supports multiple independent libraries (datasets). Migration `202603310
 The `timeupdate` handler in `renderWordView` calls `scrollIntoView` on the active word chip **only if** the word view container is currently in the viewport (`container.getBoundingClientRect()`). This prevents the top audio player from dragging the page down to the word chips while the user is viewing the player section.
 
 ### Segment auto-advance is disabled
-The word view does NOT auto-advance to the next segment when the audio playhead passes the end of the current segment. The user must click **Mark Reviewed** (or use `‹`/`›`) to navigate. Do not re-add auto-advance — it was intentionally removed because users listen at 3x speed and the segment would jump before they finished.
+The word view does NOT auto-advance to the next segment when the audio playhead passes the end of the current segment. The user must click **Approve Segment** (or use `‹`/`›`) to navigate. Do not re-add auto-advance — it was intentionally removed because users listen at 3x speed and the segment would jump before they finished.
 
 Two places in `detail.js` were cleaned up to achieve this:
 1. **`timeupdate` listener** — removed the block that called `goToSegment(next)` when `currentTime > segment.end`.
-2. **Mark Reviewed button handler** — removed the `goToSegment(next)` call after adding to `reviewedSegments`. Now it only calls `updateStats()`, `updateSegHeader()`, and re-renders the sidebar list — the segment stays put.
+2. **Approve Segment button handler** — does NOT call `goToSegment(next)`. Only calls `updateStats()`, `updateSegHeader()`, re-renders sidebar, and syncs approval to DB.
+
+### Persistent segment approvals
+The **"Approve Segment"** button (formerly "Mark Reviewed") persists to the `segment_approvals` Supabase table. Key details:
+
+- **Hash key:** `segHash(segIdx)` = `segments[segIdx].map(w => w.word).join(' ').trim()` — text-based, not index-based
+- **Survives re-alignment** as long as segment words are unchanged (same hash)
+- **Cleared by word edits** — editing a word changes the hash, so that segment needs re-approval
+- **Loaded on page open** via `loadSegmentApprovals(audioId)` → `setSegmentApprovals(audioId, hashes)` in state
+- **State store:** `state.segmentApprovals[audioId]` = `Set<string>` (runtime only, not in localStorage)
+- **Toggle:** `toggleSegmentApproval(audioId, hash)` → returns new boolean → caller fires `syncSegmentApproval()` fire-and-forget
+- Stats bar shows: Approved / Remaining / Progress / Problems (unapproved problem segments only)
+
+### Problem segment filter
+The **"⚠ Problems (N)"** button in the word view toolbar:
+- Counts segments with **3+ consecutive low-confidence (< 0.4) words** (strict consecutive, not total count)
+- When active: **hides** non-problem segments from the sidebar list entirely; ‹/› navigation skips to adjacent problem segments; automatically jumps to the first problem segment if current isn't one
+- `isProblemSegment(segIdx)` in `detail.js` — returns true when any run of consecutive low-conf words reaches 3
 
 ### Segment pause is gated on word view visibility
 The `timeupdate` handler pauses at the end of the current segment **only when the word view container is visible in the viewport**. This prevents the top audio player (above the fold) from being stopped mid-playback by the segment boundary. The check uses `container.getBoundingClientRect()` — the same pattern already used to gate karaoke scroll. Do not remove this viewport check or the top player will stop abruptly at segment ends.
@@ -480,8 +499,12 @@ Column `showWhen` functions use `filterMatchesStatus(filter, statuses)` which ex
 ### Audio name inline editing stops propagation on the input
 In `table.js` `case 'name'`, clicking the `nameSpan` replaces it with an `<input>` and calls `e.stopPropagation()`. The `<input>` itself also has a click handler calling `e.stopPropagation()` — without this, clicking inside the input to reposition the cursor would bubble to the `<tr>` click handler and trigger row navigation.
 
-### Cleaning passes chain via the cleaned version
-When a cleaning pass preview is applied ("Apply Selected"), it both updates the legacy `state.cleaning` key AND creates/updates a `cleaned` version in `transcriptVersions`. Since `getBestVersion` prioritizes `cleaned` over `manual`, the cleaned tab becomes selected on re-render. The next cleaning pass then reads from the cleaned tab via `getCurrentText()`, giving correct cumulative chaining. `batchClean()` does the same — it creates/updates the `cleaned` version alongside the legacy key.
+### Unified working version — cleaned and edited are the same tab
+Cleaning passes and manual editing both update the **`edited`** version. There is no longer a separate "Cleaned" tab — the `cleaned` version type still exists internally for `getStatus()` pipeline tracking (so the file shows "cleaned" status in the table), but the `cleaned` tab is hidden in `renderMappingSection` whenever an `edited` version exists.
+
+**Data flow:** `openPassPreviewModal` "Apply Selected" → updates `edited` (and syncs `cleaned` for status). `batchClean()` → same. Manual textarea edits → auto-save debounce → `syncEdited()`. All three paths write to the same `edited` version object and the same `transcript_edits` row (`version='edited'`). The next cleaning pass reads from `activeVersionRef.id` (which is `edited`), so passes chain correctly against the current working text.
+
+The "Save Cleaned Text as Edited Version" button has been removed — it is no longer needed.
 
 ### Cleaning passes and alignment use the selected version tab's text
 `renderDetailPage` creates a shared `activeVersionRef = { id }` object and passes it to both `renderMappingSection` and `renderUnifiedWorkSection`. Whenever the user clicks a version tab, `activeVersionRef.id` is updated. `getCurrentText()` in `renderUnifiedWorkSection` reads from the selected version's `.text` for non-manual versions, or falls back to loading the raw transcript from R2/Supabase for the manual version. The alignment button calls `getCurrentText()` and passes the result as `textOverride` to `alignRow(audioId, state, textOverride, currentVersionId)` — so alignment always runs on whatever version is currently displayed, and the result is stored on that specific version.
@@ -737,7 +760,7 @@ Scoring includes `firstLine` bonus: +0.05 if transcript has firstLine, +0.05 mor
 ### cleaning.js
 ```javascript
 cleanBrackets(text), cleanParentheses(text), cleanSectionMarkers(text)
-cleanSurroundingQuotes(text), cleanHyphens(text), cleanQuestionMarks(text), cleanEllipsis(text)
+cleanSurroundingQuotes(text), cleanDashesToSpace(text), cleanHyphens(text), cleanQuestionMarks(text), cleanEllipsis(text)
 cleanSymbols(text), cleanWhitespace(text)
 cleanText(raw)              // all passes in sequence
 calculateCleanRate(raw, cleaned)

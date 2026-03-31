@@ -33,6 +33,7 @@ export function initState(data) {
     alignments: saved.alignments || {},
     reviews: saved.reviews || {},
     benchmarks: saved.benchmarks || {},
+    segmentApprovals: {},
     asrModels: saved.asrModels || [],
     transcribeProviders: saved.transcribeProviders || {
       // Secrets (SA JSON, API keys) are Cloudflare Worker secrets — not stored here.
@@ -639,4 +640,24 @@ function loadFromStorage() {
     console.warn('Failed to load state from localStorage:', e);
     return {};
   }
+}
+
+export function setSegmentApprovals(audioId, hashArray) {
+  if (!state) return;
+  if (!state.segmentApprovals) state.segmentApprovals = {};
+  state.segmentApprovals[audioId] = new Set(hashArray);
+}
+
+export function getApprovedSegments(audioId) {
+  return state?.segmentApprovals?.[audioId] || new Set();
+}
+
+export function toggleSegmentApproval(audioId, hash) {
+  if (!state) return false;
+  if (!state.segmentApprovals) state.segmentApprovals = {};
+  if (!state.segmentApprovals[audioId]) state.segmentApprovals[audioId] = new Set();
+  const set = state.segmentApprovals[audioId];
+  const wasApproved = set.has(hash);
+  if (wasApproved) set.delete(hash); else set.add(hash);
+  return !wasApproved;
 }

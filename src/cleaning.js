@@ -75,6 +75,13 @@ export function cleanSymbols(text) {
   return t;
 }
 
+// Replace dash/hyphen characters with a space, preserving word separation.
+// Unlike cleanHyphens (which can remove surrounding spaces), this never
+// joins words — "word-word" becomes "word word", not "wordword".
+export function cleanDashesToSpace(text) {
+  return text.replace(/[-\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, ' ');
+}
+
 export function cleanWhitespace(text) {
   let t = text;
   t = t.replace(/\n{3,}/g, '\n\n');
@@ -166,28 +173,22 @@ export async function batchClean(audioIds, state, onProgress) {
       cleanRate,
       cleanedAt: new Date().toISOString(),
     });
-    // Create or update a cleaned version so version tabs stay in sync.
-    // Bump the iteration number when re-cleaning after alignment (a new round).
+    // Update the edited (working) version — cleaning and editing share one version.
+    // Also keep a cleaned version for status tracking (getStatus checks type==='cleaned').
     const versions = getVersions(audioId);
+    const existingEdited = versions.find(v => v.type === 'edited');
     const existingCleaned = versions.find(v => v.type === 'cleaned');
     const hasAlignment = versions.some(v => v.alignment?.avgConfidence != null);
-    const iteration = hasAlignment ? getNextIteration(audioId) : (existingCleaned?.iteration || 1);
-    if (existingCleaned) {
-      updateVersion(audioId, existingCleaned.id, {
-        text: cleanedText,
-        originalText,
-        cleanRate,
-        iteration,
-      });
+    const iteration = hasAlignment ? getNextIteration(audioId) : (existingEdited?.iteration || existingCleaned?.iteration || 1);
+    if (existingEdited) {
+      updateVersion(audioId, existingEdited.id, { text: cleanedText, originalText, cleanRate, iteration });
     } else {
-      addVersion(audioId, {
-        type: 'cleaned',
-        text: cleanedText,
-        originalText,
-        cleanRate,
-        iteration,
-        createdBy: 'system',
-      });
+      addVersion(audioId, { type: 'edited', text: cleanedText, originalText, cleanRate, iteration, createdBy: 'system' });
+    }
+    if (existingCleaned) {
+      updateVersion(audioId, existingCleaned.id, { text: cleanedText, originalText, cleanRate, iteration });
+    } else {
+      addVersion(audioId, { type: 'cleaned', text: cleanedText, originalText, cleanRate, iteration, createdBy: 'system' });
     }
 
     succeeded++;

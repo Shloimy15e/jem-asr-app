@@ -1,11 +1,11 @@
-import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions, getPipelineStep, getIterationCount } from './state.js';
+import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions, getPipelineStep, getIterationCount, setSegmentApprovals, getApprovedSegments, toggleSegmentApproval } from './state.js';
 import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, setActiveLibrary, getActiveLibraryConfig, isLibraryR2Url } from './auth.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
-import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
+import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanDashesToSpace, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
 import { alignRow } from './alignment.js';
 
 import { formatConfidence, getConfidenceLevel, generateSRT, generateVTT, downloadFile } from './utils.js';
-import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration } from './db.js';
+import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration, loadSegmentApprovals, syncSegmentApproval } from './db.js';
 
 // Loads full transcript text using R2 first, then Supabase fallback.
 // Caches on the transcript object for the session.
@@ -103,6 +103,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   initState({ audio: remote.audio, transcripts: remote.transcripts });
   mergeSupabaseData(remote);
+
+  // Load segment approvals for this audio file (persisted per-segment review state)
+  if (audioId) {
+    const approvalHashes = await loadSegmentApprovals(audioId).catch(() => []);
+    setSegmentApprovals(audioId, approvalHashes);
+  }
 
   // Apply audioNames localStorage overrides so renamed files show correct names
   const s = getState();
@@ -575,8 +581,10 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
         activeVersionRef.rerenderContent = () => renderVersionContent(activeVersionRef.id);
       }
 
-      // Build tabs
+      // Build tabs — hide the cleaned tab when an edited (working) version exists
+      const hasEditedVersion = versions.some(v => v.type === 'edited');
       for (const v of versions) {
+        if (v.type === 'cleaned' && hasEditedVersion) continue;
         const tab = document.createElement('button');
         tab.className = 'version-tab';
         tab.dataset.versionId = v.id;
@@ -901,29 +909,27 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
   applyBtn.addEventListener('click', () => {
     const finalLines = rows.map(r => r.changed ? (r.accepted ? r.editedClean : r.orig) : r.orig);
     const finalText = finalLines.join('\n');
+    const cleanRate = calculateCleanRate(rawOriginal, finalText);
     updateState('cleaning', audioId, {
       originalText: rawOriginal, // locked: never overwritten
       cleanedText: finalText,
-      cleanRate: calculateCleanRate(rawOriginal, finalText),
+      cleanRate,
       cleanedAt: new Date().toISOString(),
     });
-    // Create or update a cleaned version so subsequent passes chain from this result
+    // Update the edited (working) version — cleaning and manual editing share one version
     const versions = getVersions(audioId);
+    const existingEdited = versions.find(v => v.type === 'edited');
+    if (existingEdited) {
+      updateVersion(audioId, existingEdited.id, { text: finalText, originalText: rawOriginal, cleanRate });
+    } else {
+      addVersion(audioId, { type: 'edited', text: finalText, originalText: rawOriginal, cleanRate, createdBy: getCurrentUser() });
+    }
+    // Keep cleaned version in sync for status tracking
     const existingCleaned = versions.find(v => v.type === 'cleaned');
     if (existingCleaned) {
-      updateVersion(audioId, existingCleaned.id, {
-        text: finalText,
-        originalText: rawOriginal,
-        cleanRate: calculateCleanRate(rawOriginal, finalText),
-      });
+      updateVersion(audioId, existingCleaned.id, { text: finalText, originalText: rawOriginal, cleanRate });
     } else {
-      addVersion(audioId, {
-        type: 'cleaned',
-        text: finalText,
-        originalText: rawOriginal,
-        cleanRate: calculateCleanRate(rawOriginal, finalText),
-        createdBy: getCurrentUser(),
-      });
+      addVersion(audioId, { type: 'cleaned', text: finalText, originalText: rawOriginal, cleanRate, createdBy: getCurrentUser() });
     }
     closeModal();
     const s = getState();
@@ -1002,14 +1008,15 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
 
   // ── Step panels ──
   const passes = [
-    { label: 'Remove [brackets]',        fn: cleanBrackets },
-    { label: 'Remove (parentheses)',      fn: cleanParentheses },
-    { label: 'Remove section markers',    fn: cleanSectionMarkers },
-    { label: 'Remove surrounding quotes', fn: cleanSurroundingQuotes },
-    { label: 'Remove dashes / hyphens',   fn: cleanHyphens },
-    { label: 'Remove ? marks',            fn: cleanQuestionMarks },
-    { label: 'Remove ellipsis (…)',       fn: cleanEllipsis },
-    { label: 'Clean whitespace',          fn: cleanWhitespace },
+    { label: 'Remove [brackets]',           fn: cleanBrackets },
+    { label: 'Remove (parentheses)',         fn: cleanParentheses },
+    { label: 'Remove section markers',       fn: cleanSectionMarkers },
+    { label: 'Remove surrounding quotes',    fn: cleanSurroundingQuotes },
+    { label: 'Dashes → space (keep gap)',    fn: cleanDashesToSpace },
+    { label: 'Remove dashes / hyphens',      fn: cleanHyphens },
+    { label: 'Remove ? marks',              fn: cleanQuestionMarks },
+    { label: 'Remove ellipsis (…)',         fn: cleanEllipsis },
+    { label: 'Clean whitespace',            fn: cleanWhitespace },
   ];
 
   function buildPassButtons(targetEl) {
@@ -1083,10 +1090,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
         alignBtn.classList.add('btn-error');
         const errMsg = document.createElement('p');
         errMsg.className = 'alignment-error-msg';
-        const isUrlPatternError = err.message && err.message.includes('string did not match');
-        errMsg.textContent = isUrlPatternError
-          ? 'Audio file URL error — the file may not be uploaded to R2 storage yet.'
-          : 'Alignment failed after multiple attempts. The GPU server may be warming up or unavailable. Wait a minute and try again.';
+        errMsg.textContent = `Alignment failed: ${err.message || 'unknown error'}`;
         alignBar.parentNode.insertBefore(errMsg, alignBar.nextSibling);
         return;
       }
@@ -1925,21 +1929,6 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
     viewer.appendChild(wordGrid);
 
-    if (cleaning) {
-      const saveBar = document.createElement('div');
-      saveBar.className = 'word-view-save-bar';
-      const saveBtn = document.createElement('button');
-      saveBtn.className = 'btn btn-secondary';
-      saveBtn.textContent = 'Save Cleaned Text as Edited Version';
-      saveBtn.addEventListener('click', () => {
-        addVersion(audioId, { type: 'edited', text: cleaning.cleanedText, alignment: alignment || undefined, createdBy: getCurrentUser() });
-        const s = getState();
-        renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
-      });
-      saveBar.appendChild(saveBtn);
-      viewer.appendChild(saveBar);
-    }
-
     container.appendChild(viewer);
     return;
   }
@@ -1963,29 +1952,29 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   // insertions[segIdx][posInSeg] = [{word, start, end}]
   // posInSeg=0 means before first word; posInSeg=N means after last word
   const insertions = {}; // segIdx → { posInSeg → [{word,start,end}] }
-  const reviewedSegments = new Set();
+  const approvedHashes = getApprovedSegments(audioId); // persistent, DB-backed Set
   let currentSegIdx = 0;
   let problemFilterActive = false;
   const editMode = true; // always on — chips are always directly editable
   let chipEls = [];
 
-  // Problem segment: >2 low-confidence words OR 3+ consecutive low-confidence words
+  // Compute a stable hash for a segment based on its word text
+  function segHash(segIdx) {
+    return (segments[segIdx] || []).map(w => w.word || '').join(' ').trim();
+  }
+
+  // Problem segment: 3+ consecutive low-confidence (red) words
   function isProblemSegment(segIdx) {
     const seg = segments[segIdx] || [];
-    const LOW = 0.4;
-    let lowCount = 0;
     let consecutive = 0;
-    let maxConsecutive = 0;
     for (const w of seg) {
-      if ((w.confidence ?? 1) < LOW) {
-        lowCount++;
-        consecutive++;
-        maxConsecutive = Math.max(maxConsecutive, consecutive);
+      if ((w.confidence ?? 1) < 0.4) {
+        if (++consecutive >= 3) return true;
       } else {
         consecutive = 0;
       }
     }
-    return lowCount > 2 || maxConsecutive >= 3;
+    return false;
   }
 
   // ── Segment navigation header ──
@@ -2051,11 +2040,21 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   const problemFilterBtn = document.createElement('button');
   problemFilterBtn.className = 'btn btn-secondary';
   problemFilterBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
-  problemFilterBtn.textContent = '⚠ Problem segments';
-  problemFilterBtn.title = 'Navigate only segments with >2 low-confidence words or 3+ in a row';
+  problemFilterBtn.title = 'Show only segments with 3+ consecutive low-confidence (red) words';
+  function updateProblemFilterBtn() {
+    const n = segments.filter((_, i) => isProblemSegment(i)).length;
+    problemFilterBtn.textContent = `⚠ Problems (${n})`;
+    problemFilterBtn.classList.toggle('seg-filter-active', problemFilterActive);
+  }
+  updateProblemFilterBtn();
   problemFilterBtn.addEventListener('click', () => {
     problemFilterActive = !problemFilterActive;
-    problemFilterBtn.classList.toggle('seg-filter-active', problemFilterActive);
+    updateProblemFilterBtn();
+    // Jump to first problem segment when activating if current isn't one
+    if (problemFilterActive && !isProblemSegment(currentSegIdx)) {
+      const first = segments.findIndex((_, i) => isProblemSegment(i));
+      if (first >= 0) { currentSegIdx = first; renderSegmentChips(); }
+    }
     updateSegHeader();
     if (sidebar._renderList) sidebar._renderList();
   });
@@ -2163,22 +2162,6 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
   renderApproveBar(audioId, viewer, pageContainer);
 
-  // ── Save as edited version ──
-  if (cleaning) {
-    const saveBar = document.createElement('div');
-    saveBar.className = 'word-view-save-bar';
-    const saveBtn = document.createElement('button');
-    saveBtn.className = 'btn btn-secondary';
-    saveBtn.textContent = 'Save Cleaned Text as Edited Version';
-    saveBtn.addEventListener('click', () => {
-      addVersion(audioId, { type: 'edited', text: cleaning.cleanedText, alignment: alignment || undefined, createdBy: getCurrentUser() });
-      const s = getState();
-      renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
-    });
-    saveBar.appendChild(saveBtn);
-    viewer.appendChild(saveBar);
-  }
-
   // === LOGIC ===
 
   function fmtSec(s) {
@@ -2188,7 +2171,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
   function findNextUnreviewed() {
     for (let i = 0; i < segments.length; i++) {
-      if (reviewedSegments.has(i)) continue;
+      if (approvedHashes.has(segHash(i))) continue;
       if (problemFilterActive && !isProblemSegment(i)) continue;
       return i;
     }
@@ -2196,15 +2179,15 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   }
 
   function updateStats() {
-    const resolved = reviewedSegments.size;
+    const approvedCount = segments.filter((_, i) => approvedHashes.has(segHash(i))).length;
     const total = segments.length;
-    const problemCount = segments.filter((_, i) => isProblemSegment(i)).length;
+    const unapprovedProblems = segments.filter((_, i) => isProblemSegment(i) && !approvedHashes.has(segHash(i))).length;
     statsBar.innerHTML = '';
     [
-      ['Resolved', resolved, 'var(--green)'],
-      ['Remaining', total - resolved, 'var(--orange)'],
-      ['Progress', Math.round(resolved / total * 100) + '%', 'var(--accent)'],
-      ['Problems', problemCount, 'var(--red)'],
+      ['Approved', approvedCount, 'var(--green)'],
+      ['Remaining', total - approvedCount, 'var(--orange)'],
+      ['Progress', Math.round(approvedCount / total * 100) + '%', 'var(--accent)'],
+      ['Problems', unapprovedProblems, 'var(--red)'],
     ].forEach(([label, val, color]) => {
       const item = document.createElement('span');
       item.className = 'seg-stat-item';
@@ -2248,10 +2231,10 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     nextBtn.disabled = currentSegIdx === segments.length - 1;
     nextUnreviewedBtn.disabled = findNextUnreviewed() === -1;
 
-    const isReviewed = reviewedSegments.has(currentSegIdx);
-    markReviewedBtn.textContent = isReviewed ? '✓ Reviewed' : 'Mark Reviewed';
-    markReviewedBtn.className = isReviewed
-      ? 'btn btn-secondary seg-mark-reviewed-btn'
+    const isApproved = approvedHashes.has(segHash(currentSegIdx));
+    markReviewedBtn.textContent = isApproved ? '✓ Approved' : 'Approve Segment';
+    markReviewedBtn.className = isApproved
+      ? 'btn btn-secondary seg-mark-reviewed-btn seg-approved-btn'
       : 'btn btn-primary seg-mark-reviewed-btn';
   }
 
@@ -2507,15 +2490,14 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       for (let i = 0; i < count; i++) {
         const seg = segments[i];
         const isProb = isProblemSegment(i);
-        const isRev = reviewedSegments.has(i);
-        const dimmed = problemFilterActive && !isProb;
+        const isApproved = approvedHashes.has(segHash(i));
+        if (problemFilterActive && !isProb) continue; // hide non-problem segs when filter active
         const item = document.createElement('div');
         item.className = 'seg-sidebar-item'
           + (i === currentSegIdx ? ' active' : '')
-          + (isRev ? ' reviewed' : '')
-          + (dimmed ? ' dimmed' : '');
+          + (isApproved ? ' reviewed' : '');
 
-        if (isRev) {
+        if (isApproved) {
           const check = document.createElement('span');
           check.className = 'seg-sidebar-check';
           check.textContent = '✓';
@@ -2794,19 +2776,34 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
   bulkTextarea.addEventListener('blur', applyBulkText);
 
-  prevBtn.addEventListener('click', () => goToSegment(currentSegIdx - 1));
-  nextBtn.addEventListener('click', () => goToSegment(currentSegIdx + 1));
+  prevBtn.addEventListener('click', () => {
+    if (problemFilterActive) {
+      let idx = currentSegIdx - 1;
+      while (idx >= 0 && !isProblemSegment(idx)) idx--;
+      if (idx >= 0) goToSegment(idx);
+    } else {
+      goToSegment(currentSegIdx - 1);
+    }
+  });
+  nextBtn.addEventListener('click', () => {
+    if (problemFilterActive) {
+      let idx = currentSegIdx + 1;
+      while (idx < segments.length && !isProblemSegment(idx)) idx++;
+      if (idx < segments.length) goToSegment(idx);
+    } else {
+      goToSegment(currentSegIdx + 1);
+    }
+  });
   nextUnreviewedBtn.addEventListener('click', () => { const idx = findNextUnreviewed(); if (idx >= 0) goToSegment(idx); });
 
   markReviewedBtn.addEventListener('click', () => {
-    if (reviewedSegments.has(currentSegIdx)) {
-      reviewedSegments.delete(currentSegIdx);
-      updateStats(); updateSegHeader();
-      if (sidebar._renderList) sidebar._renderList();
-    } else {
-      reviewedSegments.add(currentSegIdx);
-      updateStats(); updateSegHeader(); if (sidebar._renderList) sidebar._renderList();
-    }
+    const hash = segHash(currentSegIdx);
+    const audioEntry = getState().audio?.find(a => a.id === audioId);
+    const isNowApproved = toggleSegmentApproval(audioId, hash);
+    syncSegmentApproval(audioId, hash, isNowApproved, getCurrentUser(), audioEntry).catch(console.warn);
+    updateStats();
+    updateSegHeader();
+    if (sidebar._renderList) sidebar._renderList();
   });
 
   // Initial render
