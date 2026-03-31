@@ -214,7 +214,7 @@ export function getStatus(audioId) {
     if (versions.some(v => v.review?.status === 'approved')) return 'approved';
     if (versions.some(v => v.review?.status === 'rejected')) return 'rejected';
     if (versions.some(v => v.alignment)) return 'aligned';
-    if (versions.some(v => v.type === 'cleaned')) return 'cleaned';
+    if (versions.some(v => v.type === 'cleaned' || v.type === 'edited')) return 'cleaned';
     return 'mapped';
   }
   // Fallback to legacy
@@ -359,7 +359,7 @@ function syncLegacyKeys(audioId) {
       confirmedAt: manual.createdAt,
     };
   }
-  const cleaned = versions.find(v => v.type === 'cleaned');
+  const cleaned = versions.find(v => v.type === 'edited') || versions.find(v => v.type === 'cleaned');
   if (cleaned) {
     state.cleaning[audioId] = {
       originalText: cleaned.originalText,

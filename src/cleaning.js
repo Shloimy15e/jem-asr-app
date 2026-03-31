@@ -1,4 +1,4 @@
-import { updateState, getVersions, addVersion, updateVersion, getNextIteration } from './state.js';
+import { getVersions, addVersion, updateVersion, getNextIteration } from './state.js';
 import { loadTranscriptText } from './db.js';
 
 // Individual cleaning passes
@@ -167,28 +167,16 @@ export async function batchClean(audioIds, state, onProgress) {
     // Preserve the original raw text — only set originalText if not already stored
     const existing = state.cleaning && state.cleaning[audioId];
     const originalText = existing?.originalText || rawText;
-    updateState('cleaning', audioId, {
-      originalText,
-      cleanedText,
-      cleanRate,
-      cleanedAt: new Date().toISOString(),
-    });
     // Update the edited (working) version — cleaning and editing share one version.
-    // Also keep a cleaned version for status tracking (getStatus checks type==='cleaned').
+    // getStatus() treats 'edited' as 'cleaned' for pipeline tracking.
     const versions = getVersions(audioId);
     const existingEdited = versions.find(v => v.type === 'edited');
-    const existingCleaned = versions.find(v => v.type === 'cleaned');
     const hasAlignment = versions.some(v => v.alignment?.avgConfidence != null);
-    const iteration = hasAlignment ? getNextIteration(audioId) : (existingEdited?.iteration || existingCleaned?.iteration || 1);
+    const iteration = hasAlignment ? getNextIteration(audioId) : (existingEdited?.iteration || 1);
     if (existingEdited) {
       updateVersion(audioId, existingEdited.id, { text: cleanedText, originalText, cleanRate, iteration });
     } else {
       addVersion(audioId, { type: 'edited', text: cleanedText, originalText, cleanRate, iteration, createdBy: 'system' });
-    }
-    if (existingCleaned) {
-      updateVersion(audioId, existingCleaned.id, { text: cleanedText, originalText, cleanRate, iteration });
-    } else {
-      addVersion(audioId, { type: 'cleaned', text: cleanedText, originalText, cleanRate, iteration, createdBy: 'system' });
     }
 
     succeeded++;

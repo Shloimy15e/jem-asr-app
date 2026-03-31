@@ -964,26 +964,14 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
     const finalLines = rows.map(r => r.changed ? (r.accepted ? r.editedClean : r.orig) : r.orig);
     const finalText = finalLines.join('\n');
     const cleanRate = calculateCleanRate(rawOriginal, finalText);
-    updateState('cleaning', audioId, {
-      originalText: rawOriginal, // locked: never overwritten
-      cleanedText: finalText,
-      cleanRate,
-      cleanedAt: new Date().toISOString(),
-    });
-    // Update the edited (working) version — cleaning and manual editing share one version
+    // Update the edited (working) version — cleaning and manual editing share one version.
+    // getStatus() treats 'edited' as 'cleaned' for pipeline tracking.
     const versions = getVersions(audioId);
     const existingEdited = versions.find(v => v.type === 'edited');
     if (existingEdited) {
       updateVersion(audioId, existingEdited.id, { text: finalText, originalText: rawOriginal, cleanRate });
     } else {
       addVersion(audioId, { type: 'edited', text: finalText, originalText: rawOriginal, cleanRate, createdBy: getCurrentUser() });
-    }
-    // Keep cleaned version in sync for status tracking
-    const existingCleaned = versions.find(v => v.type === 'cleaned');
-    if (existingCleaned) {
-      updateVersion(audioId, existingCleaned.id, { text: finalText, originalText: rawOriginal, cleanRate });
-    } else {
-      addVersion(audioId, { type: 'cleaned', text: finalText, originalText: rawOriginal, cleanRate, createdBy: getCurrentUser() });
     }
     closeModal();
     const s = getState();
