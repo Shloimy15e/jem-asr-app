@@ -63,8 +63,6 @@ CREATE INDEX idx_reviews_library          ON reviews(library_id);
 CREATE INDEX idx_transcript_edits_library ON transcript_edits(library_id);
 
 -- ── Helper function for RLS ────────────────────────────────────────────
--- Returns the set of library IDs the current user is a member of.
--- SECURITY DEFINER + STABLE lets Postgres cache it per transaction.
 
 CREATE OR REPLACE FUNCTION public.user_library_ids()
 RETURNS SETOF TEXT
@@ -76,47 +74,55 @@ AS $$
 $$;
 
 -- ── RLS policies on content tables ────────────────────────────────────
--- Drop old blanket policies (created by 20260324000000_require_auth.sql),
--- replace with library-scoped policies.
+-- Drop old blanket policies, replace with library-scoped policies.
 
-DO $$
-DECLARE
-  t TEXT;
-BEGIN
-  FOR t IN VALUES ('audio_files'), ('transcripts'), ('mappings'),
-                  ('alignments'), ('reviews'), ('transcript_edits'),
-                  ('asr_models'), ('benchmark_results')
-  LOOP
-    -- Drop the old catch-all policy if it exists
-    EXECUTE format('DROP POLICY IF EXISTS "authenticated_read_write" ON %I', t);
+DROP POLICY IF EXISTS "authenticated_read_write" ON audio_files;
+CREATE POLICY "library_select" ON audio_files FOR SELECT TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_insert" ON audio_files FOR INSERT TO authenticated WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_update" ON audio_files FOR UPDATE TO authenticated USING (library_id IN (SELECT public.user_library_ids())) WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_delete" ON audio_files FOR DELETE TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
 
-    EXECUTE format($$
-      CREATE POLICY "library_select" ON %I
-        FOR SELECT TO authenticated
-        USING (library_id IN (SELECT public.user_library_ids()))
-    $$, t);
+DROP POLICY IF EXISTS "authenticated_read_write" ON transcripts;
+CREATE POLICY "library_select" ON transcripts FOR SELECT TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_insert" ON transcripts FOR INSERT TO authenticated WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_update" ON transcripts FOR UPDATE TO authenticated USING (library_id IN (SELECT public.user_library_ids())) WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_delete" ON transcripts FOR DELETE TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
 
-    EXECUTE format($$
-      CREATE POLICY "library_insert" ON %I
-        FOR INSERT TO authenticated
-        WITH CHECK (library_id IN (SELECT public.user_library_ids()))
-    $$, t);
+DROP POLICY IF EXISTS "authenticated_read_write" ON mappings;
+CREATE POLICY "library_select" ON mappings FOR SELECT TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_insert" ON mappings FOR INSERT TO authenticated WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_update" ON mappings FOR UPDATE TO authenticated USING (library_id IN (SELECT public.user_library_ids())) WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_delete" ON mappings FOR DELETE TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
 
-    EXECUTE format($$
-      CREATE POLICY "library_update" ON %I
-        FOR UPDATE TO authenticated
-        USING  (library_id IN (SELECT public.user_library_ids()))
-        WITH CHECK (library_id IN (SELECT public.user_library_ids()))
-    $$, t);
+DROP POLICY IF EXISTS "authenticated_read_write" ON alignments;
+CREATE POLICY "library_select" ON alignments FOR SELECT TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_insert" ON alignments FOR INSERT TO authenticated WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_update" ON alignments FOR UPDATE TO authenticated USING (library_id IN (SELECT public.user_library_ids())) WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_delete" ON alignments FOR DELETE TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
 
-    EXECUTE format($$
-      CREATE POLICY "library_delete" ON %I
-        FOR DELETE TO authenticated
-        USING (library_id IN (SELECT public.user_library_ids()))
-    $$, t);
-  END LOOP;
-END;
-$$;
+DROP POLICY IF EXISTS "authenticated_read_write" ON reviews;
+CREATE POLICY "library_select" ON reviews FOR SELECT TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_insert" ON reviews FOR INSERT TO authenticated WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_update" ON reviews FOR UPDATE TO authenticated USING (library_id IN (SELECT public.user_library_ids())) WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_delete" ON reviews FOR DELETE TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
+
+DROP POLICY IF EXISTS "authenticated_read_write" ON transcript_edits;
+CREATE POLICY "library_select" ON transcript_edits FOR SELECT TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_insert" ON transcript_edits FOR INSERT TO authenticated WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_update" ON transcript_edits FOR UPDATE TO authenticated USING (library_id IN (SELECT public.user_library_ids())) WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_delete" ON transcript_edits FOR DELETE TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
+
+DROP POLICY IF EXISTS "authenticated_read_write" ON asr_models;
+CREATE POLICY "library_select" ON asr_models FOR SELECT TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_insert" ON asr_models FOR INSERT TO authenticated WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_update" ON asr_models FOR UPDATE TO authenticated USING (library_id IN (SELECT public.user_library_ids())) WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_delete" ON asr_models FOR DELETE TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
+
+DROP POLICY IF EXISTS "authenticated_read_write" ON benchmark_results;
+CREATE POLICY "library_select" ON benchmark_results FOR SELECT TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_insert" ON benchmark_results FOR INSERT TO authenticated WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_update" ON benchmark_results FOR UPDATE TO authenticated USING (library_id IN (SELECT public.user_library_ids())) WITH CHECK (library_id IN (SELECT public.user_library_ids()));
+CREATE POLICY "library_delete" ON benchmark_results FOR DELETE TO authenticated USING (library_id IN (SELECT public.user_library_ids()));
 
 -- ── Update audio_pipeline_status view to include library_id ───────────
 

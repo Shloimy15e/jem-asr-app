@@ -414,11 +414,23 @@ The app supports multiple independent libraries (datasets). Migration `202603310
 
 **localStorage keys:** `saveToStorage()` / `loadFromStorage()` use `asr-state-${libraryId}` instead of `jem-asr-state`. `initState()` runs a one-time migration: if `jem-asr-state` exists and active library is `jemedia`, it moves the data to `asr-state-jemedia` and removes the old key.
 
-**To add a new library:** Insert a row in `libraries`, insert rows in `library_members` for the relevant users — done via Supabase dashboard. No app-level admin UI needed.
+**To add a new library:** Use the Admin dashboard at `/admin.html` (Admin button visible in header for admin-role users). Libraries and members can also be managed via the Supabase dashboard directly.
 
 **Workers SSRF allowlist:** `functions/api/audio.js` and `functions/api/align.js` read `context.env.ALLOWED_R2_DOMAINS` (comma-separated) to determine which R2 hostnames are allowed. Defaults to `audio.kohnai.ai` when unset. `functions/api/transcript.js` accepts an optional `?domain=` param validated against the same allowlist.
 
-`vite.config.js` has three entry points: `main` (index.html), `detail` (detail.html), `login` (login.html). If you add a new top-level HTML page you must add it here.
+### Admin dashboard — library and member management
+`admin.html` + `src/admin.js` — accessible at `/admin.html`. Protected: redirects to login if unauthenticated; shows "No admin access" if user has no `admin` role. The **Admin** link in the main app header is shown only when `libraries.some(l => l.role === 'admin')`.
+
+**Libraries tab:** Lists all libraries the user administrates (ID, name, R2 domain, transcript path). Edit any field via a modal (updates `libraries` table). Create a new library via the `create_library()` SQL RPC — automatically adds the caller as admin.
+
+**Members tab:** Pick a library → loads members via `get_library_members()` RPC (returns email + role, requires SECURITY DEFINER to read `auth.users`). Change role inline, remove member, or add by email via `add_library_member()` RPC.
+
+**SQL functions** (migration `20260331000001_admin_helpers.sql`, all `SECURITY DEFINER`):
+- `create_library(p_id, p_name, p_r2_domain, p_transcript_prefix, p_audio_prefix)` — inserts library + adds caller as admin
+- `add_library_member(p_library_id, p_email, p_role)` — looks up user by email, upserts membership, returns UUID
+- `get_library_members(p_library_id)` — returns `(user_id, email, role, created_at)` for all members
+
+`vite.config.js` has four entry points: `main` (index.html), `detail` (detail.html), `login` (login.html), `admin` (admin.html). If you add a new top-level HTML page you must add it here.
 
 ### Word view karaoke scroll only fires when word view is visible
 The `timeupdate` handler in `renderWordView` calls `scrollIntoView` on the active word chip **only if** the word view container is currently in the viewport (`container.getBoundingClientRect()`). This prevents the top audio player from dragging the page down to the word chips while the user is viewing the player section.
