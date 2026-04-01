@@ -328,12 +328,20 @@ The startup sort in `db.js` originally used `parseInt(a.id.slice(2))` which assu
 `/api/transcript?name=` originally extracted just the filename from `r2TranscriptLink` and prepended `audio.kohnai.ai/transcripts-txt/`. For new libraries whose transcripts live at custom paths (e.g. `hoshana-5710/transcripts/transcript.txt`), this produces a wrong URL. Fixed: `loadFullText` in `detail.js` now passes `?name=<full-path>&domain=<host>` to the proxy. The proxy (`functions/api/transcript.js`) treats `name` as the full path when `domain` is explicitly provided, constructing `https://<domain>/<name>` directly.
 
 ### Audio player must route through /api/audio proxy — never set src directly
-`detail.js` sets `playerEl.src` for the main audio player. For JEM files on `audio.kohnai.ai` this accidentally worked because the browser could reach the URL, but for `r2.dev` URLs it fails with CORS errors. The player src must always be `/api/audio?url=<encoded>` for any R2 URL. Fixed: player src now uses `isLibraryR2Url(audioUrl)` to detect R2 URLs and proxies them.
+**Three places** set an audio element's `src` — all must proxy R2 URLs:
+1. `detail.js` — main detail page player (`playerEl.src`)
+2. `app.js` — inline expanded panel player (unmapped rows)
+3. `table.js` `toggleInlinePlay()` — `new Audio(url)` inline play button
+
+For JEM files on `audio.kohnai.ai` this accidentally worked because the browser could reach the URL, but for `r2.dev` URLs it fails with CORS errors. The src must always be `/api/audio?url=<encoded>` for any R2 URL. All three locations use `isLibraryR2Url(audioUrl)` to detect R2 URLs and proxy them.
 
 `isLibraryR2Url()` in `auth.js` matches the library's configured `r2Domain` **and** any `*.r2.dev` hostname — both must be included since new library files use the public `r2.dev` URL.
 
 ### R2 custom domain (audio.kohnai.ai) only serves pre-existing objects
 New objects uploaded to the `jem-asr-audio` R2 bucket via `wrangler r2 object put` do NOT appear at `audio.kohnai.ai` — they return 404 even though they exist in the bucket. The `r2.dev` public URL (`pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev`) works for all objects. New library audio files should use the `r2.dev` URL in their `r2_link` column. The `ALLOWED_R2_DOMAINS` Pages secret includes both domains: `audio.kohnai.ai,pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev`.
+
+### db.js sync functions require library_id filters
+`syncAudioField`, `syncAudioDuration`, `syncAudioTrim`, and `deleteMapping` all filter by both `id` **and** `library_id`. Without the `library_id` filter, an update on a shared-ID row could silently mutate data in a different library. Always include `.eq('library_id', getActiveLibrary() || 'jemedia')` alongside `.eq('id', audioId)` in any `UPDATE` or `DELETE` on `audio_files` or `mappings`. `getActiveLibrary` is imported at the top of `db.js`.
 
 ### Supabase row limit — use fetchAll(), not .limit()
 `supabase.from(...).select(...).limit(10000)` does NOT work — Supabase's server-side `max_rows` caps responses at 1,000 rows regardless of the client-side `.limit()` call. All startup queries use `fetchAll(table, columns)` defined in `db.js`, which paginates in 1,000-row chunks via `.range(from, from+999)` until all records are returned. Never replace this with `.limit()`.
@@ -459,6 +467,19 @@ The app supports multiple independent libraries (datasets). Migration `202603310
 **Libraries tab:** Lists all libraries the user administrates (ID, name, R2 domain, transcript path). Edit any field via a modal (updates `libraries` table). Create a new library via the `create_library()` SQL RPC — automatically adds the caller as admin.
 
 **Members tab:** Pick a library → loads members via `get_library_members()` RPC (returns email + role, requires SECURITY DEFINER to read `auth.users`). Change role inline, remove member, or add by email via `add_library_member()` RPC.
+
+**Upload tab:** Pick a library and file type (audio or transcript), select a file, optionally edit the display name and record ID, then click Upload. The flow is:
+1. Browser `POST /api/upload` (multipart) with `Authorization: Bearer <supabase-jwt>`, `file`, and `key` (`{libraryId}/{filename}`)
+2. Worker (`functions/api/upload.js`) verifies JWT against Supabase, uploads to `R2_BUCKET` binding, returns `{ url, key }`
+3. Client inserts row into `audio_files` (or `transcripts`) in Supabase with the returned `r2.dev` URL
+4. Success message shows the new record ID and a link to the file in R2
+
+The upload endpoint requires three Cloudflare Pages secrets: `R2_BUCKET` binding (set in `wrangler.toml`), `SUPABASE_URL`, and `SUPABASE_ANON_KEY`. The Supabase secrets are already set via:
+```bash
+npx wrangler pages secret put SUPABASE_URL --project-name jem-asr-app
+npx wrangler pages secret put SUPABASE_ANON_KEY --project-name jem-asr-app
+```
+Without `SUPABASE_URL`/`SUPABASE_ANON_KEY`, the JWT check is skipped (endpoint is open). The `R2_BUCKET` binding is declared in `wrangler.toml` and automatically available in production.
 
 **SQL functions** (migration `20260331000001_admin_helpers.sql`, all `SECURITY DEFINER`):
 - `create_library(p_id, p_name, p_r2_domain, p_transcript_prefix, p_audio_prefix)` — inserts library + adds caller as admin
@@ -667,7 +688,8 @@ jem-asr-app/
 │   ├── align.js                # CF Worker: POST proxy → align.kohnai.ai/api/align (also handles Whisper transcription via mode:'transcribe')
 │   ├── audio.js                # CF Worker: GET proxy for R2 audio (streams, 1-day cache)
 │   ├── transcript.js           # CF Worker: GET proxy for transcript text from R2
-│   └── transcribe.js           # CF Worker: POST proxy for ASR transcription providers (Gemini Vertex AI, Yiddish Labs)
+│   ├── transcribe.js           # CF Worker: POST proxy for ASR transcription providers (Gemini Vertex AI, Yiddish Labs)
+│   └── upload.js               # CF Worker: POST — upload audio/transcript to R2 bucket (requires R2_BUCKET binding + SUPABASE_URL/SUPABASE_ANON_KEY secrets)
 ├── scripts/
 │   ├── seed-transcripts.mjs    # One-off: seed all transcripts + fetch 50hr text from R2
 │   └── measure-audio-duration.mjs  # One-off: measure real MP3 duration, update est_minutes
