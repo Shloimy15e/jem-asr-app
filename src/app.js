@@ -1,5 +1,5 @@
 import { initState, getState, getStatus, exportState, importState, mergeSupabaseData } from './state.js';
-import { checkAuth, signOut, getUserLibraries, getActiveLibrary, setActiveLibrary } from './auth.js';
+import { checkAuth, signOut, getUserLibraries, getActiveLibrary, setActiveLibrary, isLibraryR2Url } from './auth.js';
 import { loadFromSupabase } from './db.js';
 import { renderTable, updateTable, getSelectedRows } from './table.js';
 import { renderSuggestedMatches, linkMatch, renderSearchModal } from './mapping.js';
@@ -144,7 +144,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const playerEl = document.createElement('audio');
       playerEl.controls = true;
       playerEl.preload = 'none';
-      playerEl.src = audioUrl;
+      playerEl.src = isLibraryR2Url(audioUrl) ? `/api/audio?url=${encodeURIComponent(audioUrl)}` : audioUrl;
       playerEl.className = 'audio-player';
       playerSection.appendChild(playerEl);
     } else {

@@ -61,7 +61,9 @@ export async function syncMapping(audioId, mapping, audioEntry) {
 }
 
 export async function deleteMapping(audioId) {
-  const { error } = await supabase.from('mappings').delete().eq('audio_id', audioId);
+  const { error } = await supabase.from('mappings').delete()
+    .eq('audio_id', audioId)
+    .eq('library_id', getActiveLibrary() || 'jemedia');
   if (error) console.warn('[DB] deleteMapping:', error.message);
 }
 
@@ -160,7 +162,8 @@ async function syncAudioField(audioId, column, value) {
   const { error } = await supabase
     .from('audio_files')
     .update({ [column]: value })
-    .eq('id', audioId);
+    .eq('id', audioId)
+    .eq('library_id', getActiveLibrary() || 'jemedia');
   if (error) console.warn(`[DB] syncAudioField(${column}):`, error.message);
 }
 
@@ -176,7 +179,8 @@ export async function syncAudioDuration(audioId, durationMinutes) {
   const { error } = await supabase
     .from('audio_files')
     .update({ duration_minutes: durationMinutes })
-    .eq('id', audioId);
+    .eq('id', audioId)
+    .eq('library_id', getActiveLibrary() || 'jemedia');
   if (error) console.warn('[DB] syncAudioDuration:', error.message);
 }
 
@@ -184,7 +188,8 @@ async function syncAudioTrim(audioId, trim) {
   const { error } = await supabase
     .from('audio_files')
     .update({ trim_start: trim?.start || 0, trim_end: trim?.end || 0 })
-    .eq('id', audioId);
+    .eq('id', audioId)
+    .eq('library_id', getActiveLibrary() || 'jemedia');
   if (error) console.warn('[DB] syncAudioTrim:', error.message);
 }
 

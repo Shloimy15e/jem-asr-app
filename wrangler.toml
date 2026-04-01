@@ -1,3 +1,7 @@
 name = "jem-asr-app"
 compatibility_date = "2025-01-01"
 pages_build_output_dir = "./dist"
+
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "jem-asr-audio"

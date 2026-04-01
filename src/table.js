@@ -1,6 +1,7 @@
 import { getState, getFilteredRows, getFilterCounts, getStatus, updateState } from './state.js';
 import { truncateWords, formatConfidence, debounce } from './utils.js';
 import { linkMatch, getSuggestedMatches } from './mapping.js';
+import { isLibraryR2Url } from './auth.js';
 
 // ── Inline audio player ─────────────────────────────────────────────
 let _activeInlinePlayer = null;
@@ -29,7 +30,8 @@ function toggleInlinePlay(btn, audioUrl, audioId) {
     return;
   }
   stopInlinePlayer();
-  const audio = new Audio(audioUrl);
+  const proxiedUrl = isLibraryR2Url(audioUrl) ? `/api/audio?url=${encodeURIComponent(audioUrl)}` : audioUrl;
+  const audio = new Audio(proxiedUrl);
   audio.play();
   btn.textContent = '\u25A0';
   btn.classList.add('playing');
