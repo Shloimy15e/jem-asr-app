@@ -888,7 +888,11 @@ Each chunk retries **15 times** on 502/504 HTTP errors AND network-level errors 
 **Do not reduce `MAX_RETRIES` below 15.** RunPod scales to zero when idle. A cold GPU returns 502 for ~2.5 minutes before becoming ready. With only 3 retries (the old value), alignment would always fail on a cold GPU.
 
 ### Alignment failure: "The string did not match the expected pattern."
-This browser DOMException (Safari/WebKit) means the audio file has no `r2_link` in the DB and the code fell back to `driveLink` (Google Drive), which is CORS-blocked. The fix: set `r2_link` in Supabase for the affected file. The R2 file likely already exists at `https://audio.kohnai.ai/training/<encoded-filename>.mp3` — confirm with a HEAD request, then run: `UPDATE audio_files SET r2_link = '<url>' WHERE id = '<id>'` via `npx supabase db query --linked`. `fetchAudioForAlignment` now catches this and surfaces a clear error message pointing to the missing `r2_link`.
+**Root cause (confirmed 2026-03-31):** All imported transcript texts contain lone surrogate characters (� etc.) — encoding artifacts from the source .txt files. Safari throws this DOMException when `JSON.stringify` encounters lone surrogates. Triggered on files >15K chars (multi-chunk) because each chunk's text goes through `JSON.stringify`. 27 of 32 `transcript_edits` rows were affected as of 2026-03-31.
+
+**Fix in place (alignment.js):** `alignRow` strips lone surrogates with `.replace(/[�-�]/gu, '')` before processing. Stored `transcript_edits.text` in Supabase still contains them but alignment silently drops them. New cleaned files inherit the issue; the runtime fix handles it automatically.
+
+**Secondary cause:** If an audio file has no `r2_link` and falls back to `driveLink` (Google Drive, CORS-blocked), `decodeAudioData` can also throw this error. Fix: set `r2_link` in Supabase. `fetchAudioForAlignment` now surfaces a clear error message for this path.
 
 ### benchmark.js
 ```javascript

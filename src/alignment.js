@@ -82,7 +82,13 @@ async function fetchAudioForAlignment(url, trimStart, trimEnd, audioDuration) {
   // Non-R2 trimmed audio — crop + downsample to 16 kHz mono in the browser.
   const arrayBuffer = await blob.arrayBuffer();
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const decoded = await audioCtx.decodeAudioData(arrayBuffer);
+  let decoded;
+  try {
+    decoded = await audioCtx.decodeAudioData(arrayBuffer);
+  } catch (e) {
+    await audioCtx.close().catch(() => {});
+    throw new Error("Audio decode failed (URL returned non-audio data). Set r2_link in Supabase for " + url.substring(0, 60));
+  }
   await audioCtx.close();
 
   const sr = decoded.sampleRate;
@@ -203,10 +209,13 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const url = getAudioUrl(audioId, state);
   if (!url) throw new Error(`No audio URL for ${audioId}`);
 
-  const alignText = textOverride || state.cleaning[audioId]?.cleanedText;
-  if (!alignText) {
+  const rawAlignText = textOverride || state.cleaning[audioId]?.cleanedText;
+  if (!rawAlignText) {
     throw new Error(`No text for alignment for ${audioId}`);
   }
+  // Strip lone surrogates (encoding artifact in imported transcripts) that crash
+  // JSON.stringify with "The string did not match the expected pattern." in Safari.
+  const alignText = rawAlignText.replace(/[�-�]/gu, "");
 
   const trim = state.trims?.[audioId] || {};
   const trimStart = trim.start || 0;
