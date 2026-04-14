@@ -51,9 +51,7 @@ let searchTerm = '';
 let filterYear = '';
 let filterMonth = '';
 let filterType = '';
-let selectedIds = new Set();
 const PAGE_SIZE = 50;
-let _filteredTotal = 0;
 
 function updateURL() {
   const params = new URLSearchParams();
@@ -66,11 +64,9 @@ function updateURL() {
 
 let _container = null;
 let _onRowExpand = null;
-let _onRowSelect = null;
 
 // ── Column definitions ─────────────────────────────────────────────
 const COLUMNS = [
-  { key: 'checkbox',      label: '',                  sortable: false, showWhen: () => true },
   { key: 'rowNum',        label: '#',                 sortable: false, showWhen: () => true },
   { key: 'name',          label: 'Audio Name',        sortable: true,  showWhen: () => true },
   { key: 'year',          label: 'Year',              sortable: true,  showWhen: () => true },
@@ -395,23 +391,7 @@ function buildTable(rows) {
   const headerRow = document.createElement('tr');
   cols.forEach(col => {
     const th = document.createElement('th');
-    if (col.key === 'checkbox') {
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.className = 'select-all-cb';
-      cb.setAttribute('aria-label', 'Select all rows');
-      cb.checked = rows.length > 0 && rows.every(r => selectedIds.has(r.id));
-      cb.addEventListener('change', () => {
-        if (cb.checked) {
-          rows.forEach(r => selectedIds.add(r.id));
-        } else {
-          rows.forEach(r => selectedIds.delete(r.id));
-        }
-        updateTable();
-        _fireRowSelect();
-      });
-      th.appendChild(cb);
-    } else {
+    {
       th.textContent = col.label;
       if (col.sortable) {
         th.classList.add('sortable');
@@ -446,31 +426,11 @@ function buildTable(rows) {
     tr.className = 'table-row';
     tr.setAttribute('data-audio-id', row.id);
     if (row.isBenchmark) tr.classList.add('benchmark-row');
-    if (selectedIds.has(row.id)) tr.classList.add('selected');
 
     cols.forEach(col => {
       const td = document.createElement('td');
 
       switch (col.key) {
-        case 'checkbox': {
-          const cb = document.createElement('input');
-          cb.type = 'checkbox';
-          cb.className = 'row-checkbox';
-          cb.checked = selectedIds.has(row.id);
-          cb.setAttribute('aria-label', 'Select ' + (row.name || row.id));
-          cb.addEventListener('change', (e) => {
-            e.stopPropagation();
-            if (cb.checked) {
-              selectedIds.add(row.id);
-            } else {
-              selectedIds.delete(row.id);
-            }
-            updateTable();
-            _fireRowSelect();
-          });
-          td.appendChild(cb);
-          break;
-        }
         case 'rowNum':
           td.textContent = startIdx + i + 1;
           break;
@@ -644,28 +604,14 @@ function buildCardView(rows) {
   pageRows.forEach(row => {
     const card = document.createElement('div');
     card.className = 'card-item';
-    if (selectedIds.has(row.id)) card.classList.add('selected');
 
     const header = document.createElement('div');
     header.className = 'card-item-header';
-
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.className = 'row-checkbox';
-    cb.checked = selectedIds.has(row.id);
-    cb.addEventListener('change', (e) => {
-      e.stopPropagation();
-      if (cb.checked) selectedIds.add(row.id);
-      else selectedIds.delete(row.id);
-      updateTable();
-      _fireRowSelect();
-    });
 
     const name = document.createElement('span');
     name.className = 'card-item-name';
     name.textContent = row.name;
 
-    header.appendChild(cb);
     header.appendChild(name);
 
     const meta = document.createElement('div');
@@ -791,22 +737,12 @@ function updateFilterPills() {
   });
 }
 
-function updateBulkCount() {
-  const el = document.getElementById('bulk-selection-count');
-  if (el) el.textContent = `${selectedIds.size} of ${_filteredTotal} selected`;
-}
-
-function _fireRowSelect() {
-  updateBulkCount();
-  if (_onRowSelect) _onRowSelect([...selectedIds]);
-}
 
 // ── Public API ──────────────────────────────────────────────────────
 
 function renderTable(container, options = {}) {
   _container = container;
   _onRowExpand = options.onRowExpand || null;
-  _onRowSelect = options.onRowSelect || null;
 
   if (options.filter) currentFilter = options.filter;
 
@@ -822,10 +758,8 @@ function renderTable(container, options = {}) {
     pill.addEventListener('click', () => {
       currentFilter = pill.getAttribute('data-filter');
       currentPage = 1;
-      selectedIds.clear();
       updateURL();
       updateTable();
-      _fireRowSelect();
       if (_container) _container.scrollTo({ top: 0, behavior: 'smooth' });
     });
   });
@@ -895,9 +829,6 @@ function updateTable() {
   // Apply sort
   rows = sortRows(rows);
 
-  // Track filtered total for bulk count display
-  _filteredTotal = rows.length;
-
   // Stop any playing inline audio before clearing
   stopInlinePlayer();
 
@@ -907,7 +838,6 @@ function updateTable() {
   // Update UI
   updateFilterCounts();
   updateFilterPills();
-  updateBulkCount();
 
   // Build and append table
   const table = buildTable(rows);
@@ -922,8 +852,4 @@ function updateTable() {
   _container.appendChild(pagination);
 }
 
-function getSelectedRows() {
-  return [...selectedIds];
-}
-
-export { renderTable, updateTable, getSelectedRows };
+export { renderTable, updateTable };

@@ -1200,12 +1200,10 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       placeholder.remove();
       renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl, activeVersionRef);
       renderIterationHistory(audioId, container, pageContainer, playerEl);
-      renderApproveBar(audioId, container, pageContainer);
     });
   } else if (alignment) {
     renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef);
     renderIterationHistory(audioId, container, pageContainer, playerEl);
-    renderApproveBar(audioId, container, pageContainer);
   } else {
     const placeholder = document.createElement('div');
     placeholder.className = 'word-view-placeholder';

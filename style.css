@@ -703,60 +703,6 @@ input {
 }
 
 /* === Bulk Action Bar (floating bottom) === */
-.bulk-action-bar {
-  position: fixed;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: max-content;
-  max-width: calc(100% - 48px);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 20px;
-  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0));
-  background: rgba(28, 28, 30, 0.88);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: none;
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
-  z-index: 90;
-}
-
-.bulk-selection-count {
-  font-size: 0.82rem;
-  color: rgba(255,255,255,0.7);
-  margin-right: 4px;
-  white-space: nowrap;
-}
-
-.bulk-btn {
-  padding: 7px 16px;
-  background: rgba(255,255,255,0.14);
-  color: rgba(255,255,255,0.92);
-  border: none;
-  border-radius: 999px;
-  font-size: 0.82rem;
-  font-weight: 600;
-  transition: all var(--transition);
-  white-space: nowrap;
-}
-
-.bulk-btn:hover {
-  background: rgba(255,255,255,0.22);
-  color: #fff;
-}
-
-.bulk-btn-approve {
-  background: var(--green);
-  color: #fff;
-  border: none;
-}
-
-.bulk-btn-approve:hover {
-  opacity: 0.88;
-}
 
 /* === Modal Overlay === */
 .modal-overlay {
@@ -1193,11 +1139,6 @@ input {
     max-height: 90vh;
   }
 
-  .bulk-action-bar {
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 10px 16px;
-  }
 }
 
 /* === Responsive: Mobile (<=480px) === */
@@ -3735,19 +3676,6 @@ details[open] > .pipeline-tools-summary::before {
   color: var(--red-dark);
 }
 
-/* === Responsive mobile bulk bar === */
-@media (max-width: 640px) {
-  .bulk-action-bar {
-    bottom: 12px;
-    max-width: calc(100% - 24px);
-    padding: 10px 16px;
-    gap: 8px;
-  }
-  .bulk-btn {
-    padding: 7px 12px;
-    font-size: 0.78rem;
-  }
-}
 
 /* === Focus visible rings === */
 :focus-visible {

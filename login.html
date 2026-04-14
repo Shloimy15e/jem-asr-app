@@ -191,6 +191,23 @@
       </form>
     </div>
 
+    <div class="login-card" id="set-password-card" style="display:none;">
+      <h2 class="login-title">Set Your Password</h2>
+      <p style="font-size:0.9rem;color:#666;margin-bottom:16px;">Welcome! Create a password to complete your account setup.</p>
+      <form id="set-password-form">
+        <div class="login-field">
+          <label for="new-password">New Password</label>
+          <input type="password" id="new-password" autocomplete="new-password" required minlength="6" placeholder="At least 6 characters" />
+        </div>
+        <div class="login-field">
+          <label for="confirm-password">Confirm Password</label>
+          <input type="password" id="confirm-password" autocomplete="new-password" required minlength="6" placeholder="Re-enter your password" />
+        </div>
+        <button type="submit" class="login-submit" id="set-password-submit">Set Password & Continue</button>
+        <div class="login-error" id="set-password-error"></div>
+      </form>
+    </div>
+
     <div class="login-footer">Authorized access only</div>
   </div>
 

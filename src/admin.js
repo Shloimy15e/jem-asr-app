@@ -352,7 +352,7 @@ function renderMemberList(container, libraryId, members) {
 
   const addHeading = document.createElement('h3');
   addHeading.className = 'admin-subsection-title';
-  addHeading.textContent = 'Add Member';
+  addHeading.textContent = 'Invite / Add Member';
   addSection.appendChild(addHeading);
 
   const form = document.createElement('div');
@@ -375,7 +375,7 @@ function renderMemberList(container, libraryId, members) {
 
   const addBtn = document.createElement('button');
   addBtn.className = 'action-btn action-btn-primary';
-  addBtn.textContent = 'Add';
+  addBtn.textContent = 'Invite';
 
   const addErr = document.createElement('div');
   addErr.className = 'admin-error';
@@ -386,24 +386,32 @@ function renderMemberList(container, libraryId, members) {
     if (!email) { addErr.textContent = 'Enter an email address.'; return; }
 
     addBtn.disabled = true;
-    addBtn.textContent = 'Adding…';
+    addBtn.textContent = 'Inviting…';
     try {
-      const { data: userId, error } = await supabase.rpc('add_library_member', {
-        p_library_id: libraryId,
-        p_email: email,
-        p_role: roleSelect.value,
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch('/api/invite', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, library_id: libraryId, role: roleSelect.value }),
       });
-      if (error) throw error;
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Invite failed');
+
       emailInput.value = '';
       addBtn.disabled = false;
-      addBtn.textContent = 'Add';
+      addBtn.textContent = result.invited ? '✓ Invite sent!' : '✓ Added!';
+      setTimeout(() => { addBtn.textContent = 'Invite'; }, 2000);
+
       // Reload member list
       const { data, error: reloadErr } = await supabase.rpc('get_library_members', { p_library_id: libraryId });
       if (!reloadErr) renderMemberList(container, libraryId, data || []);
     } catch (err) {
       addErr.textContent = err.message;
       addBtn.disabled = false;
-      addBtn.textContent = 'Add';
+      addBtn.textContent = 'Invite';
     }
   });
 

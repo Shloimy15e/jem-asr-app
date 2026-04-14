@@ -1,11 +1,9 @@
 import { initState, getState, getStatus, exportState, importState, mergeSupabaseData } from './state.js';
 import { checkAuth, signOut, getUserLibraries, getActiveLibrary, setActiveLibrary, isLibraryR2Url } from './auth.js';
 import { loadFromSupabase } from './db.js';
-import { renderTable, updateTable, getSelectedRows } from './table.js';
+import { renderTable, updateTable } from './table.js';
 import { renderSuggestedMatches, linkMatch, renderSearchModal } from './mapping.js';
-import { batchClean } from './cleaning.js';
-import { batchAlign } from './alignment.js';
-import { approveAll } from './review.js';
+
 
 import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark.js';
 import { buildAsrConfigPanel } from './asr-config.js';
@@ -276,24 +274,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ── Render table ────────────────────────────────────────────────
 
-  const bulkCleanBtn = document.getElementById('btn-clean-selected');
-
-  function updateBulkCleanBtn() {
-    const selected = getSelectedRows();
-    if (bulkCleanBtn) {
-      bulkCleanBtn.disabled = selected.length === 0;
-      bulkCleanBtn.title = selected.length === 0 ? 'Select rows first' : 'Clean selected files';
-    }
-  }
-
   renderTable(tableContainer, {
     onRowExpand,
-    onRowSelect: () => updateBulkCleanBtn(),
     filter: has50hr ? 'fifty' : 'all',
   });
-
-  // Initialize button state
-  updateBulkCleanBtn();
 
   // ── Mobile filter drawer toggle ─────────────────────────────────
 
@@ -342,56 +326,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
   }
-
-  // ── Bulk actions ────────────────────────────────────────────────
-
-  document.getElementById('btn-clean-selected').addEventListener('click', async () => {
-    const selected = getSelectedRows();
-    if (selected.length === 0) return;
-
-    const bar = document.getElementById('bulk-selection-count');
-    const originalText = bar.textContent;
-
-    const { succeeded, failed } = await batchClean(selected, getState(), (done, total, elapsed) => {
-      bar.textContent = `Cleaning ${done} / ${total}${elapsed ? ` (${elapsed}s)` : ''}...`;
-    });
-
-    bar.textContent = originalText;
-    updateTable();
-    if (failed.length > 0) {
-      console.warn('[BulkClean] Failed files:', failed);
-      alert(`Cleaned ${succeeded} files. ${failed.length} failed — check console for details.`);
-    }
-  });
-
-  document.getElementById('btn-align-selected').addEventListener('click', async () => {
-    const selected = getSelectedRows();
-    if (selected.length === 0) return;
-
-    const bar = document.getElementById('bulk-selection-count');
-    const originalText = bar.textContent;
-
-    await batchAlign(selected, getState(), (done, total, elapsed) => {
-      bar.textContent = `Aligning ${done} / ${total} (${elapsed}s)...`;
-    });
-
-    bar.textContent = originalText;
-    updateTable();
-  });
-
-  document.getElementById('btn-approve-selected').addEventListener('click', () => {
-    const selected = getSelectedRows();
-    if (selected.length === 0) return;
-    // Filter out benchmark rows — they cannot be approved
-    const state = getState();
-    const nonBenchmark = selected.filter(id => {
-      const audio = state.audio.find(a => a.id === id);
-      return audio && !audio.isBenchmark;
-    });
-    if (nonBenchmark.length === 0) return;
-    approveAll(nonBenchmark, state);
-    updateTable();
-  });
 
   // ── Export / Import ─────────────────────────────────────────────
 
