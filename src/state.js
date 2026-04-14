@@ -178,6 +178,38 @@ export function mergeSupabaseData(remote) {
     }
   }
 
+  // Benchmark data
+  if (remote.benchmarks) {
+    for (const [audioId, benchData] of Object.entries(remote.benchmarks)) {
+      if (!state.benchmarks[audioId]) {
+        state.benchmarks[audioId] = benchData;
+      } else {
+        const existing = state.benchmarks[audioId].results || [];
+        const existingKeys = new Set(existing.map(r => `${r.model}_${r.ranAt}`));
+        for (const r of benchData.results || []) {
+          if (!existingKeys.has(`${r.model}_${r.ranAt}`)) {
+            existing.push(r);
+          }
+        }
+        state.benchmarks[audioId].results = existing;
+      }
+    }
+  }
+
+  // ASR model configs
+  if (remote.asrModels && remote.asrModels.length > 0) {
+    const existing = state.asrModels || [];
+    for (const remoteModel of remote.asrModels) {
+      const match = existing.find(m => m.id === remoteModel.id || m.name === remoteModel.name);
+      if (match) {
+        Object.assign(match, remoteModel, match.apiKey && !remoteModel.apiKey ? { apiKey: match.apiKey } : {});
+      } else {
+        existing.push(remoteModel);
+      }
+    }
+    state.asrModels = existing;
+  }
+
   // Re-run migration so transcriptVersions reflects the merged data
   migrateToVersions();
   saveToStorage();
@@ -204,6 +236,9 @@ export function updateState(key, audioId, value) {
   if (audioId !== null) {
     const audioEntry = state.audio?.find(a => a.id === audioId);
     syncStateKey(key, audioId, value, audioEntry);
+  } else {
+    // Keys like 'asrModels' are saved with audioId=null (arrays, not keyed by audio)
+    syncStateKey(key, null, value, null);
   }
 }
 

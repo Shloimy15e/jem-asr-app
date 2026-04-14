@@ -61,9 +61,24 @@ export async function syncMapping(audioId, mapping, audioEntry) {
 }
 
 export async function deleteMapping(audioId) {
+  const lib = getActiveLibrary() || 'jemedia';
+  // Delete dependent rows first to avoid orphans
+  const deletes = [
+    supabase.from('transcript_edits').delete().eq('audio_id', audioId).eq('library_id', lib),
+    supabase.from('alignments').delete().eq('audio_id', audioId).eq('library_id', lib),
+    supabase.from('reviews').delete().eq('audio_id', audioId).eq('library_id', lib),
+  ];
+  const results = await Promise.all(deletes);
+  results.forEach(({ error }, i) => {
+    if (error) {
+      const table = ['transcript_edits', 'alignments', 'reviews'][i];
+      console.warn(`[DB] deleteMapping cascade (${table}):`, error.message);
+    }
+  });
+
   const { error } = await supabase.from('mappings').delete()
     .eq('audio_id', audioId)
-    .eq('library_id', getActiveLibrary() || 'jemedia');
+    .eq('library_id', lib);
   if (error) console.warn('[DB] deleteMapping:', error.message);
 }
 
@@ -155,6 +170,47 @@ export async function syncReview(audioId, reviewData, audioEntry) {
   if (error) console.warn('[DB] syncReview:', error.message);
 }
 
+export async function syncBenchmarkResult(audioId, result, audioEntry) {
+  if (!result) return;
+  await ensureAudioFile(audioEntry);
+  const { error } = await supabase.from('benchmark_results').upsert(
+    {
+      id: `${audioId}_${result.model}_${result.ranAt}`,
+      audio_id: audioId,
+      model_id: result.model,
+      wer: result.wer,
+      cer: result.cer,
+      custom_wer: result.customWer,
+      substitutions: result.substitutions,
+      insertions: result.insertions,
+      deletions: result.deletions,
+      total: result.total,
+      transcript: result.transcript,
+      ran_at: result.ranAt,
+      library_id: getActiveLibrary() || 'jemedia',
+    },
+    { onConflict: 'id' },
+  );
+  if (error) console.warn('[DB] syncBenchmarkResult:', error.message);
+}
+
+export async function syncAsrModel(model) {
+  if (!model || !model.name) return;
+  const id = model.id || `asr_${model.name.replace(/\s+/g, '_').toLowerCase()}`;
+  const { error } = await supabase.from('asr_models').upsert(
+    {
+      id,
+      name: model.name,
+      endpoint: model.endpoint || null,
+      api_key: model.apiKey || null,
+      request_template: model.requestTemplate || null,
+    },
+    { onConflict: 'id' },
+  );
+  if (error) console.warn('[DB] syncAsrModel:', error.message);
+  return id;
+}
+
 // ── Dispatch helper used by state.js ────────────────────────────────
 // Called fire-and-forget after every updateState() call.
 
@@ -218,6 +274,20 @@ export function syncStateKey(key, audioId, value, audioEntry) {
       break;
     case 'reviews':
       syncReview(audioId, value, audioEntry).catch(console.warn);
+      break;
+    case 'benchmarks':
+      if (value && value.results) {
+        for (const result of value.results) {
+          syncBenchmarkResult(audioId, result, audioEntry).catch(console.warn);
+        }
+      }
+      break;
+    case 'asrModels':
+      if (Array.isArray(value)) {
+        for (const model of value) {
+          syncAsrModel(model).catch(console.warn);
+        }
+      }
       break;
     default:
       break;
@@ -418,6 +488,8 @@ export async function loadFromSupabase(libraryId = null) {
       alignmentsData,
       reviewsData,
       editsData,
+      benchmarkData,
+      asrModelsData,
     ] = await Promise.all([
       fetchAll('audio_files', '*', lib),
       fetchAll('transcripts', 'id,name,year,month,day,first_line,drive_link,r2_transcript_link,source_transcript_id', lib),
@@ -425,6 +497,8 @@ export async function loadFromSupabase(libraryId = null) {
       fetchAll('alignments', 'audio_id,avg_confidence,low_confidence_count,aligned_at', lib),
       fetchAll('reviews', '*', lib),
       fetchAll('transcript_edits', '*', lib),
+      fetchAll('benchmark_results', '*', lib),
+      fetchAll('asr_models', '*'),  // global, not per-library
     ]);
 
     // errors are logged inside fetchAll
@@ -532,7 +606,36 @@ export async function loadFromSupabase(libraryId = null) {
       });
     });
 
-    return { audio, transcripts, mappings, alignments, reviews, cleaning, trims, edited, asr };
+    // Benchmark results grouped by audio_id
+    const benchmarks = {};
+    (benchmarkData || []).forEach(b => {
+      if (!benchmarks[b.audio_id]) {
+        benchmarks[b.audio_id] = { results: [] };
+      }
+      benchmarks[b.audio_id].results.push({
+        model: b.model_id,
+        wer: b.wer,
+        cer: b.cer,
+        customWer: b.custom_wer,
+        substitutions: b.substitutions,
+        insertions: b.insertions,
+        deletions: b.deletions,
+        total: b.total,
+        transcript: b.transcript,
+        ranAt: b.ran_at,
+      });
+    });
+
+    // ASR model configs
+    const asrModels = (asrModelsData || []).map(m => ({
+      id: m.id,
+      name: m.name,
+      endpoint: m.endpoint,
+      apiKey: m.api_key,
+      requestTemplate: m.request_template,
+    }));
+
+    return { audio, transcripts, mappings, alignments, reviews, cleaning, trims, edited, asr, benchmarks, asrModels };
   } catch (err) {
     console.warn('[DB] loadFromSupabase failed:', err.message);
     return null;

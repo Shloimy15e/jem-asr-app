@@ -207,12 +207,18 @@ export function renderReviewPanel(container, audioId, state, callbacks) {
   const actions = document.createElement('div');
   actions.className = 'review-actions';
 
+  // Track whether the user made inline edits during this review session.
+  const originalCleanedText = cleaning ? cleaning.cleanedText : null;
+
   const approveBtn = document.createElement('button');
   approveBtn.className = 'btn btn-approve';
   approveBtn.textContent = 'Approve';
   approveBtn.addEventListener('click', () => {
+    const currentText = cleaning ? cleaning.cleanedText : null;
+    const wasEdited = originalCleanedText && currentText && currentText !== originalCleanedText;
     updateState('reviews', audioId, {
       status: 'approved',
+      editedText: wasEdited ? currentText : null,
       reviewedAt: new Date().toISOString(),
     });
     if (callbacks?.onApprove) callbacks.onApprove(audioId);
@@ -222,8 +228,11 @@ export function renderReviewPanel(container, audioId, state, callbacks) {
   rejectBtn.className = 'btn btn-reject';
   rejectBtn.textContent = 'Reject';
   rejectBtn.addEventListener('click', () => {
+    const currentText = cleaning ? cleaning.cleanedText : null;
+    const wasEdited = originalCleanedText && currentText && currentText !== originalCleanedText;
     updateState('reviews', audioId, {
       status: 'rejected',
+      editedText: wasEdited ? currentText : null,
       reviewedAt: new Date().toISOString(),
     });
     if (callbacks?.onReject) callbacks.onReject(audioId);
