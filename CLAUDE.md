@@ -214,8 +214,8 @@ stateDiagram-v2
 | `reviews` | `audio_id` | Approval status + `edited_text` (user's corrected text) + `reviewed_at` |
 | `transcript_edits` | `(audio_id, version)` | Versioned transcript text. `version` is TEXT: `'cleaned'` (status tracking) or `'edited'` (the unified working version updated by both cleaning passes and manual edits). Columns: `text`, `original_text`, `clean_rate`, `created_at`, `created_by` |
 | `segment_approvals` | `(audio_id, segment_hash)` | Persistent per-segment approval state. `segment_hash` is the space-joined word text of the segment. Approved state survives re-alignment as long as text is unchanged. |
-| `asr_models` | `id` | ASR model configurations |
-| `benchmark_results` | `id` | WER/CER benchmark run results |
+| `asr_models` | `id` | ASR model configurations. Synced to Supabase via `syncAsrModel()`. Not library-scoped. |
+| `benchmark_results` | `id` | WER/CER benchmark run results. Synced per-result via `syncBenchmarkResult()`. Columns: `audio_id`, `model_id`, `wer`, `cer`, `custom_wer`, `substitutions`, `insertions`, `deletions`, `total`, `transcript`, `ran_at`, `library_id` |
 
 #### Views
 
@@ -232,6 +232,8 @@ Both `audio_files` and `transcripts` have a `name_history JSONB` column. A `BEFO
 - `audio_files.is_benchmark = true` → 5 files (gold standard, never in training)
 
 - **FK constraint:** `mappings`, `alignments`, `reviews`, `transcript_edits` all have FK → `audio_files.id`. `db.js` upserts the audio file row first before writing related rows (`ensureAudioFile()`).
+- **Cascade deletes:** `deleteMapping()` explicitly deletes dependent `transcript_edits`, `alignments`, and `reviews` rows before removing the mapping, preventing orphaned data.
+- **Baseline schema:** `supabase/migrations/00000000000000_baseline.sql` documents the full schema as a reference. Not intended to be run against the existing instance.
 
 ### Startup flow (Supabase-only)
 Both `app.js` (main table) and `detail.js` (per-file detail page) use the same Supabase startup flow:
@@ -775,20 +777,22 @@ exportState(), importState(file)
 
 ### db.js
 ```javascript
-// PRIMARY: returns { audio[], transcripts[], mappings, alignments, reviews, cleaning, trims, edited }
+// PRIMARY: returns { audio[], transcripts[], mappings, alignments, reviews, cleaning, trims, edited, asr, benchmarks, asrModels }
 // audio[] and transcripts[] are full catalog arrays sorted by numeric ID.
 loadFromSupabase()
 
 syncStateKey(key, audioId, value, audioEntry)  // dispatch upsert for the changed key
 // Handled keys: 'audioNames', 'audioComments', 'mappings', 'cleaning', 'alignments',
-//               'reviews', 'edited', 'trims'
+//               'reviews', 'edited', 'trims', 'benchmarks', 'asrModels'
 syncMapping(audioId, mapping, audioEntry)
 syncCleaning(audioId, cleaningData, audioEntry)
 syncEdited(audioId, text, audioEntry)
 syncAlignment(audioId, alignmentData, audioEntry)
 syncReview(audioId, reviewData, audioEntry)
+syncBenchmarkResult(audioId, result, audioEntry)  // per benchmark run
+syncAsrModel(model)                                // global, not per-audio
 syncAudioDuration(audioId, durationMinutes)
-deleteMapping(audioId)
+deleteMapping(audioId)    // cascade-deletes transcript_edits, alignments, reviews
 loadAlignmentWords(audioId)      // lazy loader for alignment word arrays
 loadTranscriptText(transcriptId) // lazy loader for full transcript text
 splitTranscript(originalId)
