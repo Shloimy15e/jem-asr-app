@@ -1,4 +1,4 @@
-import { getVersions, addVersion, updateVersion, getNextIteration } from './state.js';
+import { getVersions, addVersion, updateVersion, updateState, getNextIteration } from './state.js';
 import { loadTranscriptText } from './db.js';
 
 // Individual cleaning passes
@@ -178,6 +178,9 @@ export async function batchClean(audioIds, state, onProgress) {
     } else {
       addVersion(audioId, { type: 'edited', text: cleanedText, originalText, cleanRate, iteration, createdBy: 'system' });
     }
+
+    // Also sync a 'cleaned' row so the Supabase audio_pipeline_status view is accurate
+    updateState('cleaning', audioId, { cleanedText, originalText, cleanRate, cleanedAt: new Date().toISOString() });
 
     succeeded++;
     if (onProgress) {

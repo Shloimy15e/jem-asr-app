@@ -1,6 +1,6 @@
-import { getState, updateState } from './state.js';
+import { getState, updateState, saveToStorage } from './state.js';
 import { deleteMapping } from './db.js';
-import { getCurrentUser, getActiveLibrary } from './auth.js';
+import { getCurrentUser } from './auth.js';
 import { truncateWords, formatConfidence } from './utils.js';
 
 const CONTENT_TYPES = ['sicha', 'maamar', 'farbrengen'];
@@ -149,22 +149,8 @@ export function unlinkMatch(audioId) {
   if (state.transcriptVersions && state.transcriptVersions[audioId]) {
     delete state.transcriptVersions[audioId];
   }
-  // Persist deletions to localStorage (direct mutations above bypass updateState/saveToStorage)
-  try {
-    const persist = {
-      transcriptVersions: state.transcriptVersions,
-      mappings: state.mappings,
-      cleaning: state.cleaning,
-      alignments: state.alignments,
-      reviews: state.reviews,
-      benchmarks: state.benchmarks,
-      asrModels: state.asrModels,
-      trims: state.trims,
-      audioNames: state.audioNames,
-    };
-    const lib = getActiveLibrary();
-    localStorage.setItem(lib ? `asr-state-${lib}` : 'jem-asr-state', JSON.stringify(persist));
-  } catch(e) { /* ignore quota/serialization errors */ }
+  // Persist deletions to localStorage (direct mutations above bypass updateState)
+  saveToStorage();
 }
 
 export function renderSearchModal(container, state, onSelect) {
