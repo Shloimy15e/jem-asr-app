@@ -420,7 +420,7 @@ In `detail.js` `renderWordView()`, word chips are **always directly editable** �
 4. **Align button** — always visible.
 5. **Word view** — shown when alignment exists; dashed placeholder when not.
 6. **Iteration History** — `renderIterationHistory()` renders a collapsible list of all aligned versions (v1, v2...) with confidence, date, `createdBy`. Each non-current row has "Compare with current" linking to `renderCompareView`.
-7. **Approve bar** — `renderApproveBar(audioId, container)` standalone function (extracted from `renderWordView`); always shown below word view. Stores `approvedBy: getCurrentUser()` on approve.
+7. **Approve bar** — `renderApproveBar(audioId, container)` is called inside `renderWordView()` only (not from `renderUnifiedWorkSection`); always shown below word view. Stores `approvedBy: getCurrentUser()` on approve. Do not add additional `renderApproveBar()` calls — it was previously duplicated and has been fixed.
 
 **Iteration numbering:** Each version has an `iteration: number` field. `getNextIteration(audioId)` returns `max(iteration) + 1`. `batchClean()` bumps the iteration when re-cleaning after an alignment already exists. `migrateToVersions()` assigns `iteration: 1` to all legacy versions.
 
@@ -439,7 +439,20 @@ Three export buttons appear in the word view toolbar: **SRT**, **VTT**, and **�
 - Downloaded as `<audio-name>-karaoke.html` — works offline in any browser
 
 ### Authentication — all pages require login
-The app uses Supabase Auth (email + password). `src/auth.js` exports `checkAuth()`, `signIn()`, `signOut()`. Both `app.js` and `detail.js` call `await checkAuth()` at the very top of their `DOMContentLoaded` handler — this redirects to `/login.html` if there is no active session. `login.html` + `src/login.js` handle the login form. Supabase RLS on all tables requires the `authenticated` role (migration `20260324000000_require_auth.sql`); the anon key alone cannot read any data. To add a new user: POST to `/auth/v1/admin/users` with the service role key, then trigger `/auth/v1/recover` to send a password-reset email.
+The app uses Supabase Auth (email + password). `src/auth.js` exports `checkAuth()`, `signIn()`, `signOut()`. Both `app.js` and `detail.js` call `await checkAuth()` at the very top of their `DOMContentLoaded` handler — this redirects to `/login.html` if there is no active session. `login.html` + `src/login.js` handle the login form. Supabase RLS on all tables requires the `authenticated` role (migration `20260324000000_require_auth.sql`); the anon key alone cannot read any data.
+
+### User invite flow
+Admins can invite new users via the Admin panel Members tab or via `POST /api/invite`. The endpoint (`functions/api/invite.js`):
+1. Verifies caller JWT and checks admin role on the target library
+2. Calls Supabase Auth Admin invite API (`POST /auth/v1/invite`) with the service role key — creates user + sends invite email
+3. If user already exists (422), looks up their user_id via the Admin Users API
+4. Upserts `library_members` row with the specified role
+
+The login page (`src/login.js`) detects invite tokens in the URL hash (`type=invite` or `type=recovery`) via `onAuthStateChange`. When detected, it hides the login form and shows a "Set Your Password" card. After password is set via `supabase.auth.updateUser({ password })`, the user is redirected to the app with library access already granted.
+
+**Env vars required** (Cloudflare Pages secrets): `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_ANON_KEY`.
+
+**To add a user manually** (without invite flow): Use the Supabase Dashboard to invite the user (Authentication → Users → Invite), then run `INSERT INTO library_members` directly. The `add_library_member()` RPC cannot be used from the SQL Editor because `auth.uid()` is null there.
 
 ### Multi-tenancy — library-scoped access control
 The app supports multiple independent libraries (datasets). Migration `20260331000000_add_multi_tenancy.sql` adds `libraries` and `library_members` tables and a `library_id` column to all 8 content tables (defaulting to `'jemedia'` for existing rows). RLS policies restrict each table to `library_id IN (SELECT public.user_library_ids())`.
@@ -466,7 +479,7 @@ The app supports multiple independent libraries (datasets). Migration `202603310
 
 **Libraries tab:** Lists all libraries the user administrates (ID, name, R2 domain, transcript path). Edit any field via a modal (updates `libraries` table). Create a new library via the `create_library()` SQL RPC — automatically adds the caller as admin.
 
-**Members tab:** Pick a library → loads members via `get_library_members()` RPC (returns email + role, requires SECURITY DEFINER to read `auth.users`). Change role inline, remove member, or add by email via `add_library_member()` RPC.
+**Members tab:** Pick a library → loads members via `get_library_members()` RPC (returns email + role, requires SECURITY DEFINER to read `auth.users`). Change role inline, remove member, or invite by email via `POST /api/invite` (creates Supabase account if needed + assigns library membership). **Known bug:** `get_library_members()` RPC has an ambiguous `user_id` column reference — needs migration fix to qualify `lm.user_id`.
 
 **Upload tab:** Pick a library and file type (audio or transcript), select a file, optionally edit the display name and record ID, then click Upload. The flow is:
 1. Browser `POST /api/upload` (multipart) with `Authorization: Bearer <supabase-jwt>`, `file`, and `key` (`{libraryId}/{filename}`)
@@ -544,8 +557,8 @@ When a file is rejected in the review section, a **"Re-clean & Re-align"** butto
 ### Library switch confirmation
 `app.js` shows a `confirm()` dialog before calling `location.reload()` when the user switches libraries, to prevent accidental loss of unsaved offline work.
 
-### Bulk clean button state
-The bulk **Clean** button is disabled (with tooltip "Select rows first") when no rows are selected. After bulk clean, a summary dialog reports any per-file failures.
+### Bulk selection removed
+The floating bulk action bar (Clean/Align/Approve buttons with "N of M selected" counter) and all row checkboxes have been removed. All items are handled individually through the detail page. `table.js` no longer exports `getSelectedRows()` and has no `selectedIds` tracking.
 
 ### Table column visibility handles compound filter keys
 Column `showWhen` functions use `filterMatchesStatus(filter, statuses)` which extracts the status portion from compound keys like `'fifty-unmapped'` or `'50hr-mapped'`. This ensures columns like `firstLine` correctly show/hide when viewing 50hr sub-filters.
