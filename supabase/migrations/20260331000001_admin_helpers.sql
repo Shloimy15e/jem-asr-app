@@ -108,10 +108,10 @@ DECLARE
 BEGIN
   -- Verify caller is admin of this library
   IF NOT EXISTS (
-    SELECT 1 FROM library_members
-    WHERE user_id = auth.uid()
-      AND library_id = p_library_id
-      AND role = 'admin'
+    SELECT 1 FROM library_members lm_check
+    WHERE lm_check.user_id = auth.uid()
+      AND lm_check.library_id = p_library_id
+      AND lm_check.role = 'admin'
   ) THEN
     RAISE EXCEPTION 'Access denied: must be admin of library %', p_library_id;
   END IF;
@@ -143,10 +143,10 @@ AS $$
 BEGIN
   -- Verify caller is admin of this library
   IF NOT EXISTS (
-    SELECT 1 FROM library_members
-    WHERE user_id = auth.uid()
-      AND library_id = p_library_id
-      AND role = 'admin'
+    SELECT 1 FROM library_members lm_check
+    WHERE lm_check.user_id = auth.uid()
+      AND lm_check.library_id = p_library_id
+      AND lm_check.role = 'admin'
   ) THEN
     RAISE EXCEPTION 'Access denied: must be admin of library %', p_library_id;
   END IF;
