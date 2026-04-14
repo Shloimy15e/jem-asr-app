@@ -506,7 +506,7 @@ export function getFilterCounts() {
 
   // Cache status per audio file — avoids calling getStatus multiple times
   const statusCounts = { unmapped: 0, mapped: 0, cleaned: 0, aligned: 0, approved: 0, rejected: 0 };
-  const fiftyStatusCounts = { unmapped: 0, mapped: 0, cleaned: 0, aligned: 0, approved: 0 };
+  const fiftyStatusCounts = { unmapped: 0, mapped: 0, cleaned: 0, aligned: 0, approved: 0, rejected: 0 };
   let benchmarkCount = 0;
   let fiftyCount = 0;
 
@@ -613,19 +613,24 @@ export function importState(file) {
   });
 }
 
-function saveToStorage() {
+function buildPersistObject() {
+  return {
+    transcriptVersions: state.transcriptVersions,
+    mappings: state.mappings,
+    cleaning: state.cleaning,
+    alignments: state.alignments,
+    reviews: state.reviews,
+    benchmarks: state.benchmarks,
+    asrModels: state.asrModels,
+    transcribeProviders: state.transcribeProviders,
+    trims: state.trims,
+    audioNames: state.audioNames,
+  };
+}
+
+export function saveToStorage() {
   try {
-    const persist = {
-      transcriptVersions: state.transcriptVersions,
-      mappings: state.mappings,
-      cleaning: state.cleaning,
-      alignments: state.alignments,
-      reviews: state.reviews,
-      benchmarks: state.benchmarks,
-      asrModels: state.asrModels,
-      trims: state.trims,
-      audioNames: state.audioNames,
-    };
+    const persist = buildPersistObject();
     localStorage.setItem(getStorageKey(), JSON.stringify(persist));
   } catch (e) {
     console.warn('Failed to save state to localStorage:', e);
