@@ -1,4 +1,4 @@
-import { initState, getState, getStatus, exportState, importState, mergeSupabaseData } from './state.js';
+import { initState, getState, getStatus, mergeSupabaseData } from './state.js';
 import { checkAuth, signOut, getUserLibraries, getActiveLibrary, setActiveLibrary, isLibraryR2Url } from './auth.js';
 import { loadFromSupabase } from './db.js';
 import { renderTable, updateTable } from './table.js';
@@ -338,25 +338,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     openModal();
   });
 
-  document.getElementById('btn-export-state').addEventListener('click', () => {
-    exportState();
-  });
-
-  const importFileInput = document.getElementById('import-file-input');
-  document.getElementById('btn-import-state').addEventListener('click', () => {
-    importFileInput.click();
-  });
-  importFileInput.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    try {
-      await importState(file);
-      updateTable();
-    } catch (err) {
-      console.error('Import failed:', err);
-    }
-    importFileInput.value = '';
-  });
 
   document.getElementById('btn-export-csv').addEventListener('click', () => {
     const state = getState();
@@ -426,9 +407,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         selectAll.checked = true;
         selectAll.dispatchEvent(new Event('change'));
       }
-    } else if (e.key === 'e' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
-      e.preventDefault();
-      exportState();
     } else if (e.key === 'E' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
       e.preventDefault();
       document.getElementById('btn-export-csv')?.click();
