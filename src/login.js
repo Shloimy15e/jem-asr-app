@@ -31,6 +31,29 @@ const passwordInput = document.getElementById('login-password');
 const errorMsg = document.getElementById('login-error');
 const submitBtn = document.getElementById('login-submit');
 
+// ── Forgot password ─────────────────────────────────────────────────
+document.getElementById('forgot-password')?.addEventListener('click', async (e) => {
+  e.preventDefault();
+  const email = emailInput.value.trim();
+  if (!email) {
+    errorMsg.textContent = 'Enter your email address first.';
+    return;
+  }
+  errorMsg.textContent = '';
+  errorMsg.style.color = '';
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + '/login.html',
+    });
+    if (error) throw error;
+    errorMsg.style.color = '#34c759';
+    errorMsg.textContent = 'Password reset email sent! Check your inbox.';
+  } catch (err) {
+    errorMsg.style.color = '';
+    errorMsg.textContent = err.message || 'Failed to send reset email.';
+  }
+});
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   errorMsg.textContent = '';

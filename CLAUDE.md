@@ -442,13 +442,17 @@ Three export buttons appear in the word view toolbar: **SRT**, **VTT**, and **�
 The app uses Supabase Auth (email + password). `src/auth.js` exports `checkAuth()`, `signIn()`, `signOut()`. Both `app.js` and `detail.js` call `await checkAuth()` at the very top of their `DOMContentLoaded` handler — this redirects to `/login.html` if there is no active session. `login.html` + `src/login.js` handle the login form. Supabase RLS on all tables requires the `authenticated` role (migration `20260324000000_require_auth.sql`); the anon key alone cannot read any data.
 
 ### User invite flow
-Admins can invite new users via the Admin panel Members tab or via `POST /api/invite`. The endpoint (`functions/api/invite.js`):
+Admins can invite new users via the Admin panel Members tab or via `POST /api/invite`. The endpoint (`functions/api/invite.js`) accepts `{ email, library_id, role, password? }`:
 1. Verifies caller JWT and checks admin role on the target library
-2. Calls Supabase Auth Admin invite API (`POST /auth/v1/invite`) with the service role key — creates user + sends invite email
-3. If user already exists (422), looks up their user_id via the Admin Users API
+2. **If `password` is provided:** Creates user via Auth Admin API (`POST /auth/v1/admin/users`) with `{ email, password, email_confirm: true }` — no email sent, user can log in immediately. If user already exists, updates their password via `PUT /auth/v1/admin/users/{id}`.
+3. **If no password:** Falls back to invite email flow — calls `POST /auth/v1/invite` which sends a password-setup link. If user already exists (422), looks up their user_id via the Admin Users API.
 4. Upserts `library_members` row with the specified role
 
-The login page (`src/login.js`) detects invite tokens in the URL hash (`type=invite` or `type=recovery`) via `onAuthStateChange`. When detected, it hides the login form and shows a "Set Your Password" card. After password is set via `supabase.auth.updateUser({ password })`, the user is redirected to the app with library access already granted.
+The Admin panel Members tab shows an email input, an optional "Temp password" text input, and a role selector. When a password is provided, the button shows "Creating…" and the success message is "Created with password!". When no password is given, the original invite email flow is used.
+
+The login page (`src/login.js`) detects invite/recovery tokens in the URL hash (`type=invite` or `type=recovery`) via `onAuthStateChange`. When detected, it hides the login form and shows a "Set Your Password" card. After password is set via `supabase.auth.updateUser({ password })`, the user is redirected to the app with library access already granted.
+
+A **"Forgot password?"** link on the login page calls `supabase.auth.resetPasswordForEmail()` which sends a recovery email. The user clicks the link, lands back on the login page with `type=recovery` in the hash, and the "Set Your Password" form appears.
 
 **Env vars required** (Cloudflare Pages secrets): `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_ANON_KEY`.
 
@@ -701,6 +705,7 @@ jem-asr-app/
 │   ├── audio.js                # CF Worker: GET proxy for R2 audio (streams, 1-day cache)
 │   ├── transcript.js           # CF Worker: GET proxy for transcript text from R2
 │   ├── transcribe.js           # CF Worker: POST proxy for ASR transcription providers (Gemini Vertex AI, Mendel)
+│   ├── invite.js               # CF Worker: POST — invite/create user + assign library (supports password or email invite)
 │   └── upload.js               # CF Worker: POST — upload audio/transcript to R2 bucket (requires R2_BUCKET binding + SUPABASE_URL/SUPABASE_ANON_KEY secrets)
 ├── scripts/
 │   ├── seed-transcripts.mjs    # One-off: seed all transcripts + fetch 50hr text from R2

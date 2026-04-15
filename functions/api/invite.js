@@ -1,12 +1,14 @@
 // Invite a user to a library.
 // POST /api/invite
 // Headers: Authorization: Bearer <supabase-jwt>
-// Body JSON: { email, library_id, role }
+// Body JSON: { email, library_id, role, password? }
 //
-// If the user doesn't have a Supabase account, one is created via the
-// Auth Admin invite endpoint and they receive an email with a link to
-// set their password.  If the account already exists, they are simply
-// added to the library (no email sent).
+// If `password` is provided, the user is created (or updated) with that
+// password directly — no email is sent.  Otherwise the original invite
+// flow is used: a new account is created via the Auth Admin invite
+// endpoint and the user receives an email with a link to set their
+// password.  If the account already exists (and no password is given),
+// they are simply added to the library (no email sent).
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -74,7 +76,7 @@ export async function onRequestPost(context) {
     return json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const { email, library_id, role } = body;
+  const { email, library_id, role, password } = body;
   if (!email || !library_id) {
     return json({ error: 'email and library_id are required' }, 400);
   }
@@ -94,77 +96,106 @@ export async function onRequestPost(context) {
     return json({ error: 'Failed to verify admin status: ' + err.message }, 500);
   }
 
+  // ── Helper: look up existing user by email via Auth Admin API ───────
+  async function findUserByEmail(email) {
+    const res = await fetch(
+      `${env.SUPABASE_URL}/auth/v1/admin/users?page=1&per_page=50`,
+      {
+        headers: {
+          'apikey': env.SUPABASE_SERVICE_KEY,
+          'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        },
+      },
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const users = data.users || data;
+    return Array.isArray(users) ? users.find(u => u.email === email) : null;
+  }
+
   // ── Invite or look up user ─────────────────────────────────────────
   let userId;
   let invited = false;
 
-  // Try to create + invite via Supabase Auth Admin API
-  try {
-    const inviteRes = await fetch(`${env.SUPABASE_URL}/auth/v1/invite`, {
-      method: 'POST',
-      headers: {
-        'apikey': env.SUPABASE_SERVICE_KEY,
-        'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ email }),
-    });
+  if (password) {
+    // ── Password-based creation (no email sent) ───────────────────────
+    try {
+      // Try to create the user directly with a password
+      const createRes = await fetch(`${env.SUPABASE_URL}/auth/v1/admin/users`, {
+        method: 'POST',
+        headers: {
+          'apikey': env.SUPABASE_SERVICE_KEY,
+          'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password, email_confirm: true }),
+      });
 
-    if (inviteRes.ok) {
-      const inviteData = await inviteRes.json();
-      userId = inviteData.id;
-      invited = true;
-    } else if (inviteRes.status === 422) {
-      // User already exists — look up their ID
-      const lookupRes = await fetch(
-        `${env.SUPABASE_URL}/auth/v1/admin/users?page=1&per_page=1`,
-        {
-          method: 'GET',
+      if (createRes.ok) {
+        const created = await createRes.json();
+        userId = created.id;
+        invited = false;
+      } else if (createRes.status === 422) {
+        // User already exists — find them and update their password
+        const existing = await findUserByEmail(email);
+        if (!existing) {
+          return json({ error: `User exists but could not resolve ID for ${email}` }, 500);
+        }
+        userId = existing.id;
+
+        // Update their password
+        const updateRes = await fetch(`${env.SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
+          method: 'PUT',
           headers: {
             'apikey': env.SUPABASE_SERVICE_KEY,
             'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+            'Content-Type': 'application/json',
           },
-        },
-      );
-      if (!lookupRes.ok) {
-        return json({ error: 'Failed to look up existing user' }, 500);
-      }
-      // The admin users endpoint doesn't support email filter via query param,
-      // so we search through users.  For a better approach, use the RPC.
-      // Fall back: look up via library_members RPC which queries auth.users.
-      const usersData = await lookupRes.json();
-      const users = usersData.users || usersData;
-      const match = Array.isArray(users) && users.find(u => u.email === email);
-      if (match) {
-        userId = match.id;
-      } else {
-        // Fallback: query auth.users via service-role REST
-        // The admin/users endpoint is paginated; use a direct query instead
-        const directRes = await fetch(
-          `${env.SUPABASE_URL}/auth/v1/admin/users?page=1&per_page=50`,
-          {
-            headers: {
-              'apikey': env.SUPABASE_SERVICE_KEY,
-              'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-            },
-          },
-        );
-        if (directRes.ok) {
-          const allData = await directRes.json();
-          const allUsers = allData.users || allData;
-          const found = Array.isArray(allUsers) && allUsers.find(u => u.email === email);
-          if (found) userId = found.id;
+          body: JSON.stringify({ password }),
+        });
+        if (!updateRes.ok) {
+          const errText = await updateRes.text().catch(() => '');
+          return json({ error: `Failed to update password: ${errText.slice(0, 200)}` }, 500);
         }
-        if (!userId) {
+      } else {
+        const errText = await createRes.text().catch(() => '');
+        return json({ error: `Create user failed: ${createRes.status} ${errText.slice(0, 200)}` }, 500);
+      }
+    } catch (err) {
+      return json({ error: 'Create user request failed: ' + err.message }, 500);
+    }
+  } else {
+    // ── Original invite flow (sends email) ────────────────────────────
+    try {
+      const inviteRes = await fetch(`${env.SUPABASE_URL}/auth/v1/invite`, {
+        method: 'POST',
+        headers: {
+          'apikey': env.SUPABASE_SERVICE_KEY,
+          'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email }),
+      });
+
+      if (inviteRes.ok) {
+        const inviteData = await inviteRes.json();
+        userId = inviteData.id;
+        invited = true;
+      } else if (inviteRes.status === 422) {
+        // User already exists — look up their ID
+        const existing = await findUserByEmail(email);
+        if (existing) {
+          userId = existing.id;
+        } else {
           return json({ error: `User exists but could not resolve ID for ${email}` }, 500);
         }
+      } else {
+        const errText = await inviteRes.text().catch(() => '');
+        return json({ error: `Invite failed: ${inviteRes.status} ${errText.slice(0, 200)}` }, 500);
       }
-    } else {
-      const errText = await inviteRes.text().catch(() => '');
-      return json({ error: `Invite failed: ${inviteRes.status} ${errText.slice(0, 200)}` }, 500);
+    } catch (err) {
+      return json({ error: 'Invite request failed: ' + err.message }, 500);
     }
-  } catch (err) {
-    return json({ error: 'Invite request failed: ' + err.message }, 500);
   }
 
   // ── Add to library_members (upsert) ────────────────────────────────
@@ -188,5 +219,5 @@ export async function onRequestPost(context) {
     }, 500);
   }
 
-  return json({ success: true, user_id: userId, email, role: memberRole, invited });
+  return json({ success: true, user_id: userId, email, role: memberRole, invited, password_set: !!password });
 }

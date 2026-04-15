@@ -226,6 +226,12 @@ function renderMemberList(container, libraryId, members) {
   emailInput.placeholder = 'user@example.com';
   emailInput.className = 'admin-input';
 
+  const pwInput = document.createElement('input');
+  pwInput.type = 'text';
+  pwInput.placeholder = 'Temp password (optional)';
+  pwInput.className = 'admin-input';
+  pwInput.style.maxWidth = '180px';
+
   const roleSelect = document.createElement('select');
   roleSelect.className = 'filter-select';
   for (const r of ['viewer', 'editor', 'admin']) {
@@ -243,13 +249,20 @@ function renderMemberList(container, libraryId, members) {
   const addErr = document.createElement('div');
   addErr.className = 'admin-error';
 
+  const pwHint = document.createElement('div');
+  pwHint.className = 'text-secondary';
+  pwHint.style.cssText = 'font-size:0.75rem;margin-top:4px;';
+  pwHint.textContent = 'Leave password blank to send an invite email instead.';
+
   addBtn.addEventListener('click', async () => {
     addErr.textContent = '';
     const email = emailInput.value.trim();
     if (!email) { addErr.textContent = 'Enter an email address.'; return; }
 
+    const password = pwInput.value.trim() || undefined;
+
     addBtn.disabled = true;
-    addBtn.textContent = 'Inviting…';
+    addBtn.textContent = password ? 'Creating…' : 'Inviting…';
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch('/api/invite', {
@@ -258,14 +271,19 @@ function renderMemberList(container, libraryId, members) {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email, library_id: libraryId, role: roleSelect.value }),
+        body: JSON.stringify({ email, library_id: libraryId, role: roleSelect.value, password }),
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || 'Invite failed');
 
       emailInput.value = '';
+      pwInput.value = '';
       addBtn.disabled = false;
-      addBtn.textContent = result.invited ? '✓ Invite sent!' : '✓ Added!';
+      if (result.password_set) {
+        addBtn.textContent = '✓ Created with password!';
+      } else {
+        addBtn.textContent = result.invited ? '✓ Invite sent!' : '✓ Added!';
+      }
       setTimeout(() => { addBtn.textContent = 'Invite'; }, 2000);
 
       // Reload member list
@@ -279,9 +297,11 @@ function renderMemberList(container, libraryId, members) {
   });
 
   form.appendChild(emailInput);
+  form.appendChild(pwInput);
   form.appendChild(roleSelect);
   form.appendChild(addBtn);
   addSection.appendChild(form);
+  addSection.appendChild(pwHint);
   addSection.appendChild(addErr);
   container.appendChild(addSection);
 }
