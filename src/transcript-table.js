@@ -20,25 +20,29 @@ const COLUMNS = [
   { key: 'month',     label: 'Month',         sortable: true },
   { key: 'day',       label: 'Day',           sortable: true },
   { key: 'firstLine', label: 'First Line',    sortable: false },
-  { key: 'mappedTo',  label: 'Mapped To',     sortable: true },
-  { key: 'actions',   label: 'Actions',       sortable: false },
+  { key: 'linkedAudio', label: 'Linked Audio',  sortable: true },
 ];
 
 // ── Row data ──────────────────────────────────────────────────────
 
-function buildMappedCounts() {
+/** Returns { transcriptId: [{ audioId, audioName }] } */
+function buildMappedAudio() {
   const state = getState();
-  const counts = {};
+  const map = {};
   if (state.mappings) {
     for (const [audioId, mapping] of Object.entries(state.mappings)) {
       const tid = mapping.transcriptId;
-      if (tid) counts[tid] = (counts[tid] || 0) + 1;
+      if (!tid) continue;
+      if (!map[tid]) map[tid] = [];
+      const audio = state.audio.find(a => a.id === audioId);
+      map[tid].push({ audioId, audioName: audio?.name || audioId });
     }
   }
-  return counts;
+  return map;
 }
 
-function getRowData(transcript, mappedCounts) {
+function getRowData(transcript, mappedAudio) {
+  const linked = mappedAudio[transcript.id] || [];
   return {
     id: transcript.id,
     name: transcript.name || '',
@@ -46,7 +50,8 @@ function getRowData(transcript, mappedCounts) {
     month: transcript.month || '',
     day: transcript.day != null ? transcript.day : '',
     firstLine: transcript.firstLine ? truncateWords(transcript.firstLine, 15) : '',
-    mappedTo: mappedCounts[transcript.id] || 0,
+    linkedAudio: linked,
+    mappedCount: linked.length,
     driveLink: transcript.driveLink,
     r2TranscriptLink: transcript.r2TranscriptLink,
   };
@@ -72,12 +77,18 @@ function getFilteredRows() {
   return rows;
 }
 
-function sortRows(rows) {
+function sortRows(rows, mappedAudio) {
   if (!currentSort.column) return rows;
   const col = currentSort.column;
   const dir = currentSort.dir === 'asc' ? 1 : -1;
   return [...rows].sort((a, b) => {
-    let va = a[col], vb = b[col];
+    let va, vb;
+    if (col === 'linkedAudio') {
+      va = (mappedAudio[a.id] || []).length;
+      vb = (mappedAudio[b.id] || []).length;
+    } else {
+      va = a[col]; vb = b[col];
+    }
     if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
     va = String(va || '');
     vb = String(vb || '');
@@ -123,11 +134,10 @@ function buildTable(rows) {
 
   // Body
   const tbody = document.createElement('tbody');
-  const mappedCounts = buildMappedCounts();
-  const state = getState();
+  const mappedAudio = buildMappedAudio();
 
   pageRows.forEach((transcript, i) => {
-    const row = getRowData(transcript, mappedCounts);
+    const row = getRowData(transcript, mappedAudio);
     const tr = document.createElement('tr');
     tr.className = 'table-row';
     tr.setAttribute('data-transcript-id', row.id);
@@ -144,37 +154,25 @@ function buildTable(rows) {
           td.dir = 'rtl';
           td.textContent = row.firstLine;
           break;
-        case 'mappedTo': {
-          if (row.mappedTo > 0) {
-            const badge = document.createElement('span');
-            badge.className = 'status-badge status-mapped';
-            badge.textContent = row.mappedTo === 1 ? '1 audio' : `${row.mappedTo} audio`;
-            td.appendChild(badge);
-          } else {
+        case 'linkedAudio': {
+          if (row.linkedAudio.length === 0) {
             const badge = document.createElement('span');
             badge.className = 'status-badge status-unmapped';
             badge.textContent = 'unmapped';
             td.appendChild(badge);
-          }
-          break;
-        }
-        case 'actions': {
-          // Find linked audio to open its detail page
-          if (row.mappedTo > 0 && state.mappings) {
-            const linkedAudioId = Object.keys(state.mappings).find(
-              aid => state.mappings[aid].transcriptId === row.id
-            );
-            if (linkedAudioId) {
-              const openBtn = document.createElement('button');
-              openBtn.className = 'action-btn action-btn-primary';
-              openBtn.textContent = 'Open';
-              openBtn.title = 'Open linked audio detail page';
-              openBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                window.open(`/detail.html?id=${encodeURIComponent(linkedAudioId)}`, '_blank');
-              });
-              td.appendChild(openBtn);
-            }
+          } else {
+            row.linkedAudio.forEach((link, idx) => {
+              const a = document.createElement('a');
+              a.href = `/detail.html?id=${encodeURIComponent(link.audioId)}`;
+              a.target = '_blank';
+              a.className = 'linked-audio-link';
+              a.textContent = link.audioName;
+              a.addEventListener('click', (e) => e.stopPropagation());
+              td.appendChild(a);
+              if (idx < row.linkedAudio.length - 1) {
+                td.appendChild(document.createTextNode(', '));
+              }
+            });
           }
           break;
         }
@@ -184,15 +182,10 @@ function buildTable(rows) {
       tr.appendChild(td);
     });
 
-    // Row click → open linked audio detail
+    // Row click → open first linked audio detail
     tr.addEventListener('click', () => {
-      if (row.mappedTo > 0 && state.mappings) {
-        const linkedAudioId = Object.keys(state.mappings).find(
-          aid => state.mappings[aid].transcriptId === row.id
-        );
-        if (linkedAudioId) {
-          window.open(`/detail.html?id=${encodeURIComponent(linkedAudioId)}`, '_blank');
-        }
+      if (row.linkedAudio.length > 0) {
+        window.open(`/detail.html?id=${encodeURIComponent(row.linkedAudio[0].audioId)}`, '_blank');
       }
     });
 
@@ -294,13 +287,12 @@ function updateTranscriptTable() {
   if (!_container) return;
 
   const filtered = getFilteredRows();
-  const sorted = sortRows(filtered.map((t, i) => getRowData(t, buildMappedCounts())));
-  // Re-sort the transcript objects to match sorted row order
-  const sortedTranscripts = sortRows(filtered);
+  const mappedAudio = buildMappedAudio();
+  const sorted = sortRows(filtered, mappedAudio);
 
   _container.innerHTML = '';
   _container.appendChild(buildCountBar(sorted.length));
-  _container.appendChild(buildTable(sortedTranscripts));
+  _container.appendChild(buildTable(sorted));
   _container.appendChild(buildPagination(sorted.length));
 }
 

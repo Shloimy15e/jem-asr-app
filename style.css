@@ -250,6 +250,16 @@ input {
   font-weight: 500;
 }
 
+.linked-audio-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.8rem;
+}
+
+.linked-audio-link:hover {
+  text-decoration: underline;
+}
+
 /* === Filter Bar === */
 .filter-bar {
   display: flex;
