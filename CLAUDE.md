@@ -805,6 +805,7 @@ syncAlignment(audioId, alignmentData, audioEntry)
 syncReview(audioId, reviewData, audioEntry)
 syncAudioDuration(audioId, durationMinutes)
 deleteMapping(audioId)
+deleteAllWorkData(audioId)       // deletes transcript_edits, alignments, reviews, segment_approvals for an audio file
 loadAlignmentWords(audioId)      // lazy loader for alignment word arrays
 loadTranscriptText(transcriptId) // lazy loader for full transcript text
 splitTranscript(originalId)
@@ -841,7 +842,7 @@ getSelectedRows()                  // → array of selected audioIds
 getSuggestedMatches(audioItem, allTranscripts, existingMappings)  // → [{transcriptId, score, matchReason, firstName}]
 renderSuggestedMatches(container, audioId, state, onLink)          // container is FIRST param
 linkMatch(audioId, transcriptId, confidence, reason)
-unlinkMatch(audioId)   // also calls deleteMapping() to persist deletion in Supabase
+unlinkMatch(audioId)   // deletes mapping + all work data from both local state and Supabase (mappings, transcript_edits, alignments, reviews, segment_approvals)
 renderSearchModal(container, state, onSelect)
 renderGlobalTranscriptSearch(container)  // toolbar "Search Transcripts" — full-text search via Supabase ilike
 ```

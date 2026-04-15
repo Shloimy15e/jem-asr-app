@@ -83,6 +83,23 @@ export async function deleteMapping(audioId) {
   else logActivity('mapping_removed', audioId);
 }
 
+/** Delete all work data for an audio file from Supabase (transcript_edits, alignments, reviews, segment_approvals). */
+export async function deleteAllWorkData(audioId) {
+  const lib = getActiveLibrary() || 'jemedia';
+  const deletes = [
+    supabase.from('transcript_edits').delete().eq('audio_id', audioId).eq('library_id', lib),
+    supabase.from('alignments').delete().eq('audio_id', audioId).eq('library_id', lib),
+    supabase.from('reviews').delete().eq('audio_id', audioId).eq('library_id', lib),
+    supabase.from('segment_approvals').delete().eq('audio_id', audioId),
+  ];
+  const results = await Promise.allSettled(deletes);
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled' && r.value.error) {
+      console.warn(`[DB] deleteAllWorkData[${i}]:`, r.value.error.message);
+    }
+  });
+}
+
 export async function syncCleaning(audioId, cleaningData, audioEntry) {
   if (!cleaningData) return;
   await ensureAudioFile(audioEntry);

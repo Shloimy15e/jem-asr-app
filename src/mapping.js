@@ -1,5 +1,5 @@
 import { getState, updateState, saveToStorage } from './state.js';
-import { deleteMapping, searchTranscriptText } from './db.js';
+import { deleteMapping, deleteAllWorkData, searchTranscriptText } from './db.js';
 import { getCurrentUser } from './auth.js';
 import { truncateWords, formatConfidence, debounce } from './utils.js';
 
@@ -149,6 +149,12 @@ export function unlinkMatch(audioId) {
   if (state.transcriptVersions && state.transcriptVersions[audioId]) {
     delete state.transcriptVersions[audioId];
   }
+  // Clear legacy keys locally
+  if (state.cleaning) delete state.cleaning[audioId];
+  if (state.alignments) delete state.alignments[audioId];
+  if (state.reviews) delete state.reviews[audioId];
+  // Delete orphaned work data from Supabase (transcript_edits, alignments, reviews, segment_approvals)
+  deleteAllWorkData(audioId).catch(console.warn);
   // Persist deletions to localStorage (direct mutations above bypass updateState)
   saveToStorage();
 }
