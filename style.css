@@ -1771,6 +1771,37 @@ input {
   border-color: var(--accent);
 }
 
+.bulk-action-bar {
+  position: sticky;
+  bottom: 0;
+  background: var(--surface);
+  border-top: 2px solid var(--accent);
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 10;
+  box-shadow: 0 -2px 8px rgba(0,0,0,0.08);
+}
+
+.bulk-action-bar .bulk-count {
+  font-weight: 600;
+  margin-right: 4px;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .bulk-action-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+  .bulk-action-bar .action-btn {
+    font-size: 0.75rem;
+    padding: 4px 8px;
+  }
+}
+
 .detail-section {
   background: var(--surface);
   border: none;

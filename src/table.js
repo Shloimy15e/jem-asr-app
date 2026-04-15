@@ -62,6 +62,11 @@ let filterYear = '';
 let filterMonth = '';
 let filterType = '';
 const PAGE_SIZE = 50;
+const selectedIds = new Set();
+
+function getSelectedRows() {
+  return [...selectedIds];
+}
 
 function updateURL() {
   const params = new URLSearchParams();
@@ -80,6 +85,7 @@ let _onRowExpand = null;
 
 // ── Column definitions ─────────────────────────────────────────────
 const COLUMNS = [
+  { key: 'checkbox',      label: '',                  sortable: false, showWhen: () => true },
   { key: 'rowNum',        label: '#',                 sortable: false, showWhen: () => true },
   { key: 'name',          label: 'Audio Name',        sortable: true,  showWhen: () => true },
   { key: 'year',          label: 'Year',              sortable: true,  showWhen: () => true },
@@ -405,12 +411,30 @@ function buildTable(rows) {
   const table = document.createElement('table');
   table.className = 'data-table';
 
+  const startIdx = (currentPage - 1) * PAGE_SIZE;
+  const pageRows = rows.slice(startIdx, startIdx + PAGE_SIZE);
+
   // Header
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
   cols.forEach(col => {
     const th = document.createElement('th');
-    {
+    if (col.key === 'checkbox') {
+      th.classList.add('cell-checkbox');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'select-all-cb';
+      cb.checked = pageRows.length > 0 && pageRows.every(r => selectedIds.has(r.id));
+      cb.addEventListener('change', () => {
+        if (cb.checked) {
+          pageRows.forEach(r => selectedIds.add(r.id));
+        } else {
+          pageRows.forEach(r => selectedIds.delete(r.id));
+        }
+        updateTable();
+      });
+      th.appendChild(cb);
+    } else {
       th.textContent = col.label;
       if (col.sortable) {
         th.classList.add('sortable');
@@ -437,19 +461,40 @@ function buildTable(rows) {
 
   // Body
   const tbody = document.createElement('tbody');
-  const startIdx = (currentPage - 1) * PAGE_SIZE;
-  const pageRows = rows.slice(startIdx, startIdx + PAGE_SIZE);
 
   pageRows.forEach((row, i) => {
     const tr = document.createElement('tr');
     tr.className = 'table-row';
     tr.setAttribute('data-audio-id', row.id);
     if (row.isBenchmark) tr.classList.add('benchmark-row');
+    if (selectedIds.has(row.id)) tr.classList.add('selected');
 
     cols.forEach(col => {
       const td = document.createElement('td');
 
       switch (col.key) {
+        case 'checkbox': {
+          td.classList.add('cell-checkbox');
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = selectedIds.has(row.id);
+          cb.addEventListener('click', (e) => e.stopPropagation());
+          cb.addEventListener('change', () => {
+            if (cb.checked) {
+              selectedIds.add(row.id);
+              tr.classList.add('selected');
+            } else {
+              selectedIds.delete(row.id);
+              tr.classList.remove('selected');
+            }
+            updateBulkBar();
+            // Sync header checkbox
+            const selectAllCb = _container?.querySelector('.select-all-cb');
+            if (selectAllCb) selectAllCb.checked = pageRows.every(r => selectedIds.has(r.id));
+          });
+          td.appendChild(cb);
+          break;
+        }
         case 'rowNum':
           td.textContent = startIdx + i + 1;
           break;
@@ -733,7 +778,7 @@ function buildPagination(totalRows) {
   prevBtn.textContent = 'Prev';
   prevBtn.disabled = currentPage <= 1;
   prevBtn.addEventListener('click', () => {
-    if (currentPage > 1) { currentPage--; updateURL(); updateTable(); }
+    if (currentPage > 1) { currentPage--; selectedIds.clear(); updateURL(); updateTable(); }
   });
 
   const pageInfo = document.createElement('span');
@@ -745,7 +790,7 @@ function buildPagination(totalRows) {
   nextBtn.textContent = 'Next';
   nextBtn.disabled = currentPage >= totalPages;
   nextBtn.addEventListener('click', () => {
-    if (currentPage < totalPages) { currentPage++; updateURL(); updateTable(); }
+    if (currentPage < totalPages) { currentPage++; selectedIds.clear(); updateURL(); updateTable(); }
   });
 
   nav.appendChild(prevBtn);
@@ -785,6 +830,99 @@ function updateFilterPills() {
 }
 
 
+// ── Bulk action bar ────────────────────────────────────────────────
+
+function updateBulkBar() {
+  const bar = _container?.querySelector('.bulk-action-bar');
+  if (!bar) return;
+  if (selectedIds.size > 0) {
+    bar.style.display = 'flex';
+    const countEl = bar.querySelector('.bulk-count');
+    if (countEl) countEl.textContent = `${selectedIds.size} selected`;
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+function buildBulkBar() {
+  const bar = document.createElement('div');
+  bar.className = 'bulk-action-bar';
+  bar.style.display = selectedIds.size > 0 ? 'flex' : 'none';
+
+  const count = document.createElement('span');
+  count.className = 'bulk-count';
+  count.textContent = `${selectedIds.size} selected`;
+  bar.appendChild(count);
+
+  // Add to 50hr
+  const addFiftyBtn = document.createElement('button');
+  addFiftyBtn.className = 'action-btn action-btn-primary';
+  addFiftyBtn.textContent = 'Add to 50hr';
+  addFiftyBtn.addEventListener('click', () => {
+    const state = getState();
+    for (const id of selectedIds) {
+      const entry = state.audio.find(a => a.id === id);
+      if (entry) {
+        entry.isSelected50hr = true;
+        syncAudioField(id, 'is_selected_50hr', true).catch(console.warn);
+      }
+    }
+    selectedIds.clear();
+    updateTable();
+  });
+  bar.appendChild(addFiftyBtn);
+
+  // Remove from 50hr
+  const rmFiftyBtn = document.createElement('button');
+  rmFiftyBtn.className = 'action-btn';
+  rmFiftyBtn.textContent = 'Remove from 50hr';
+  rmFiftyBtn.addEventListener('click', () => {
+    const state = getState();
+    for (const id of selectedIds) {
+      const entry = state.audio.find(a => a.id === id);
+      if (entry) {
+        entry.isSelected50hr = false;
+        syncAudioField(id, 'is_selected_50hr', false).catch(console.warn);
+      }
+    }
+    selectedIds.clear();
+    updateTable();
+  });
+  bar.appendChild(rmFiftyBtn);
+
+  // Unlink
+  const unlinkBtn = document.createElement('button');
+  unlinkBtn.className = 'action-btn action-btn-danger';
+  unlinkBtn.textContent = 'Unlink';
+  unlinkBtn.addEventListener('click', () => {
+    if (!confirm(`Unlink transcripts from ${selectedIds.size} file(s)? This removes mapping, cleaning, alignment, and review data.`)) return;
+    const s = getState();
+    for (const id of selectedIds) {
+      unlinkMatch(id);
+      s.transcriptVersions[id] = [];
+      if (s.cleaning[id]) s.cleaning[id] = null;
+      if (s.alignments[id]) s.alignments[id] = null;
+      if (s.reviews[id]) s.reviews[id] = null;
+    }
+    updateState('transcriptVersions', null, s.transcriptVersions);
+    selectedIds.clear();
+    updateTable();
+  });
+  bar.appendChild(unlinkBtn);
+
+  // Clear selection
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'action-btn';
+  clearBtn.textContent = 'Clear';
+  clearBtn.addEventListener('click', () => {
+    selectedIds.clear();
+    updateTable();
+  });
+  bar.appendChild(clearBtn);
+
+  return bar;
+}
+
 // ── Public API ──────────────────────────────────────────────────────
 
 function renderTable(container, options = {}) {
@@ -808,6 +946,7 @@ function renderTable(container, options = {}) {
     pill.addEventListener('click', () => {
       currentFilter = pill.getAttribute('data-filter');
       currentPage = 1;
+      selectedIds.clear();
       updateURL();
       updateTable();
       if (_container) _container.scrollTo({ top: 0, behavior: 'smooth' });
@@ -823,6 +962,7 @@ function renderTable(container, options = {}) {
     yearSelect.addEventListener('change', () => {
       filterYear = yearSelect.value;
       currentPage = 1;
+      selectedIds.clear();
       updateURL();
       updateTable();
     });
@@ -831,6 +971,7 @@ function renderTable(container, options = {}) {
     monthSelect.addEventListener('change', () => {
       filterMonth = monthSelect.value;
       currentPage = 1;
+      selectedIds.clear();
       updateURL();
       updateTable();
     });
@@ -839,6 +980,7 @@ function renderTable(container, options = {}) {
     typeSelect.addEventListener('change', () => {
       filterType = typeSelect.value;
       currentPage = 1;
+      selectedIds.clear();
       updateURL();
       updateTable();
     });
@@ -850,6 +992,7 @@ function renderTable(container, options = {}) {
     const debouncedSearch = debounce((val) => {
       searchTerm = val;
       currentPage = 1;
+      selectedIds.clear();
       updateURL();
       updateTable();
     }, 250);
@@ -909,6 +1052,10 @@ function updateTable() {
   // Build and append pagination
   const pagination = buildPagination(rows.length);
   _container.appendChild(pagination);
+
+  // Build and append bulk action bar
+  const bulkBar = buildBulkBar();
+  _container.appendChild(bulkBar);
 }
 
-export { renderTable, updateTable };
+export { renderTable, updateTable, getSelectedRows };
