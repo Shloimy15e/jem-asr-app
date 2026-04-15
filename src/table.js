@@ -58,6 +58,9 @@ function updateURL() {
   if (currentFilter && currentFilter !== 'all') params.set('filter', currentFilter);
   if (currentPage > 1) params.set('page', String(currentPage));
   if (searchTerm) params.set('q', searchTerm);
+  if (filterYear) params.set('year', filterYear);
+  if (filterMonth) params.set('month', filterMonth);
+  if (filterType) params.set('type', filterType);
   const qs = params.toString();
   window.history.replaceState(null, '', qs ? '?' + qs : window.location.pathname);
 }
@@ -736,6 +739,9 @@ function renderTable(container, options = {}) {
   if (initParams.has('filter')) currentFilter = initParams.get('filter');
   if (initParams.has('page')) currentPage = parseInt(initParams.get('page') || '1', 10);
   if (initParams.has('q')) searchTerm = initParams.get('q') || '';
+  if (initParams.has('year')) filterYear = initParams.get('year') || '';
+  if (initParams.has('month')) filterMonth = initParams.get('month') || '';
+  if (initParams.has('type')) filterType = initParams.get('type') || '';
 
   // Wire filter pills
   const pills = document.querySelectorAll('.filter-pill');
@@ -795,6 +801,15 @@ function renderTable(container, options = {}) {
 
   // Populate dropdown filters from data
   populateDropdownFilters();
+
+  // Restore dropdown values from URL params
+  if (filterYear && yearSelect) yearSelect.value = filterYear;
+  if (filterMonth && monthSelect) monthSelect.value = filterMonth;
+  if (filterType && typeSelect) typeSelect.value = filterType;
+  if (searchTerm) {
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) searchInput.value = searchTerm;
+  }
 
   updateTable();
 }
