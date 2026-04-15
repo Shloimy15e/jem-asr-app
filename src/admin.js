@@ -31,13 +31,12 @@ function renderAdmin(page, adminLibs) {
   tabBar.className = 'admin-tabs';
 
   const tabs = [
-    { id: 'libraries', label: 'Libraries' },
     { id: 'members',   label: 'Members' },
     { id: 'upload',    label: 'Upload' },
   ];
 
   const panels = {};
-  let activeTab = 'libraries';
+  let activeTab = 'members';
 
   function switchTab(id) {
     activeTab = id;
@@ -58,17 +57,9 @@ function renderAdmin(page, adminLibs) {
     tabBar.appendChild(btn);
   }
 
-  // ── Libraries panel ──────────────────────────────────────────────────
-  const libPanel = document.createElement('div');
-  libPanel.className = 'admin-panel';
-  panels['libraries'] = libPanel;
-
-  renderLibrariesPanel(libPanel, adminLibs);
-
   // ── Members panel ────────────────────────────────────────────────────
   const memPanel = document.createElement('div');
   memPanel.className = 'admin-panel';
-  memPanel.style.display = 'none';
   panels['members'] = memPanel;
 
   renderMembersPanel(memPanel, adminLibs);
@@ -82,138 +73,8 @@ function renderAdmin(page, adminLibs) {
   renderUploadPanel(uploadPanel, adminLibs);
 
   page.appendChild(tabBar);
-  page.appendChild(libPanel);
   page.appendChild(memPanel);
   page.appendChild(uploadPanel);
-}
-
-// ── Libraries panel ──────────────────────────────────────────────────────
-
-function renderLibrariesPanel(container, adminLibs) {
-  container.innerHTML = '';
-
-  const heading = document.createElement('h2');
-  heading.className = 'admin-section-title';
-  heading.textContent = 'Libraries';
-  container.appendChild(heading);
-
-  const table = document.createElement('table');
-  table.className = 'admin-table';
-  table.innerHTML = `
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Name</th>
-        <th>R2 Domain</th>
-        <th>Transcript Path</th>
-        <th></th>
-      </tr>
-    </thead>
-  `;
-  const tbody = document.createElement('tbody');
-
-  for (const lib of adminLibs) {
-    const tr = document.createElement('tr');
-    tr.dataset.libId = lib.id;
-    tr.innerHTML = `
-      <td class="admin-cell-mono">${esc(lib.id)}</td>
-      <td>${esc(lib.name)}</td>
-      <td class="admin-cell-mono">${esc(lib.r2Domain)}</td>
-      <td class="admin-cell-mono">${esc(lib.transcriptPathPrefix)}</td>
-      <td><button class="action-btn action-btn-secondary btn-edit-lib">Edit</button></td>
-    `;
-    tr.querySelector('.btn-edit-lib').addEventListener('click', () => {
-      openEditLibModal(lib, async (updates) => {
-        const { error } = await supabase.from('libraries').update({
-          name: updates.name,
-          r2_domain: updates.r2Domain,
-          transcript_path_prefix: updates.transcriptPathPrefix,
-          audio_path_prefix: updates.audioPathPrefix,
-        }).eq('id', lib.id);
-        if (error) throw error;
-        // Update local copy and re-render
-        Object.assign(lib, updates);
-        renderLibrariesPanel(container, adminLibs);
-      });
-    });
-    tbody.appendChild(tr);
-  }
-
-  table.appendChild(tbody);
-  container.appendChild(table);
-
-  // ── New Library form ─────────────────────────────────────────────────
-  const newSection = document.createElement('div');
-  newSection.className = 'admin-new-section';
-
-  const newHeading = document.createElement('h3');
-  newHeading.className = 'admin-subsection-title';
-  newHeading.textContent = 'Create New Library';
-  newSection.appendChild(newHeading);
-
-  const form = document.createElement('div');
-  form.className = 'admin-form';
-
-  const fields = [
-    { name: 'id',     label: 'ID (slug, no spaces)', placeholder: 'my-library',        required: true },
-    { name: 'name',   label: 'Display Name',          placeholder: 'My Library',         required: true },
-    { name: 'r2',     label: 'R2 Domain',              placeholder: 'audio.kohnai.ai',    required: false },
-    { name: 'prefix', label: 'Transcript Path Prefix', placeholder: 'transcripts-txt/',   required: false },
-  ];
-
-  const inputs = {};
-  for (const f of fields) {
-    const row = document.createElement('div');
-    row.className = 'admin-form-row';
-    const label = document.createElement('label');
-    label.textContent = f.label;
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = f.placeholder;
-    input.className = 'admin-input';
-    inputs[f.name] = input;
-    row.appendChild(label);
-    row.appendChild(input);
-    form.appendChild(row);
-  }
-
-  const createErr = document.createElement('div');
-  createErr.className = 'admin-error';
-
-  const createBtn = document.createElement('button');
-  createBtn.className = 'action-btn action-btn-primary';
-  createBtn.textContent = 'Create Library';
-  createBtn.addEventListener('click', async () => {
-    createErr.textContent = '';
-    const id = inputs.id.value.trim();
-    const name = inputs.name.value.trim();
-    if (!id || !name) { createErr.textContent = 'ID and Name are required.'; return; }
-    if (!/^[a-z0-9-]+$/.test(id)) { createErr.textContent = 'ID must be lowercase letters, numbers, and hyphens only.'; return; }
-
-    createBtn.disabled = true;
-    createBtn.textContent = 'Creating…';
-    try {
-      const { error } = await supabase.rpc('create_library', {
-        p_id: id,
-        p_name: name,
-        p_r2_domain: inputs.r2.value.trim() || 'audio.kohnai.ai',
-        p_transcript_prefix: inputs.prefix.value.trim() || 'transcripts-txt/',
-        p_audio_prefix: '',
-      });
-      if (error) throw error;
-      // Reload the page so new library appears in getUserLibraries() cache
-      location.reload();
-    } catch (err) {
-      createErr.textContent = err.message;
-      createBtn.disabled = false;
-      createBtn.textContent = 'Create Library';
-    }
-  });
-
-  form.appendChild(createErr);
-  form.appendChild(createBtn);
-  newSection.appendChild(form);
-  container.appendChild(newSection);
 }
 
 // ── Members panel ────────────────────────────────────────────────────────
@@ -226,11 +87,7 @@ function renderMembersPanel(container, adminLibs) {
   heading.textContent = 'Members';
   container.appendChild(heading);
 
-  // Library picker
-  const pickerRow = document.createElement('div');
-  pickerRow.className = 'admin-form-row';
-  const pickerLabel = document.createElement('label');
-  pickerLabel.textContent = 'Library:';
+  // Library picker — only show if admin of multiple libraries
   const picker = document.createElement('select');
   picker.className = 'filter-select';
   for (const lib of adminLibs) {
@@ -239,9 +96,15 @@ function renderMembersPanel(container, adminLibs) {
     opt.textContent = lib.name;
     picker.appendChild(opt);
   }
-  pickerRow.appendChild(pickerLabel);
-  pickerRow.appendChild(picker);
-  container.appendChild(pickerRow);
+  if (adminLibs.length > 1) {
+    const pickerRow = document.createElement('div');
+    pickerRow.className = 'admin-form-row';
+    const pickerLabel = document.createElement('label');
+    pickerLabel.textContent = 'Library:';
+    pickerRow.appendChild(pickerLabel);
+    pickerRow.appendChild(picker);
+    container.appendChild(pickerRow);
+  }
 
   const memberArea = document.createElement('div');
   container.appendChild(memberArea);
@@ -421,92 +284,6 @@ function renderMemberList(container, libraryId, members) {
   addSection.appendChild(form);
   addSection.appendChild(addErr);
   container.appendChild(addSection);
-}
-
-// ── Edit library modal ────────────────────────────────────────────────────
-
-function openEditLibModal(lib, onSave) {
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.hidden = false;
-
-  const modal = document.createElement('div');
-  modal.className = 'modal';
-  modal.style.maxWidth = '480px';
-
-  const closeBtn = document.createElement('button');
-  closeBtn.className = 'modal-close';
-  closeBtn.innerHTML = '&times;';
-
-  const content = document.createElement('div');
-  content.className = 'modal-content';
-
-  const title = document.createElement('h2');
-  title.style.marginBottom = '1rem';
-  title.textContent = `Edit Library: ${lib.id}`;
-
-  const fields = [
-    { key: 'name',                 label: 'Display Name',          value: lib.name },
-    { key: 'r2Domain',             label: 'R2 Domain',              value: lib.r2Domain },
-    { key: 'transcriptPathPrefix', label: 'Transcript Path Prefix', value: lib.transcriptPathPrefix },
-    { key: 'audioPathPrefix',      label: 'Audio Path Prefix',      value: lib.audioPathPrefix },
-  ];
-
-  const inputs = {};
-  content.appendChild(title);
-
-  for (const f of fields) {
-    const row = document.createElement('div');
-    row.className = 'admin-form-row';
-    const label = document.createElement('label');
-    label.textContent = f.label;
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.value = f.value || '';
-    input.className = 'admin-input';
-    inputs[f.key] = input;
-    row.appendChild(label);
-    row.appendChild(input);
-    content.appendChild(row);
-  }
-
-  const err = document.createElement('div');
-  err.className = 'admin-error';
-
-  const saveBtn = document.createElement('button');
-  saveBtn.className = 'action-btn action-btn-primary';
-  saveBtn.style.marginTop = '1rem';
-  saveBtn.textContent = 'Save Changes';
-
-  saveBtn.addEventListener('click', async () => {
-    err.textContent = '';
-    saveBtn.disabled = true;
-    saveBtn.textContent = 'Saving…';
-    try {
-      await onSave({
-        name: inputs.name.value.trim(),
-        r2Domain: inputs.r2Domain.value.trim(),
-        transcriptPathPrefix: inputs.transcriptPathPrefix.value.trim(),
-        audioPathPrefix: inputs.audioPathPrefix.value.trim(),
-      });
-      overlay.remove();
-    } catch (e) {
-      err.textContent = e.message;
-      saveBtn.disabled = false;
-      saveBtn.textContent = 'Save Changes';
-    }
-  });
-
-  content.appendChild(err);
-  content.appendChild(saveBtn);
-
-  closeBtn.addEventListener('click', () => overlay.remove());
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-
-  modal.appendChild(closeBtn);
-  modal.appendChild(content);
-  overlay.appendChild(modal);
-  document.body.appendChild(overlay);
 }
 
 // ── Upload panel ─────────────────────────────────────────────────────────────
