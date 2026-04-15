@@ -3175,17 +3175,6 @@ function renderTrimControls(audioId, playerEl, container) {
     if (trimEnd >= duration) trimEnd = 0;
   });
 
-  // Click on track to seek (only if not dragging)
-  track.addEventListener('click', (e) => {
-    if (isDragging || duration <= 0) return;
-    // Don't seek if clicking on a handle
-    if (e.target.classList.contains('trim-handle')) return;
-    const rect = track.getBoundingClientRect();
-    const pct = (e.clientX - rect.left) / rect.width;
-    const time = Math.max(0, Math.min(duration, pct * duration));
-    playerEl.currentTime = time;
-  });
-
   updateDisplay();
   updateSlider();
 }
