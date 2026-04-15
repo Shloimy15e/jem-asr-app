@@ -30,32 +30,25 @@
     <span class="filter-toggle-active-label" id="filter-toggle-label"></span>
   </button>
   <nav class="filter-bar" id="filter-bar">
-    <div class="filter-group" data-tab="audio">
-      <span class="filter-group-label">50hr Collection</span>
-      <div class="filter-pills">
-        <button class="filter-pill active" data-filter="fifty">All <span class="badge" id="count-fifty">0</span></button>
-        <button class="filter-pill" data-filter="fifty-unmapped">Unmapped <span class="badge" id="count-fifty-unmapped">0</span></button>
-        <button class="filter-pill" data-filter="fifty-mapped">Mapped <span class="badge" id="count-fifty-mapped">0</span></button>
-        <button class="filter-pill" data-filter="fifty-cleaned">Cleaned <span class="badge" id="count-fifty-cleaned">0</span></button>
-        <button class="filter-pill" data-filter="fifty-aligned">Aligned <span class="badge" id="count-fifty-aligned">0</span></button>
-        <button class="filter-pill" data-filter="fifty-approved">Approved <span class="badge" id="count-fifty-approved">0</span></button>
-      </div>
-    </div>
-    <div class="filter-group" data-tab="audio">
-      <span class="filter-group-label">Full Archive</span>
-      <div class="filter-pills">
-        <button class="filter-pill" data-filter="all">All <span class="badge" id="count-all">0</span></button>
-        <button class="filter-pill" data-filter="unmapped">Unmapped <span class="badge" id="count-unmapped">0</span></button>
-        <button class="filter-pill" data-filter="approved">Approved <span class="badge" id="count-approved">0</span></button>
-        <button class="filter-pill" data-filter="benchmark">Benchmark <span class="badge" id="count-benchmark">0</span></button>
-        <button class="filter-pill" data-filter="perfect-match">Perfect Match <span class="badge" id="count-perfect-match">0</span></button>
-        <button class="filter-pill" data-filter="strong-match">Match 50%+ <span class="badge" id="count-strong-match">0</span></button>
-      </div>
+    <div class="filter-controls" data-tab="audio">
+      <label class="fifty-toggle-label">
+        <input type="checkbox" id="filter-fifty" /> 50hr only
+      </label>
+      <select id="filter-status" class="filter-select">
+        <option value="">All Statuses</option>
+        <option value="unmapped">Unmapped</option>
+        <option value="mapped">Mapped</option>
+        <option value="cleaned">Cleaned</option>
+        <option value="aligned">Aligned</option>
+        <option value="approved">Approved</option>
+        <option value="rejected">Rejected</option>
+        <option value="benchmark">Benchmark</option>
+      </select>
     </div>
     <div class="filter-controls">
       <select id="filter-year" class="filter-select"><option value="">All Years</option></select>
       <select id="filter-month" class="filter-select"><option value="">All Months</option></select>
-      <select id="filter-type" class="filter-select"><option value="">All Types</option></select>
+      <select id="filter-type" class="filter-select" data-tab="audio"><option value="">All Types</option></select>
       <input type="text" id="search-input" class="search-input" placeholder="Search..." />
     </div>
   </nav>

@@ -54,13 +54,22 @@ function toggleInlinePlay(btn, audioUrl, audioId) {
 }
 
 // ── Internal state ──────────────────────────────────────────────────
-let currentFilter = 'fifty';
+let currentFilter = 'all';  // composed from fiftyOnly + statusFilter
+let fiftyOnly = false;
+let statusFilter = '';
 let currentSort = { column: null, dir: 'asc' };
 let currentPage = 1;
 let searchTerm = '';
 let filterYear = '';
 let filterMonth = '';
 let filterType = '';
+
+function buildFilter() {
+  if (fiftyOnly && statusFilter) return 'fifty-' + statusFilter;
+  if (fiftyOnly) return 'fifty';
+  if (statusFilter) return statusFilter;
+  return 'all';
+}
 const PAGE_SIZE = 50;
 const selectedIds = new Set();
 
@@ -70,7 +79,8 @@ function getSelectedRows() {
 
 function updateURL() {
   const params = new URLSearchParams();
-  if (currentFilter && currentFilter !== 'all') params.set('filter', currentFilter);
+  if (fiftyOnly) params.set('fifty', '1');
+  if (statusFilter) params.set('status', statusFilter);
   if (currentPage > 1) params.set('page', String(currentPage));
   if (searchTerm) params.set('q', searchTerm);
   if (filterYear) params.set('year', filterYear);
@@ -959,35 +969,8 @@ function buildPagination(totalRows) {
 }
 
 function updateFilterCounts() {
-  const counts = getFilterCounts();
-  const map = {
-    'count-fifty': 'fifty',
-    'count-fifty-unmapped': 'fifty-unmapped',
-    'count-fifty-mapped': 'fifty-mapped',
-    'count-fifty-cleaned': 'fifty-cleaned',
-    'count-fifty-aligned': 'fifty-aligned',
-    'count-fifty-approved': 'fifty-approved',
-    'count-all': 'all',
-    'count-unmapped': 'unmapped',
-    'count-approved': 'approved',
-    'count-benchmark': 'benchmark',
-    'count-perfect-match': 'perfect-match',
-    'count-strong-match': 'strong-match',
-  };
-  for (const [elId, stateKey] of Object.entries(map)) {
-    const el = document.getElementById(elId);
-    if (el) el.textContent = counts[stateKey] != null ? counts[stateKey] : 0;
-  }
+  // No-op — badge elements removed in filter simplification
 }
-
-function updateFilterPills() {
-  const pills = document.querySelectorAll('.filter-pill');
-  pills.forEach(pill => {
-    const filter = pill.getAttribute('data-filter');
-    pill.classList.toggle('active', filter === currentFilter);
-  });
-}
-
 
 // ── Bulk action bar ────────────────────────────────────────────────
 
@@ -1088,29 +1071,57 @@ function renderTable(container, options = {}) {
   _container = container;
   _onRowExpand = options.onRowExpand || null;
 
-  if (options.filter) currentFilter = options.filter;
+  // Default: show 50hr if library has them
+  if (options.filter === 'fifty') fiftyOnly = true;
 
   // Read initial state from URL query params
   const initParams = new URLSearchParams(window.location.search);
-  if (initParams.has('filter')) currentFilter = initParams.get('filter');
+  if (initParams.has('fifty')) fiftyOnly = initParams.get('fifty') === '1';
+  if (initParams.has('status')) statusFilter = initParams.get('status') || '';
+  // Legacy: support old ?filter= param
+  if (initParams.has('filter')) {
+    const f = initParams.get('filter').replace('50hr', 'fifty');
+    if (f === 'fifty' || f.startsWith('fifty-')) {
+      fiftyOnly = true;
+      statusFilter = f === 'fifty' ? '' : f.replace('fifty-', '');
+    } else if (f !== 'all') {
+      statusFilter = f;
+    }
+  }
   if (initParams.has('page')) currentPage = parseInt(initParams.get('page') || '1', 10);
   if (initParams.has('q')) searchTerm = initParams.get('q') || '';
   if (initParams.has('year')) filterYear = initParams.get('year') || '';
   if (initParams.has('month')) filterMonth = initParams.get('month') || '';
   if (initParams.has('type')) filterType = initParams.get('type') || '';
+  currentFilter = buildFilter();
 
-  // Wire filter pills
-  const pills = document.querySelectorAll('.filter-pill');
-  pills.forEach(pill => {
-    pill.addEventListener('click', () => {
-      currentFilter = pill.getAttribute('data-filter');
+  // Wire 50hr toggle
+  const fiftyCheckbox = document.getElementById('filter-fifty');
+  if (fiftyCheckbox) {
+    fiftyCheckbox.checked = fiftyOnly;
+    fiftyCheckbox.addEventListener('change', () => {
+      fiftyOnly = fiftyCheckbox.checked;
+      currentFilter = buildFilter();
       currentPage = 1;
       selectedIds.clear();
       updateURL();
       updateTable();
-      if (_container) _container.scrollTo({ top: 0, behavior: 'smooth' });
     });
-  });
+  }
+
+  // Wire status dropdown
+  const statusSelect = document.getElementById('filter-status');
+  if (statusSelect) {
+    statusSelect.value = statusFilter;
+    statusSelect.addEventListener('change', () => {
+      statusFilter = statusSelect.value;
+      currentFilter = buildFilter();
+      currentPage = 1;
+      selectedIds.clear();
+      updateURL();
+      updateTable();
+    });
+  }
 
   // Wire dropdown filters
   const yearSelect = document.getElementById('filter-year');
@@ -1198,7 +1209,6 @@ function updateTable() {
 
   // Update UI
   updateFilterCounts();
-  updateFilterPills();
 
   // Build and append table
   const table = buildTable(rows);

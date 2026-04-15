@@ -407,83 +407,49 @@ export function addTranscript(transcript) {
 export function getFilteredRows(filter, searchTerm, sortCol, sortDir, yearFilter, monthFilter, typeFilter) {
   if (!state) return [];
   const { audio } = state;
-  const fifty = audio.filter(a => a.isSelected50hr);
 
-  let rows;
-  switch (filter) {
-    case 'fifty':
-    case '50hr':
-      rows = fifty;
-      break;
-    case 'fifty-unmapped':
-    case '50hr-unmapped':
-      rows = fifty.filter(a => getStatus(a.id) === 'unmapped');
-      break;
-    case 'fifty-mapped':
-    case '50hr-mapped':
-      rows = fifty.filter(a => getStatus(a.id) === 'mapped');
-      break;
-    case 'fifty-cleaned':
-    case '50hr-cleaned':
-      rows = fifty.filter(a => getStatus(a.id) === 'cleaned');
-      break;
-    case 'fifty-aligned':
-    case '50hr-aligned':
-      rows = fifty.filter(a => getStatus(a.id) === 'aligned');
-      break;
-    case 'fifty-approved':
-    case '50hr-approved':
-      rows = fifty.filter(a => getStatus(a.id) === 'approved');
-      break;
-    case 'unmapped':
-      rows = audio.filter(a => getStatus(a.id) === 'unmapped');
-      break;
-    case 'mapped':
-      rows = audio.filter(a => {
-        const s = getStatus(a.id);
-        return (s === 'mapped' || s === 'cleaned' || s === 'aligned') && !a.isBenchmark;
-      });
-      break;
-    case 'cleaned':
-      rows = audio.filter(a => getStatus(a.id) === 'cleaned');
-      break;
-    case 'benchmark':
-      rows = audio.filter(a => a.isBenchmark);
-      break;
-    case 'needs-review':
-    case 'needsReview':
-      rows = audio.filter(a => getStatus(a.id) === 'aligned');
-      break;
-    case 'approved':
-      rows = audio.filter(a => getStatus(a.id) === 'approved');
-      break;
-    case 'rejected':
-      rows = audio.filter(a => getStatus(a.id) === 'rejected');
-      break;
-    case 'perfect-match':
-      rows = audio.filter(a => {
-        const m = state.mappings[a.id];
-        return m && m.confidence === 1;
-      });
-      break;
-    case 'strong-match':
-      rows = audio.filter(a => {
-        const m = state.mappings[a.id];
-        return m && m.confidence >= 0.5;
-      });
-      break;
-    case 'all':
-    default:
-      rows = audio;
-      break;
+  // Support legacy compound keys (fifty-unmapped, 50hr-mapped, etc.)
+  let fiftyOnly = false;
+  let statusFilter = '';
+  if (typeof filter === 'string') {
+    const f = filter.replace('50hr', 'fifty');
+    if (f === 'fifty' || f.startsWith('fifty-')) {
+      fiftyOnly = true;
+      statusFilter = f === 'fifty' ? '' : f.replace('fifty-', '');
+    } else if (['unmapped', 'mapped', 'cleaned', 'aligned', 'approved', 'rejected', 'benchmark'].includes(f)) {
+      statusFilter = f;
+    } else if (f === 'needs-review' || f === 'needsReview') {
+      statusFilter = 'aligned';
+    } else if (f === 'perfect-match') {
+      statusFilter = 'perfect-match';
+    } else if (f === 'strong-match') {
+      statusFilter = 'strong-match';
+    }
+    // 'all' or default → no status filter
   }
 
-  // Apply year/month/type filters if provided
+  let rows = audio;
+
+  // 50hr filter
+  if (fiftyOnly) rows = rows.filter(a => a.isSelected50hr);
+
+  // Status filter
+  if (statusFilter === 'benchmark') {
+    rows = rows.filter(a => a.isBenchmark);
+  } else if (statusFilter === 'perfect-match') {
+    rows = rows.filter(a => { const m = state.mappings[a.id]; return m && m.confidence === 1; });
+  } else if (statusFilter === 'strong-match') {
+    rows = rows.filter(a => { const m = state.mappings[a.id]; return m && m.confidence >= 0.5; });
+  } else if (statusFilter) {
+    rows = rows.filter(a => getStatus(a.id) === statusFilter);
+  }
+
+  // Year/month/type filters
   if (yearFilter) rows = rows.filter(a => a.year === yearFilter);
   if (monthFilter) rows = rows.filter(a => a.month === monthFilter);
   if (typeFilter) rows = rows.filter(a => a.type === typeFilter);
 
-  // Apply search term if provided
+  // Search
   if (searchTerm) {
     const term = searchTerm.toLowerCase();
     rows = rows.filter(a => {
@@ -493,7 +459,7 @@ export function getFilteredRows(filter, searchTerm, sortCol, sortDir, yearFilter
     });
   }
 
-  // Apply sort if provided
+  // Sort
   if (sortCol) {
     const dir = sortDir === 'desc' ? -1 : 1;
     rows = [...rows].sort((a, b) => {

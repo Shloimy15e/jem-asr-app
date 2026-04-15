@@ -279,8 +279,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   let activeTab = 'audio';
   const tabBtns = document.querySelectorAll('#tab-bar .tab-btn');
-  const audioFilterGroups = document.querySelectorAll('.filter-group[data-tab="audio"]');
-  const filterTypeSelect = document.getElementById('filter-type');
+  const audioOnlyEls = document.querySelectorAll('[data-tab="audio"]');
 
   tabBtns.forEach(btn => {
     btn.addEventListener('click', () => {
@@ -289,9 +288,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       activeTab = tab;
       tabBtns.forEach(b => b.classList.toggle('active', b === btn));
 
-      // Show/hide audio-only filter groups and type dropdown
-      audioFilterGroups.forEach(g => g.style.display = tab === 'audio' ? '' : 'none');
-      if (filterTypeSelect) filterTypeSelect.style.display = tab === 'audio' ? '' : 'none';
+      // Show/hide audio-only filter controls
+      audioOnlyEls.forEach(el => el.style.display = tab === 'audio' ? '' : 'none');
 
       // Clear and re-render
       tableContainer.innerHTML = '';

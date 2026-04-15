@@ -1539,6 +1539,27 @@ input {
   outline: none;
 }
 
+.fifty-toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  user-select: none;
+}
+
+.fifty-toggle-label:has(input:checked) {
+  background: var(--blue-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .search-results {
   max-height: min(400px, 50vh);
   overflow-y: auto;
