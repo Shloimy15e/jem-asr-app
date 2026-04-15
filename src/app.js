@@ -322,6 +322,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   monthSelect?.addEventListener('change', onSharedFilterChange);
   searchInput?.addEventListener('input', onSharedFilterChange);
 
+  // Reset button for transcript tab
+  const resetBtn = document.getElementById('btn-reset-filters');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      if (activeTab === 'transcripts') {
+        if (yearSelect) yearSelect.value = '';
+        if (monthSelect) monthSelect.value = '';
+        if (searchInput) searchInput.value = '';
+        setTranscriptFilters({ year: '', month: '', search: '' });
+        updateTranscriptTable();
+      }
+    });
+  }
+
   // ── Mobile filter drawer toggle ─────────────────────────────────
 
   const filterToggleBtn = document.getElementById('btn-filter-toggle');

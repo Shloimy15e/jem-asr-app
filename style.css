@@ -1539,6 +1539,24 @@ input {
   outline: none;
 }
 
+.reset-filters-btn {
+  padding: 7px 14px;
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.reset-filters-btn:hover {
+  background: var(--red-dim);
+  color: var(--red);
+  border-color: var(--red);
+}
+
 .fifty-toggle-label {
   display: inline-flex;
   align-items: center;

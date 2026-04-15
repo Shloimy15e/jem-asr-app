@@ -1171,6 +1171,31 @@ function renderTable(container, options = {}) {
     });
   }
 
+  // Wire reset button
+  const resetBtn = document.getElementById('btn-reset-filters');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      fiftyOnly = false;
+      statusFilter = '';
+      filterYear = '';
+      filterMonth = '';
+      filterType = '';
+      searchTerm = '';
+      currentPage = 1;
+      currentFilter = buildFilter();
+      selectedIds.clear();
+      if (fiftyCheckbox) fiftyCheckbox.checked = false;
+      if (statusSelect) statusSelect.value = '';
+      if (yearSelect) yearSelect.value = '';
+      if (monthSelect) monthSelect.value = '';
+      if (typeSelect) typeSelect.value = '';
+      const si = document.getElementById('search-input');
+      if (si) si.value = '';
+      updateURL();
+      updateTable();
+    });
+  }
+
   // Populate dropdown filters from data
   populateDropdownFilters();
 
