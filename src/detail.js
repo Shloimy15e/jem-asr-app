@@ -1,5 +1,5 @@
 import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions, getPipelineStep, getIterationCount, setSegmentApprovals, getApprovedSegments, toggleSegmentApproval } from './state.js';
-import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, setActiveLibrary, getActiveLibraryConfig, isLibraryR2Url } from './auth.js';
+import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, setActiveLibrary, getActiveLibraryConfig, isLibraryR2Url, getAccessToken } from './auth.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanSectionMarkers, cleanMinor, findBracketMatches, findParenMatches, applyMatchActions, calculateCleanRate } from './cleaning.js';
 import { alignRow } from './alignment.js';
@@ -317,28 +317,68 @@ function renderDetailPage(audioId, audio, state, container) {
   // === Section: Audio Player ===
   const playerSection = createSection('Audio Player');
   addCollapseBehavior(playerSection.el, playerSection.header, false);
-  const audioUrl = audio.r2Link || audio.driveLink;
-  if (audioUrl) {
-    const playerEl = document.createElement('audio');
-    playerEl.controls = true;
-    playerEl.preload = 'metadata';
-    playerEl.src = isLibraryR2Url(audioUrl) ? `/api/audio?url=${encodeURIComponent(audioUrl)}` : audioUrl;
-    playerEl.className = 'audio-player';
-    playerEl.addEventListener('loadedmetadata', () => {
-      const realMin = parseFloat((playerEl.duration / 60).toFixed(1));
-      durationSpan.textContent = `${metaItems.length ? '  |  ' : ''}Duration: ${realMin} min`;
-      if (audio.estMinutes !== realMin) {
-        audio.estMinutes = realMin;
-        syncAudioDuration(audioId, realMin).catch(console.warn);
-      }
-    }, { once: true });
+
+  const playerEl = document.createElement('audio');
+  playerEl.controls = true;
+  playerEl.preload = 'metadata';
+  playerEl.className = 'audio-player';
+  playerEl.addEventListener('loadedmetadata', () => {
+    const realMin = parseFloat((playerEl.duration / 60).toFixed(1));
+    durationSpan.textContent = `${metaItems.length ? '  |  ' : ''}Duration: ${realMin} min`;
+    if (audio.estMinutes !== realMin) {
+      audio.estMinutes = realMin;
+      syncAudioDuration(audioId, realMin).catch(console.warn);
+    }
+  }, { once: true });
+
+  if (audio.r2Link) {
+    // R2 link exists — use it directly
+    playerEl.src = isLibraryR2Url(audio.r2Link) ? `/api/audio?url=${encodeURIComponent(audio.r2Link)}` : audio.r2Link;
     playerSection.content.appendChild(playerEl);
-
-    // Speed Controls
     playerSection.content.appendChild(renderSpeedBar(playerEl, [1, 1.25, 1.5, 2, 2.5, 3]));
-
-    // Trim Controls
     renderTrimControls(audioId, playerEl, playerSection.content);
+  } else if (audio.driveLink) {
+    // No R2 link — auto-migrate from Google Drive
+    const migrateStatus = document.createElement('div');
+    migrateStatus.className = 'migrate-status';
+    migrateStatus.textContent = 'Migrating audio from Google Drive to R2…';
+    playerSection.content.appendChild(migrateStatus);
+    playerSection.content.appendChild(playerEl);
+    playerSection.content.appendChild(renderSpeedBar(playerEl, [1, 1.25, 1.5, 2, 2.5, 3]));
+    renderTrimControls(audioId, playerEl, playerSection.content);
+
+    // Kick off migration in background
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        if (!token) { migrateStatus.textContent = 'Not authenticated — cannot migrate'; return; }
+        const res = await fetch('/api/migrate-audio', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            audioId,
+            driveLink: audio.driveLink,
+            fileName: audio.name || audioId,
+            libraryId: getActiveLibrary(),
+          }),
+        });
+        const result = await res.json();
+        if (!res.ok) {
+          migrateStatus.textContent = 'Migration failed: ' + (result.error || res.status);
+          migrateStatus.style.color = 'var(--red)';
+          return;
+        }
+        // Success — update local state and load the player
+        audio.r2Link = result.r2Link;
+        playerEl.src = `/api/audio?url=${encodeURIComponent(result.r2Link)}`;
+        migrateStatus.textContent = 'Migrated to R2 successfully';
+        migrateStatus.style.color = 'var(--green)';
+        setTimeout(() => migrateStatus.remove(), 3000);
+      } catch (err) {
+        migrateStatus.textContent = 'Migration error: ' + err.message;
+        migrateStatus.style.color = 'var(--red)';
+      }
+    })();
   } else {
     const noAudio = document.createElement('div');
     noAudio.className = 'no-audio';

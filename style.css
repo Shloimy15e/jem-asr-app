@@ -1744,6 +1744,13 @@ input {
   gap: 4px;
 }
 
+.migrate-status {
+  font-size: 0.85rem;
+  color: var(--accent);
+  padding: 8px 0;
+  font-weight: 500;
+}
+
 .fifty-toggle-btn {
   font-size: 0.75rem;
   padding: 2px 10px;
