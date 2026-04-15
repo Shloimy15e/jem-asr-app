@@ -701,7 +701,8 @@ jem-asr-app/
 │   ├── app.js                  # Entry: load catalog from Supabase, init state, wire everything
 │   ├── state.js                # State management, localStorage + Supabase sync
 │   ├── db.js                   # Supabase client, loadFromSupabase(), syncStateKey(), searchTranscriptText()
-│   ├── table.js                # Unified table: filters, sort, pagination, bulk select
+│   ├── table.js                # Audio table: filters, sort, pagination, bulk select
+│   ├── transcript-table.js     # Transcript table: filters, sort, pagination (Transcripts tab)
 │   ├── mapping.js              # Matching algorithm, suggested matches, search modal, global transcript search
 │   ├── cleaning.js             # 5-pass regex cleaner, clean rate, batch clean
 │   ├── alignment.js            # RunPod API calls, confidence parsing, batch align + transcribeAudio()
@@ -820,6 +821,9 @@ bulkSyncMappings(mappingsObj)   // ignoreDuplicates — won't overwrite user-con
 - `reviews.edited_text` (added via migration)
 - `transcript_edits.version` is TEXT (was mistakenly INTEGER at creation; fixed via migration)
 - `transcript_edits.text` (added via migration — stores the cleaned text content)
+
+### Transcripts tab on main page
+A tab bar (Audio | Transcripts) sits above the filter bar. The Audio tab is the default. Clicking Transcripts hides the audio-specific filter pill groups and renders `src/transcript-table.js` — a self-contained table module with its own columns (#, Transcript Name, Year, Month, Day, First Line, Mapped To, Actions), sorting, pagination, and filtering. The year/month/search controls are shared between both tabs. "Mapped To" counts how many audio files link to each transcript by scanning `state.mappings`. Clicking a transcript row opens the linked audio's detail page.
 
 ### audio_files.type backfilled
 `scripts/backfill-type.mjs` parsed all 4,676 filenames and set `type` to `'Sicha'`, `'Maamar'`, `'Farbrengen'`, or left null. Run once on 2026-04-15. New files uploaded via the admin panel will still need type set manually or via a future parsing step.

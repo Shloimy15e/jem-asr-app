@@ -2,6 +2,7 @@ import { initState, getState, getStatus, mergeSupabaseData } from './state.js';
 import { checkAuth, signOut, getUserLibraries, getActiveLibrary, setActiveLibrary, isLibraryR2Url } from './auth.js';
 import { loadFromSupabase } from './db.js';
 import { renderTable, updateTable } from './table.js';
+import { renderTranscriptTable, updateTranscriptTable, setTranscriptFilters } from './transcript-table.js';
 import { renderSuggestedMatches, linkMatch, renderSearchModal, renderGlobalTranscriptSearch } from './mapping.js';
 
 
@@ -273,6 +274,55 @@ document.addEventListener('DOMContentLoaded', async () => {
     onRowExpand,
     filter: has50hr ? 'fifty' : 'all',
   });
+
+  // ── Tab switching (Audio / Transcripts) ─────────────────────────
+
+  let activeTab = 'audio';
+  const tabBtns = document.querySelectorAll('#tab-bar .tab-btn');
+  const audioFilterGroups = document.querySelectorAll('.filter-group[data-tab="audio"]');
+  const filterTypeSelect = document.getElementById('filter-type');
+
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.getAttribute('data-tab');
+      if (tab === activeTab) return;
+      activeTab = tab;
+      tabBtns.forEach(b => b.classList.toggle('active', b === btn));
+
+      // Show/hide audio-only filter groups and type dropdown
+      audioFilterGroups.forEach(g => g.style.display = tab === 'audio' ? '' : 'none');
+      if (filterTypeSelect) filterTypeSelect.style.display = tab === 'audio' ? '' : 'none';
+
+      // Clear and re-render
+      tableContainer.innerHTML = '';
+      if (tab === 'audio') {
+        renderTable(tableContainer, { onRowExpand, filter: has50hr ? 'fifty' : 'all' });
+      } else {
+        renderTranscriptTable(tableContainer);
+      }
+    });
+  });
+
+  // Wire shared filter controls to active tab
+  const yearSelect = document.getElementById('filter-year');
+  const monthSelect = document.getElementById('filter-month');
+  const searchInput = document.getElementById('search-input');
+
+  function onSharedFilterChange() {
+    if (activeTab === 'transcripts') {
+      setTranscriptFilters({
+        year: yearSelect?.value || '',
+        month: monthSelect?.value || '',
+        search: searchInput?.value || '',
+      });
+      updateTranscriptTable();
+    }
+    // Audio table handles its own filter wiring internally
+  }
+
+  yearSelect?.addEventListener('change', onSharedFilterChange);
+  monthSelect?.addEventListener('change', onSharedFilterChange);
+  searchInput?.addEventListener('input', onSharedFilterChange);
 
   // ── Mobile filter drawer toggle ─────────────────────────────────
 
