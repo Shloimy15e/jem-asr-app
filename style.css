@@ -2521,6 +2521,90 @@ input {
   flex-shrink: 0;
 }
 
+/* ── Match preview modal (brackets/parentheses) ── */
+.match-preview-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s;
+}
+
+.match-preview-row:last-child {
+  border-bottom: none;
+}
+
+.match-action-delete {
+  background: var(--red-dim);
+}
+
+.match-action-unwrap {
+  background: var(--orange-dim);
+}
+
+.match-action-keep {
+  background: transparent;
+}
+
+.match-preview-num {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  min-width: 28px;
+  text-align: right;
+  padding-top: 2px;
+  flex-shrink: 0;
+}
+
+.match-preview-text-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.match-preview-context {
+  font-family: 'SBL Hebrew', 'David Libre', 'Noto Serif Hebrew', 'Times New Roman', serif;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.match-ctx-text {
+  color: var(--text-secondary);
+}
+
+.match-ctx-highlight {
+  color: var(--text);
+  font-weight: 600;
+  background: rgba(255, 149, 0, 0.15);
+  border-radius: 3px;
+  padding: 1px 3px;
+}
+
+.match-preview-radios {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.match-radio-label {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.match-radio-label input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+.match-action-bar {
+  flex-wrap: wrap;
+}
+
 /* Cleaning button bar */
 .pipeline-tools-details {
   margin-bottom: 10px;

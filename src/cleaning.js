@@ -91,6 +91,58 @@ export function cleanWhitespace(text) {
   return t;
 }
 
+// ── Match extraction for interactive bracket/paren cleaning ─────────
+
+export function findBracketMatches(text) {
+  const re = /\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]/g;
+  const matches = [];
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    matches.push({ match: m[0], content: m[0].slice(1, -1), index: m.index });
+  }
+  return matches;
+}
+
+export function findParenMatches(text) {
+  const re = /\([^()]*(?:\([^()]*\)[^()]*)*\)/g;
+  const matches = [];
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    matches.push({ match: m[0], content: m[0].slice(1, -1), index: m.index });
+  }
+  return matches;
+}
+
+// Apply per-match actions to text. Processes in reverse order so indices stay valid.
+// actions[i] = 'delete' | 'unwrap' | 'keep'
+export function applyMatchActions(text, matches, actions) {
+  // Work backwards so earlier indices aren't invalidated
+  const sorted = matches.map((m, i) => ({ ...m, action: actions[i] }))
+    .sort((a, b) => b.index - a.index);
+  let result = text;
+  for (const m of sorted) {
+    if (m.action === 'delete') {
+      result = result.slice(0, m.index) + result.slice(m.index + m.match.length);
+    } else if (m.action === 'unwrap') {
+      result = result.slice(0, m.index) + m.content + result.slice(m.index + m.match.length);
+    }
+    // 'keep' → no change
+  }
+  return result;
+}
+
+// Combined minor cleaning passes (quotes, dashes, symbols, whitespace)
+export function cleanMinor(text) {
+  let t = text;
+  t = cleanSurroundingQuotes(t);
+  t = cleanDashesToSpace(t);
+  t = cleanHyphens(t);
+  t = cleanQuestionMarks(t);
+  t = cleanEllipsis(t);
+  t = cleanWhitespace(t);
+  return t;
+}
+
 export function cleanText(rawText) {
   if (!rawText) return '';
   let text = rawText;

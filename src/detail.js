@@ -1,7 +1,7 @@
 import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions, getPipelineStep, getIterationCount, setSegmentApprovals, getApprovedSegments, toggleSegmentApproval } from './state.js';
 import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, setActiveLibrary, getActiveLibraryConfig, isLibraryR2Url } from './auth.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
-import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, cleanSurroundingQuotes, cleanHyphens, cleanDashesToSpace, cleanQuestionMarks, cleanEllipsis, cleanWhitespace, calculateCleanRate } from './cleaning.js';
+import { batchClean, cleanSectionMarkers, cleanMinor, findBracketMatches, findParenMatches, applyMatchActions, calculateCleanRate } from './cleaning.js';
 import { alignRow } from './alignment.js';
 
 import { formatConfidence, getConfidenceLevel, generateSRT, generateVTT, downloadFile } from './utils.js';
@@ -818,6 +818,175 @@ function renderInlineDiff(container, orig, clean) {
   }
 }
 
+// ── Match preview modal for brackets / parentheses ──────────────────
+// Shows each match individually with Delete / Unwrap / Keep options.
+
+function openMatchPreviewModal(audioId, label, currentText, matches, rawOriginal, pageContainer) {
+  if (matches.length === 0) {
+    alert('No matches found.');
+    return;
+  }
+
+  // Per-match action state: 'delete' | 'unwrap' | 'keep'
+  const actions = matches.map(() => 'delete');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal pass-preview-modal';
+
+  // Header
+  const header = document.createElement('div');
+  header.className = 'modal-header';
+  const title = document.createElement('h2');
+  title.textContent = `Preview: ${label}`;
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'btn btn-close';
+  closeBtn.textContent = '\u00D7';
+  header.appendChild(title);
+  header.appendChild(closeBtn);
+  modal.appendChild(header);
+
+  // Batch action bar
+  const actionBar = document.createElement('div');
+  actionBar.className = 'diff-actions match-action-bar';
+  const countLabel = document.createElement('span');
+  countLabel.className = 'text-secondary';
+  countLabel.textContent = `${matches.length} match${matches.length !== 1 ? 'es' : ''} found`;
+  actionBar.appendChild(countLabel);
+
+  function setAll(action) {
+    actions.fill(action);
+    rowEls.forEach((el, i) => {
+      el.querySelector(`input[value="${action}"]`).checked = true;
+      el.className = 'match-preview-row match-action-' + action;
+    });
+  }
+
+  for (const [act, lbl] of [['delete', 'Delete All'], ['unwrap', 'Unwrap All'], ['keep', 'Keep All']]) {
+    const btn = document.createElement('button');
+    btn.className = 'action-btn' + (act === 'delete' ? ' action-btn-danger' : '');
+    btn.textContent = lbl;
+    btn.addEventListener('click', () => setAll(act));
+    actionBar.appendChild(btn);
+  }
+  modal.appendChild(actionBar);
+
+  // Match rows
+  const rowsContainer = document.createElement('div');
+  rowsContainer.className = 'diff-rows-container';
+  const rowEls = [];
+
+  matches.forEach((m, i) => {
+    const row = document.createElement('div');
+    row.className = 'match-preview-row match-action-delete';
+
+    const num = document.createElement('span');
+    num.className = 'match-preview-num';
+    num.textContent = (i + 1) + '.';
+
+    const textWrap = document.createElement('div');
+    textWrap.className = 'match-preview-text-wrap';
+
+    // Show context around the match
+    const contextBefore = currentText.slice(Math.max(0, m.index - 40), m.index);
+    const contextAfter = currentText.slice(m.index + m.match.length, m.index + m.match.length + 40);
+    const beforeSnip = contextBefore.includes('\n') ? contextBefore.slice(contextBefore.lastIndexOf('\n') + 1) : contextBefore;
+    const afterSnip = contextAfter.includes('\n') ? contextAfter.slice(0, contextAfter.indexOf('\n')) : contextAfter;
+
+    const ctx = document.createElement('div');
+    ctx.className = 'match-preview-context';
+    ctx.dir = 'rtl';
+    const beforeSpan = document.createElement('span');
+    beforeSpan.className = 'match-ctx-text';
+    beforeSpan.textContent = beforeSnip;
+    const matchSpan = document.createElement('span');
+    matchSpan.className = 'match-ctx-highlight';
+    matchSpan.textContent = m.match;
+    const afterSpan = document.createElement('span');
+    afterSpan.className = 'match-ctx-text';
+    afterSpan.textContent = afterSnip;
+    ctx.appendChild(beforeSpan);
+    ctx.appendChild(matchSpan);
+    ctx.appendChild(afterSpan);
+    textWrap.appendChild(ctx);
+
+    // Radio buttons
+    const radios = document.createElement('div');
+    radios.className = 'match-preview-radios';
+    const name = `match-action-${i}`;
+    for (const [val, lbl] of [['delete', 'Delete'], ['unwrap', 'Unwrap'], ['keep', 'Keep']]) {
+      const radioLabel = document.createElement('label');
+      radioLabel.className = 'match-radio-label';
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = name;
+      radio.value = val;
+      radio.checked = val === 'delete';
+      radio.addEventListener('change', () => {
+        actions[i] = val;
+        row.className = 'match-preview-row match-action-' + val;
+      });
+      radioLabel.appendChild(radio);
+      radioLabel.appendChild(document.createTextNode(' ' + lbl));
+      radios.appendChild(radioLabel);
+    }
+
+    row.appendChild(num);
+    row.appendChild(textWrap);
+    row.appendChild(radios);
+    rowsContainer.appendChild(row);
+    rowEls.push(row);
+  });
+
+  modal.appendChild(rowsContainer);
+
+  // Footer
+  const applyBar = document.createElement('div');
+  applyBar.className = 'diff-apply-bar';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'action-btn';
+  cancelBtn.textContent = 'Cancel';
+
+  const applyBtn = document.createElement('button');
+  applyBtn.className = 'btn btn-secondary';
+  applyBtn.textContent = 'Apply';
+  applyBtn.addEventListener('click', () => {
+    // Check if all actions are 'keep' — nothing to do
+    if (actions.every(a => a === 'keep')) { closeModal(); return; }
+    const finalText = applyMatchActions(currentText, matches, actions);
+    const cleanRate = calculateCleanRate(rawOriginal, finalText);
+    const versions = getVersions(audioId);
+    const existingEdited = versions.find(v => v.type === 'edited');
+    if (existingEdited) {
+      updateVersion(audioId, existingEdited.id, { text: finalText, originalText: rawOriginal, cleanRate });
+    } else {
+      addVersion(audioId, { type: 'edited', text: finalText, originalText: rawOriginal, cleanRate, createdBy: getCurrentUser() });
+    }
+    closeModal();
+    const s = getState();
+    renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
+  });
+
+  applyBar.appendChild(cancelBtn);
+  applyBar.appendChild(applyBtn);
+  modal.appendChild(applyBar);
+
+  overlay.appendChild(modal);
+  function closeModal() {
+    overlay.remove();
+    document.removeEventListener('keydown', escHandler);
+  }
+  function escHandler(e) { if (e.key === 'Escape') closeModal(); }
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+  closeBtn.addEventListener('click', closeModal);
+  cancelBtn.addEventListener('click', closeModal);
+  document.addEventListener('keydown', escHandler);
+  document.body.appendChild(overlay);
+}
+
 // rawOriginal: the locked original transcript text (never overwritten).
 // Accepted lines are applied; rejected lines keep their original content.
 function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawOriginal, pageContainer) {
@@ -1087,41 +1256,87 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
   }
 
   // ── Step panels ──
-  const passes = [
-    { label: 'Remove [brackets]',           fn: cleanBrackets },
-    { label: 'Remove (parentheses)',         fn: cleanParentheses },
-    { label: 'Remove section markers',       fn: cleanSectionMarkers },
-    { label: 'Remove surrounding quotes',    fn: cleanSurroundingQuotes },
-    { label: 'Dashes → space (keep gap)',    fn: cleanDashesToSpace },
-    { label: 'Remove dashes / hyphens',      fn: cleanHyphens },
-    { label: 'Remove ? marks',              fn: cleanQuestionMarks },
-    { label: 'Remove ellipsis (…)',         fn: cleanEllipsis },
-    { label: 'Clean whitespace',            fn: cleanWhitespace },
-  ];
-
   function buildPassButtons(targetEl) {
     const btnBar = document.createElement('div');
     btnBar.className = 'clean-btn-bar';
-    passes.forEach(pass => {
-      const btn = document.createElement('button');
-      btn.className = 'action-btn clean-pass-btn';
-      btn.textContent = pass.label;
-      btn.addEventListener('click', async () => {
-        btn.disabled = true;
-        const origLabel = btn.textContent;
-        btn.textContent = 'Loading...';
-        try {
-          const rawOriginal = await getOriginalText();
-          const currentText = await getCurrentText();
-          const previewText = pass.fn(currentText);
-          openPassPreviewModal(audioId, pass.label, currentText, previewText, rawOriginal, pageContainer);
-        } finally {
-          btn.textContent = origLabel;
-          btn.disabled = false;
-        }
-      });
-      btnBar.appendChild(btn);
+
+    // ── Brackets — match preview modal ──
+    const bracketsBtn = document.createElement('button');
+    bracketsBtn.className = 'action-btn clean-pass-btn';
+    bracketsBtn.textContent = 'Remove [brackets]';
+    bracketsBtn.addEventListener('click', async () => {
+      bracketsBtn.disabled = true;
+      bracketsBtn.textContent = 'Loading...';
+      try {
+        const rawOriginal = await getOriginalText();
+        const currentText = await getCurrentText();
+        const matches = findBracketMatches(currentText);
+        openMatchPreviewModal(audioId, 'Remove [brackets]', currentText, matches, rawOriginal, pageContainer);
+      } finally {
+        bracketsBtn.textContent = 'Remove [brackets]';
+        bracketsBtn.disabled = false;
+      }
     });
+    btnBar.appendChild(bracketsBtn);
+
+    // ── Parentheses — match preview modal ──
+    const parenBtn = document.createElement('button');
+    parenBtn.className = 'action-btn clean-pass-btn';
+    parenBtn.textContent = 'Remove (parentheses)';
+    parenBtn.addEventListener('click', async () => {
+      parenBtn.disabled = true;
+      parenBtn.textContent = 'Loading...';
+      try {
+        const rawOriginal = await getOriginalText();
+        const currentText = await getCurrentText();
+        const matches = findParenMatches(currentText);
+        openMatchPreviewModal(audioId, 'Remove (parentheses)', currentText, matches, rawOriginal, pageContainer);
+      } finally {
+        parenBtn.textContent = 'Remove (parentheses)';
+        parenBtn.disabled = false;
+      }
+    });
+    btnBar.appendChild(parenBtn);
+
+    // ── Section markers — existing line-diff modal ──
+    const sectionBtn = document.createElement('button');
+    sectionBtn.className = 'action-btn clean-pass-btn';
+    sectionBtn.textContent = 'Remove section markers';
+    sectionBtn.addEventListener('click', async () => {
+      sectionBtn.disabled = true;
+      sectionBtn.textContent = 'Loading...';
+      try {
+        const rawOriginal = await getOriginalText();
+        const currentText = await getCurrentText();
+        const previewText = cleanSectionMarkers(currentText);
+        openPassPreviewModal(audioId, 'Remove section markers', currentText, previewText, rawOriginal, pageContainer);
+      } finally {
+        sectionBtn.textContent = 'Remove section markers';
+        sectionBtn.disabled = false;
+      }
+    });
+    btnBar.appendChild(sectionBtn);
+
+    // ── Symbols & whitespace — combined minor passes, line-diff modal ──
+    const minorBtn = document.createElement('button');
+    minorBtn.className = 'action-btn clean-pass-btn';
+    minorBtn.textContent = 'Clean symbols & whitespace';
+    minorBtn.addEventListener('click', async () => {
+      minorBtn.disabled = true;
+      minorBtn.textContent = 'Loading...';
+      try {
+        const rawOriginal = await getOriginalText();
+        const currentText = await getCurrentText();
+        const previewText = cleanMinor(currentText);
+        openPassPreviewModal(audioId, 'Clean symbols & whitespace', currentText, previewText, rawOriginal, pageContainer);
+      } finally {
+        minorBtn.textContent = 'Clean symbols & whitespace';
+        minorBtn.disabled = false;
+      }
+    });
+    btnBar.appendChild(minorBtn);
+
+    // ── Clean All ──
     const cleanAllBtn = document.createElement('button');
     cleanAllBtn.className = 'action-btn action-btn-primary clean-pass-btn';
     cleanAllBtn.textContent = 'Clean All (no preview)';
