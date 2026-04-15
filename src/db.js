@@ -158,7 +158,7 @@ export async function syncReview(audioId, reviewData, audioEntry) {
 // ── Dispatch helper used by state.js ────────────────────────────────
 // Called fire-and-forget after every updateState() call.
 
-async function syncAudioField(audioId, column, value) {
+export async function syncAudioField(audioId, column, value) {
   const { error } = await supabase
     .from('audio_files')
     .update({ [column]: value })

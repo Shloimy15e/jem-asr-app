@@ -1738,6 +1738,25 @@ input {
   font-size: 0.85rem;
   color: var(--text-secondary);
   margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.fifty-toggle-btn {
+  font-size: 0.75rem;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+.fifty-toggle-btn.fifty-active {
+  background: var(--blue-dim);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .detail-section {

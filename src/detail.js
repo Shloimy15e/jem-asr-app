@@ -5,7 +5,7 @@ import { batchClean, cleanBrackets, cleanParentheses, cleanSectionMarkers, clean
 import { alignRow } from './alignment.js';
 
 import { formatConfidence, getConfidenceLevel, generateSRT, generateVTT, downloadFile } from './utils.js';
-import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration, loadSegmentApprovals, syncSegmentApproval } from './db.js';
+import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration, syncAudioField, loadSegmentApprovals, syncSegmentApproval } from './db.js';
 
 // Loads full transcript text using R2 first, then Supabase fallback.
 // Caches on the transcript object for the session.
@@ -278,6 +278,40 @@ function renderDetailPage(audioId, audio, state, container) {
   const durationSpan = document.createElement('span');
   durationSpan.textContent = audio.estMinutes != null ? `${metaItems.length ? '  |  ' : ''}Duration: ${audio.estMinutes} min` : '';
   meta.appendChild(durationSpan);
+
+  // 50-Hour toggle button
+  const fiftyBtn = document.createElement('button');
+  fiftyBtn.className = 'action-btn fifty-toggle-btn';
+  fiftyBtn.style.marginLeft = '12px';
+  function updateFiftyBtn() {
+    if (audio.isSelected50hr) {
+      fiftyBtn.textContent = 'Remove from 50hr';
+      fiftyBtn.classList.add('fifty-active');
+    } else {
+      fiftyBtn.textContent = 'Add to 50hr';
+      fiftyBtn.classList.remove('fifty-active');
+    }
+  }
+  updateFiftyBtn();
+  fiftyBtn.addEventListener('click', () => {
+    audio.isSelected50hr = !audio.isSelected50hr;
+    syncAudioField(audioId, 'is_selected_50hr', audio.isSelected50hr).catch(console.warn);
+    updateFiftyBtn();
+    // Update meta text
+    const metaItems = [
+      audio.year && `Year: ${audio.year}`,
+      audio.type && `Type: ${audio.type}`,
+      audio.isSelected50hr && '50-Hour Set',
+      audio.isBenchmark && 'Benchmark',
+    ].filter(Boolean);
+    // Keep only text nodes (not the durationSpan or button)
+    for (const node of [...meta.childNodes]) {
+      if (node.nodeType === Node.TEXT_NODE) node.remove();
+    }
+    meta.insertBefore(document.createTextNode(metaItems.join('  |  ')), meta.firstChild);
+  });
+  meta.appendChild(fiftyBtn);
+
   container.appendChild(meta);
 
   // === Section: Audio Player ===
