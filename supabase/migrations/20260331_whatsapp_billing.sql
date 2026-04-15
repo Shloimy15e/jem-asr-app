@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_usage (
   id              uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   phone           text NOT NULL,
   credits_used    integer NOT NULL DEFAULT 1,
-  provider        text,                          -- 'gemini' | 'yiddish-labs'
+  provider        text,                          -- 'gemini' | 'mendel'
   duration_sec    real,                          -- audio duration if known
   status          text DEFAULT 'ok',             -- 'ok' | 'error' | 'no_credits'
   created_at      timestamptz NOT NULL DEFAULT now()

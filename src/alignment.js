@@ -415,10 +415,10 @@ const TRANSCRIBE_ENDPOINT = '/api/transcribe';
  * @param {string} audioId - Audio file ID (unused in request, kept for caller convenience)
  * @param {string} audioUrl - URL of the audio file (R2 or Drive)
  * @param {object} config - Provider config from state.transcribeProviders[provider]
- * @param {'gemini'|'whisper'|'yiddish-labs'} config.provider
- * @param {string} [config.apiKey]    - API key for gemini or yiddish-labs
+ * @param {'gemini'|'whisper'|'mendel'} config.provider
+ * @param {string} [config.apiKey]    - API key for gemini or mendel
  * @param {string} [config.modelId]   - Gemini model ID (numeric for fine-tuned)
- * @param {string} [config.endpoint]  - Custom endpoint for yiddish-labs (optional)
+ * @param {string} [config.endpoint]  - Custom endpoint for mendel (optional)
  * @returns {Promise<string>} Transcription text
  */
 export async function transcribeAudio(audioId, audioUrl, config) {
@@ -447,7 +447,7 @@ export async function transcribeAudio(audioId, audioUrl, config) {
     return (data.text || data.full_text || data.transcription || '').trim();
   }
 
-  // Gemini and Yiddish Labs: route through /api/transcribe CF Worker
+  // Gemini and Mendel: route through /api/transcribe CF Worker
   // Secrets (SA JSON, API keys) live in Cloudflare Worker env — never sent from the browser.
   // Only non-sensitive config is included in the payload.
   let providerPayload;
@@ -458,7 +458,7 @@ export async function transcribeAudio(audioId, audioUrl, config) {
       gemini_region: config.region || 'us-central1',
       gemini_endpoint_id: config.endpointId,
     };
-  } else if (provider === 'yiddish-labs') {
+  } else if (provider === 'mendel') {
     providerPayload = {
       ...(config.endpoint ? { yl_endpoint: config.endpoint } : {}),
     };

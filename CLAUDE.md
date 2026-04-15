@@ -598,7 +598,7 @@ ASR transcription lives on its own page (`transcribe.html` + `src/transcribe.js`
 
 **`transcribe.html` / `src/transcribe.js`** — standalone page with full auth + library loading:
 - File info card with audio player at top
-- Three provider buttons (Gemini, Whisper, Yiddish Labs) — same `transcribeAudio()` call from `alignment.js`
+- Three provider buttons (Gemini, Whisper, Mendel) — same `transcribeAudio()` call from `alignment.js`
 - After transcription: inline result display (RTL Hebrew text) + "Open in Detail Page →" link
 - Previously generated ASR versions listed below with truncated previews
 - Header has "← Back to File" link and "ASR Settings" link to main page
@@ -613,12 +613,12 @@ A global **"ASR Settings"** button in the main toolbar opens the config modal (s
 |----------|--------------------|------|
 | **Gemini (fine-tuned)** | `POST /api/transcribe` with `provider:'gemini'` | Vertex AI — `GEMINI_SA_JSON` worker secret |
 | **Whisper** | `POST /api/align` with `mode:'transcribe'` | None — proxied to `align.kohnai.ai` |
-| **Yiddish Labs** | `POST /api/transcribe` with `provider:'yiddish-labs'` | `YL_API_KEY` worker secret |
+| **Mendel** | `POST /api/transcribe` with `provider:'mendel'` | `YL_API_KEY` worker secret |
 
 **Secrets are Cloudflare Worker secrets — never in localStorage or request payloads:**
 ```bash
 npx wrangler pages secret put GEMINI_SA_JSON --project-name jem-asr-app   # full SA JSON from vertex-service-account.json
-npx wrangler pages secret put YL_API_KEY     --project-name jem-asr-app   # Yiddish Labs API key
+npx wrangler pages secret put YL_API_KEY     --project-name jem-asr-app   # Mendel API key
 ```
 The worker reads `context.env.GEMINI_SA_JSON` / `context.env.YL_API_KEY`. The browser only sends non-sensitive config (projectId, region, endpointId, optional yl_endpoint).
 
@@ -631,7 +631,7 @@ The worker reads `context.env.GEMINI_SA_JSON` / `context.env.YL_API_KEY`. The br
 {
   gemini:      { projectId: 'fink-partnership', region: 'us-central1', endpointId: '5718022314876993536' },
   whisper:     {},
-  yiddishLabs: { endpoint: '' },
+  mendel: { endpoint: '' },
 }
 ```
 
@@ -642,7 +642,7 @@ Running an ASR provider from the detail page creates (or updates) a version of `
 |-----------|-------------------|--------------------------------------|
 | Gemini    | `asr` (model: gemini)       | `asr-gemini`       |
 | Whisper   | `asr` (model: whisper)      | `asr-whisper`      |
-| Yiddish Labs | `asr` (model: yiddishLabs) | `asr-yiddishlabs` |
+| Mendel    | `asr` (model: mendel)       | `asr-mendel`       |
 
 Each ASR version tab is **editable** (auto-saves to Supabase via `syncAsr`), **alignable** (Align button uses the active tab's text), and **comparable** via Compare Versions. Re-running the same model overwrites only that model's slot.
 
@@ -700,7 +700,7 @@ jem-asr-app/
 │   ├── align.js                # CF Worker: POST proxy → align.kohnai.ai/api/align (also handles Whisper transcription via mode:'transcribe')
 │   ├── audio.js                # CF Worker: GET proxy for R2 audio (streams, 1-day cache)
 │   ├── transcript.js           # CF Worker: GET proxy for transcript text from R2
-│   ├── transcribe.js           # CF Worker: POST proxy for ASR transcription providers (Gemini Vertex AI, Yiddish Labs)
+│   ├── transcribe.js           # CF Worker: POST proxy for ASR transcription providers (Gemini Vertex AI, Mendel)
 │   └── upload.js               # CF Worker: POST — upload audio/transcript to R2 bucket (requires R2_BUCKET binding + SUPABASE_URL/SUPABASE_ANON_KEY secrets)
 ├── scripts/
 │   ├── seed-transcripts.mjs    # One-off: seed all transcripts + fetch 50hr text from R2

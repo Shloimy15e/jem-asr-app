@@ -419,7 +419,7 @@
 
   <rect x="980" y="1122" width="460" height="48" rx="8" fill="#7f1d1d" stroke="#fca5a5" stroke-width="1"/>
   <text x="1210" y="1142" text-anchor="middle" fill="#fecaca" font-size="11" font-weight="600">5 Gold Standard Files (Locked, Never in Training Set)</text>
-  <text x="1210" y="1158" text-anchor="middle" fill="#94a3b8" font-size="9">Configure ASR models: OpenAI Whisper · YiddishLabs · Google Gemini · Custom endpoints</text>
+  <text x="1210" y="1158" text-anchor="middle" fill="#94a3b8" font-size="9">Configure ASR models: OpenAI Whisper · Mendel · Google Gemini · Custom endpoints</text>
 
   <rect x="980" y="1180" width="460" height="58" rx="8" fill="#1e293b" stroke="#475569" stroke-width="1"/>
   <text x="1000" y="1200" fill="#fca5a5" font-size="10" font-weight="600">WER = (Substitutions + Insertions + Deletions) / Reference Words</text>

@@ -106,15 +106,15 @@ export function buildAsrConfigPanel(container) {
   whisperBlock.appendChild(secretsNote('No credentials needed — uses the existing align.kohnai.ai endpoint.'));
   container.appendChild(whisperBlock);
 
-  // ── Yiddish Labs ──
+  // ── Mendel ──
   const ylBlock = document.createElement('div');
   ylBlock.className = 'asr-provider-block';
   const ylTitle = document.createElement('div');
   ylTitle.className = 'asr-provider-title';
-  ylTitle.textContent = 'Yiddish Labs';
+  ylTitle.textContent = 'Mendel';
   {
     const providers = getState().transcribeProviders || {};
-    const yl = providers.yiddishLabs || {};
+    const yl = providers.mendel || {};
     const isConfigured = !!(yl.endpoint);
     const statusSpan = document.createElement('span');
     statusSpan.textContent = isConfigured ? ' ✓ Configured' : ' ○ Not configured';
@@ -126,7 +126,7 @@ export function buildAsrConfigPanel(container) {
   container.appendChild(ylBlock);
 
   // Optional custom endpoint (not a secret)
-  container.appendChild(buildProviderBlock('Yiddish Labs — endpoint config', [
-    { stateKey: 'yiddishLabs', field: 'endpoint', label: 'Endpoint (optional)', placeholder: 'https://app.yiddishlabs.com/api/v1/transcriptions/sync', type: 'text' },
+  container.appendChild(buildProviderBlock('Mendel — endpoint config', [
+    { stateKey: 'mendel', field: 'endpoint', label: 'Endpoint (optional)', placeholder: 'https://app.yiddishlabs.com/api/v1/transcriptions/sync', type: 'text' },
   ]));
 }

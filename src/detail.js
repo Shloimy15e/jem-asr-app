@@ -1165,7 +1165,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
 
   const asrLinkDesc = document.createElement('p');
   asrLinkDesc.className = 'asr-config-note';
-  asrLinkDesc.textContent = 'Opens a dedicated page to run Whisper, Gemini, or Yiddish Labs on this audio file.';
+  asrLinkDesc.textContent = 'Opens a dedicated page to run Whisper, Gemini, or Mendel on this audio file.';
 
   asrLinkCard.appendChild(asrLinkBtn);
   asrLinkCard.appendChild(asrLinkDesc);

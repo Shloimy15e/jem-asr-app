@@ -263,9 +263,9 @@ async function transcribeAudio(audio, env) {
       body,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.message || `Yiddish Labs ${res.status}`);
-    if (typeof data.text !== 'string') throw new Error('No text in Yiddish Labs response');
-    return { text: data.text.trim(), provider: 'yiddish-labs' };
+    if (!res.ok) throw new Error(data.message || `Mendel ${res.status}`);
+    if (typeof data.text !== 'string') throw new Error('No text in Mendel response');
+    return { text: data.text.trim(), provider: 'mendel' };
   }
 
   throw new Error('No ASR provider configured. Set GEMINI_API_KEY or YL_API_KEY in Worker secrets.');

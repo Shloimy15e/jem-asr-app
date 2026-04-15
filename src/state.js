@@ -40,7 +40,7 @@ export function initState(data) {
       // Only non-sensitive config lives in state.
       gemini: { projectId: 'fink-partnership', region: 'us-central1', endpointId: '5718022314876993536' },
       whisper: {},
-      yiddishLabs: { endpoint: '' },
+      mendel: { endpoint: '' },
     },
     trims: saved.trims || {},
     audioNames: saved.audioNames || {},

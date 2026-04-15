@@ -142,7 +142,7 @@ function renderTranscribePage(audioId, audio, state, root) {
   const PROVIDERS = [
     { key: 'gemini',      label: 'Gemini (fine-tuned)',  providerArg: 'gemini' },
     { key: 'whisper',     label: 'Whisper (RunPod)',      providerArg: 'whisper' },
-    { key: 'yiddishLabs', label: 'Yiddish Labs',          providerArg: 'yiddish-labs' },
+    { key: 'mendel',      label: 'Mendel',                 providerArg: 'mendel' },
   ];
 
   const btnBar = document.createElement('div');

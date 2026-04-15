@@ -106,7 +106,7 @@ export async function syncEdited(audioId, text, audioEntry) {
 export async function syncAsr(audioId, text, modelName, audioEntry) {
   if (text == null) return;
   await ensureAudioFile(audioEntry);
-  // Each model gets its own row: version = 'asr-gemini', 'asr-whisper', 'asr-yiddish-labs', etc.
+  // Each model gets its own row: version = 'asr-gemini', 'asr-whisper', 'asr-mendel', etc.
   const versionKey = `asr-${modelName || 'unknown'}`;
   const { error } = await supabase.from('transcript_edits').upsert(
     {

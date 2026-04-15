@@ -219,7 +219,7 @@
   <text x="1122" y="382" text-anchor="middle" fill="#fbcfe8" font-size="10" font-weight="600">OpenAI Whisper</text>
 
   <rect x="1205" y="360" width="145" height="34" rx="6" fill="#4a1942" stroke="#f472b6" stroke-width="1"/>
-  <text x="1277" y="382" text-anchor="middle" fill="#fbcfe8" font-size="10" font-weight="600">YiddishLabs</text>
+  <text x="1277" y="382" text-anchor="middle" fill="#fbcfe8" font-size="10" font-weight="600">Mendel</text>
 
   <rect x="1050" y="402" width="145" height="34" rx="6" fill="#4a1942" stroke="#f472b6" stroke-width="1"/>
   <text x="1122" y="424" text-anchor="middle" fill="#fbcfe8" font-size="10" font-weight="600">Google Gemini</text>

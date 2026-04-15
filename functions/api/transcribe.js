@@ -1,6 +1,6 @@
 // Proxy transcription requests to external ASR providers
 // POST /api/transcribe
-// Supports: gemini (Vertex AI service-account OR Gemini API key), yiddish-labs
+// Supports: gemini (Vertex AI service-account OR Gemini API key), mendel
 // Whisper uses /api/align directly with mode:'transcribe'
 
 const CORS_HEADERS = {
@@ -229,9 +229,9 @@ async function handleGemini(audio, payload, env) {
   throw { status: 500, message: 'Gemini credentials not configured — set GEMINI_SA_JSON (or GEMINI_API_KEY) as a Cloudflare Worker secret' };
 }
 
-async function handleYiddishLabs(audio, payload, env) {
+async function handleMendel(audio, payload, env) {
   const yl_api_key = env.YL_API_KEY;
-  if (!yl_api_key) throw { status: 500, message: 'Yiddish Labs API key not configured — set YL_API_KEY as a Cloudflare Worker secret' };
+  if (!yl_api_key) throw { status: 500, message: 'Mendel API key not configured — set YL_API_KEY as a Cloudflare Worker secret' };
   const { yl_endpoint } = payload;
 
   // Sync endpoint handles files up to 5 minutes; longer files use the async endpoint.
@@ -239,7 +239,7 @@ async function handleYiddishLabs(audio, payload, env) {
   const mimeType = MIME_MAP[audio.format] || 'audio/mpeg';
   const filename = 'audio' + (audio.format || '.mp3');
 
-  // Build multipart/form-data — field name is "file" per the YiddishLabs API spec
+  // Build multipart/form-data — field name is "file" per the Mendel API spec
   const boundary = '----FormBoundary' + Date.now().toString(36) + Math.random().toString(36).slice(2);
   const enc = new TextEncoder();
   const audioBytes = Uint8Array.from(atob(audio.base64), c => c.charCodeAt(0));
@@ -256,7 +256,7 @@ async function handleYiddishLabs(audio, payload, env) {
   let offset = 0;
   for (const p of parts) { body.set(p, offset); offset += p.length; }
 
-  // Auth uses X-API-KEY header per YiddishLabs API spec
+  // Auth uses X-API-KEY header per Mendel API spec
   const resp = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -268,14 +268,14 @@ async function handleYiddishLabs(audio, payload, env) {
 
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
-    const msg = data.error?.message || data.error?.code || data.message || `Yiddish Labs API error ${resp.status}`;
+    const msg = data.error?.message || data.error?.code || data.message || `Mendel API error ${resp.status}`;
     throw { status: resp.status, message: msg };
   }
 
   // Response: { id, status, text, summary, keywords, ... }
   const text = data.text;
   if (typeof text !== 'string') {
-    throw { status: 502, message: 'Unexpected Yiddish Labs response: ' + JSON.stringify(data).slice(0, 300) };
+    throw { status: 502, message: 'Unexpected Mendel response: ' + JSON.stringify(data).slice(0, 300) };
   }
   return text.trim();
 }
@@ -293,10 +293,10 @@ export async function onRequestPost(context) {
     let text;
     if (provider === 'gemini') {
       text = await handleGemini(audio, payload, env);
-    } else if (provider === 'yiddish-labs') {
-      text = await handleYiddishLabs(audio, payload, env);
+    } else if (provider === 'mendel') {
+      text = await handleMendel(audio, payload, env);
     } else {
-      return errorResponse(400, `Unknown provider: ${provider}. Use gemini or yiddish-labs.`);
+      return errorResponse(400, `Unknown provider: ${provider}. Use gemini or mendel.`);
     }
 
     return new Response(JSON.stringify({ text }), {

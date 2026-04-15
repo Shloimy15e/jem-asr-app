@@ -146,7 +146,7 @@ async function doTranscribe(audio, env) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.message || `YL ${res.status}`);
     if (typeof data.text !== 'string') throw new Error('No text in YL response');
-    return { text: data.text.trim(), provider: 'yiddish-labs' };
+    return { text: data.text.trim(), provider: 'mendel' };
   }
   throw new Error('No ASR provider configured');
 }
