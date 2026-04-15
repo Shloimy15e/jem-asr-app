@@ -78,23 +78,54 @@ export async function onRequestPost(context) {
   }
 
   // ── Download from Google Drive ────────────────────────────────────────
-  // Use the direct download URL with confirm=t to bypass virus scan warning
-  const downloadUrl = `https://drive.google.com/uc?export=download&id=${driveId}&confirm=t`;
+  // Google Drive shows a virus scan warning for larger files.
+  // Strategy: try direct download, if HTML is returned, extract the
+  // confirmation token from cookies and retry with it.
 
   let driveResp;
   try {
-    driveResp = await fetch(downloadUrl, { redirect: 'follow' });
-    if (!driveResp.ok) {
-      return json({ error: `Google Drive download failed: ${driveResp.status}` }, 502);
+    // Attempt 1: direct download
+    const url1 = `https://drive.google.com/uc?export=download&id=${driveId}`;
+    const resp1 = await fetch(url1, { redirect: 'follow' });
+    if (!resp1.ok) {
+      return json({ error: `Google Drive download failed: ${resp1.status}` }, 502);
+    }
+
+    const ct1 = resp1.headers.get('content-type') || '';
+    if (!ct1.includes('text/html')) {
+      // Got the file directly
+      driveResp = resp1;
+    } else {
+      // Got HTML warning page — extract confirm token from cookies or page
+      const cookies = resp1.headers.get('set-cookie') || '';
+      // Forward all cookies and add confirm=t
+      const url2 = `https://drive.google.com/uc?export=download&id=${driveId}&confirm=t`;
+      const cookieHeader = cookies.split(',').map(c => c.split(';')[0].trim()).filter(Boolean).join('; ');
+
+      const resp2 = await fetch(url2, {
+        redirect: 'follow',
+        headers: cookieHeader ? { 'Cookie': cookieHeader } : {},
+      });
+
+      if (!resp2.ok) {
+        return json({ error: `Google Drive confirm download failed: ${resp2.status}` }, 502);
+      }
+
+      const ct2 = resp2.headers.get('content-type') || '';
+      if (ct2.includes('text/html')) {
+        // Still HTML — try one more approach: direct webContentLink format
+        const url3 = `https://drive.google.com/u/0/uc?id=${driveId}&export=download&confirm=t&authuser=0`;
+        const resp3 = await fetch(url3, { redirect: 'follow' });
+        if (!resp3.ok || (resp3.headers.get('content-type') || '').includes('text/html')) {
+          return json({ error: 'Google Drive file cannot be downloaded automatically — it may require manual sharing or is restricted. Try making it publicly accessible.' }, 502);
+        }
+        driveResp = resp3;
+      } else {
+        driveResp = resp2;
+      }
     }
   } catch (err) {
     return json({ error: 'Failed to fetch from Google Drive: ' + err.message }, 502);
-  }
-
-  // Verify we got audio, not an HTML warning page
-  const contentType = driveResp.headers.get('content-type') || '';
-  if (contentType.includes('text/html')) {
-    return json({ error: 'Google Drive returned HTML instead of audio — file may be too large or restricted' }, 502);
   }
 
   // ── Upload to R2 ──────────────────────────────────────────────────────
