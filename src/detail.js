@@ -961,7 +961,7 @@ function openMatchPreviewModal(audioId, label, currentText, matches, rawOriginal
     const versions = getVersions(audioId);
     const existingEdited = versions.find(v => v.type === 'edited');
     if (existingEdited) {
-      updateVersion(audioId, existingEdited.id, { text: finalText, originalText: rawOriginal, cleanRate });
+      updateVersion(audioId, existingEdited.id, { text: finalText, originalText: rawOriginal, cleanRate, createdAt: new Date().toISOString() });
     } else {
       addVersion(audioId, { type: 'edited', text: finalText, originalText: rawOriginal, cleanRate, createdBy: getCurrentUser() });
     }
@@ -1176,7 +1176,7 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
     const versions = getVersions(audioId);
     const existingEdited = versions.find(v => v.type === 'edited');
     if (existingEdited) {
-      updateVersion(audioId, existingEdited.id, { text: finalText, originalText: rawOriginal, cleanRate });
+      updateVersion(audioId, existingEdited.id, { text: finalText, originalText: rawOriginal, cleanRate, createdAt: new Date().toISOString() });
     } else {
       addVersion(audioId, { type: 'edited', text: finalText, originalText: rawOriginal, cleanRate, createdBy: getCurrentUser() });
     }
