@@ -815,6 +815,9 @@ bulkSyncMappings(mappingsObj)   // ignoreDuplicates — won't overwrite user-con
 - `transcript_edits.version` is TEXT (was mistakenly INTEGER at creation; fixed via migration)
 - `transcript_edits.text` (added via migration — stores the cleaned text content)
 
+### audio_files.type backfilled
+`scripts/backfill-type.mjs` parsed all 4,676 filenames and set `type` to `'Sicha'`, `'Maamar'`, `'Farbrengen'`, or left null. Run once on 2026-04-15. New files uploaded via the admin panel will still need type set manually or via a future parsing step.
+
 ### table.js
 ```javascript
 renderTable(container, options)    // options: { onRowExpand, onFilterChange }

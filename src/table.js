@@ -4,6 +4,15 @@ import { linkMatch, unlinkMatch, getSuggestedMatches } from './mapping.js';
 import { isLibraryR2Url } from './auth.js';
 import { syncAudioField } from './db.js';
 
+// ── Helpers ─────────────────────────────────────────────────────────
+
+/** Extract sicha/maamar number from filename, e.g. "Sicha 3" → "3" */
+function parseSichaNum(name) {
+  if (!name) return null;
+  const m = name.match(/\b(?:Sicha|Mamar|Maamar)\s+(\d+)/i);
+  return m ? m[1] : null;
+}
+
 // ── Inline audio player ─────────────────────────────────────────────
 let _activeInlinePlayer = null;
 
@@ -74,7 +83,10 @@ const COLUMNS = [
   { key: 'rowNum',        label: '#',                 sortable: false, showWhen: () => true },
   { key: 'name',          label: 'Audio Name',        sortable: true,  showWhen: () => true },
   { key: 'year',          label: 'Year',              sortable: true,  showWhen: () => true },
+  { key: 'month',         label: 'Month',             sortable: true,  showWhen: () => true },
+  { key: 'day',           label: 'Day',               sortable: true,  showWhen: () => true },
   { key: 'type',          label: 'Type',              sortable: true,  showWhen: () => true },
+  { key: 'sichaNum',      label: 'No.',               sortable: true,  showWhen: () => true },
   { key: 'estMinutes',    label: 'Duration',          sortable: true,  showWhen: () => true },
   { key: 'firstLine',     label: 'First 15 Words',    sortable: false, showWhen: (f) => !filterMatchesStatus(f, ['unmapped']) },
   { key: 'transcript',    label: 'Transcript Name',   sortable: true,  showWhen: (f) => !filterMatchesStatus(f, ['unmapped']) },
@@ -128,7 +140,9 @@ function getRowData(audio) {
     name: (state.audioNames && state.audioNames[id]) || audio.name || '',
     year: audio.year || '',
     month: audio.month || '',
+    day: audio.day != null ? audio.day : '',
     type: audio.type || '',
+    sichaNum: parseSichaNum(audio.name) || '',
     estMinutes: audio.estMinutes != null ? audio.estMinutes + ' min' : '',
     firstLine: transcript ? truncateWords(transcript.firstLine || '', 15) : '',
     transcript: transcript ? transcript.name : '',
