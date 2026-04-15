@@ -192,19 +192,24 @@ async function sendToAsrModel(audioBlob, model) {
     formData.append(key, value);
   }
 
-  const headers = {};
+  // Route through /api/asr proxy to avoid CORS issues.
+  // The target endpoint is passed via header; auth is forwarded.
+  const headers = {
+    'X-ASR-Endpoint': model.endpoint,
+  };
   if (model.apiKey) {
     headers['Authorization'] = `Bearer ${model.apiKey}`;
   }
 
-  const resp = await fetch(model.endpoint, {
+  const resp = await fetch('/api/asr', {
     method: 'POST',
     headers,
     body: formData,
   });
 
   if (!resp.ok) {
-    throw new Error(`ASR API error: ${resp.status} ${resp.statusText}`);
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`ASR API error: ${resp.status} ${resp.statusText} ${errText}`);
   }
 
   const data = await resp.json();

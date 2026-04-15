@@ -3,6 +3,7 @@ import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary,
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanSectionMarkers, cleanMinor, findBracketMatches, findParenMatches, applyMatchActions, calculateCleanRate } from './cleaning.js';
 import { alignRow } from './alignment.js';
+import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark.js';
 
 import { formatConfidence, getConfidenceLevel, generateSRT, generateVTT, downloadFile } from './utils.js';
 import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration, syncAudioField, loadSegmentApprovals, syncSegmentApproval } from './db.js';
@@ -406,23 +407,71 @@ function renderDetailPage(audioId, audio, state, container) {
       container.appendChild(workSection.el);
     }
   } else {
-    // === Benchmark file: show locked approve affordance ===
-    const benchSection = createSection('Review');
-    // Review/Approve: never collapse by default
+    // === Benchmark file: ASR config + Run Benchmark + results ===
+    const benchSection = createSection('Benchmark');
     addCollapseBehavior(benchSection.el, benchSection.header, false);
+
     const benchNote = document.createElement('p');
     benchNote.className = 'text-secondary';
     benchNote.style.cssText = 'font-size:0.85rem;margin-bottom:10px;';
-    benchNote.textContent = 'This is a benchmark file. It is reserved for accuracy testing only and cannot be approved into the training set.';
+    benchNote.textContent = 'This is a benchmark file. Configure ASR models and run them against the gold-standard transcripts to measure accuracy (WER/CER). Benchmark files cannot be approved into the training set.';
     benchSection.content.appendChild(benchNote);
 
-    const disabledApprove = document.createElement('button');
-    disabledApprove.textContent = 'Approve';
-    disabledApprove.disabled = true;
-    disabledApprove.title = 'Benchmark files cannot be approved — they are reserved for accuracy testing only';
-    disabledApprove.setAttribute('aria-disabled', 'true');
-    disabledApprove.className = 'btn btn-secondary';
-    benchSection.content.appendChild(disabledApprove);
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;';
+
+    const configBtn = document.createElement('button');
+    configBtn.className = 'btn btn-secondary';
+    configBtn.textContent = 'Configure ASR Models';
+    configBtn.addEventListener('click', () => {
+      const modal = document.createElement('div');
+      modal.className = 'modal-overlay';
+      const inner = document.createElement('div');
+      inner.className = 'modal';
+      inner.style.cssText = 'max-width:600px;padding:24px;position:relative;';
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'btn btn-close';
+      closeBtn.textContent = '\u00D7';
+      closeBtn.style.cssText = 'position:absolute;top:12px;right:12px;';
+      closeBtn.addEventListener('click', () => modal.remove());
+      inner.appendChild(closeBtn);
+      renderAsrConfig(inner, getState());
+      modal.appendChild(inner);
+      modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+      document.body.appendChild(modal);
+    });
+    btnRow.appendChild(configBtn);
+
+    const runBtn = document.createElement('button');
+    runBtn.className = 'btn btn-primary';
+    runBtn.textContent = 'Run Benchmark';
+    runBtn.addEventListener('click', async () => {
+      const benchmarkIds = getState().audio.filter(a => a.isBenchmark).map(a => a.id);
+      const progress = document.createElement('div');
+      progress.className = 'text-secondary';
+      progress.style.cssText = 'padding:8px 0;font-size:0.85rem;';
+      progress.textContent = 'Starting benchmark...';
+      btnRow.appendChild(progress);
+      runBtn.disabled = true;
+      try {
+        await runBenchmark(benchmarkIds, getState(), (done, total) => {
+          progress.textContent = `Benchmarking ${done} / ${total}...`;
+        });
+        progress.textContent = 'Benchmark complete.';
+      } catch (err) {
+        progress.textContent = 'Error: ' + err.message;
+      }
+      runBtn.disabled = false;
+      renderBenchmarkTable(resultsDiv, getState());
+    });
+    btnRow.appendChild(runBtn);
+
+    benchSection.content.appendChild(btnRow);
+
+    const resultsDiv = document.createElement('div');
+    resultsDiv.className = 'benchmark-results';
+    renderBenchmarkTable(resultsDiv, getState());
+    benchSection.content.appendChild(resultsDiv);
 
     container.appendChild(benchSection.el);
   }
