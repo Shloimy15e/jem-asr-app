@@ -2028,6 +2028,40 @@ input {
   box-shadow: 0 0 0 2px var(--accent-dim);
 }
 
+/* === Detail Page Comments === */
+.detail-comment-display {
+  cursor: text;
+  color: var(--text);
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  min-height: 36px;
+  transition: border-color 0.15s;
+}
+.detail-comment-display:hover {
+  border-color: var(--border);
+}
+.detail-comment-display.comment-placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.detail-comment-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-family: inherit;
+  resize: vertical;
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
 /* === Clickable Transcript Name === */
 .transcript-remap-link {
   cursor: pointer;

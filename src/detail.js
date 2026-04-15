@@ -316,6 +316,51 @@ function renderDetailPage(audioId, audio, state, container) {
 
   container.appendChild(meta);
 
+  // === Section: Comments ===
+  const commentsSection = createSection('Comments');
+  addCollapseBehavior(commentsSection.el, commentsSection.header, true);
+  const commentDisplay = document.createElement('div');
+  commentDisplay.className = 'detail-comment-display';
+  const currentComment = audio.comments || (getState().audioComments || {})[audioId] || '';
+  if (currentComment) {
+    commentDisplay.textContent = currentComment;
+  } else {
+    commentDisplay.textContent = '+ Add comment';
+    commentDisplay.classList.add('comment-placeholder');
+  }
+  commentDisplay.addEventListener('click', () => {
+    const textarea = document.createElement('textarea');
+    textarea.className = 'detail-comment-input';
+    textarea.value = currentComment;
+    textarea.rows = 4;
+    textarea.placeholder = 'Add a comment…';
+    commentsSection.content.replaceChild(textarea, commentDisplay);
+    textarea.focus();
+    let saved = false;
+    const save = () => {
+      if (saved) return;
+      saved = true;
+      const newVal = textarea.value.trim();
+      if (newVal !== currentComment) {
+        audio.comments = newVal;
+        updateState('audioComments', audioId, newVal);
+      }
+      commentDisplay.textContent = newVal || '+ Add comment';
+      commentDisplay.className = 'detail-comment-display' + (newVal ? '' : ' comment-placeholder');
+      commentsSection.content.replaceChild(commentDisplay, textarea);
+    };
+    textarea.addEventListener('blur', save);
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        saved = true;
+        commentsSection.content.replaceChild(commentDisplay, textarea);
+      }
+    });
+  });
+  commentsSection.content.appendChild(commentDisplay);
+  container.appendChild(commentsSection.el);
+
   // === Section: Audio Player ===
   const playerSection = createSection('Audio Player');
   addCollapseBehavior(playerSection.el, playerSection.header, false);

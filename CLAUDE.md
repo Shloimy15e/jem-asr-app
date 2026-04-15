@@ -366,7 +366,7 @@ Renamed via migration `20260323000000_rename_est_minutes.sql`. The DB column is 
 `audio_files.duration_minutes` was originally seeded from estimated values. When a detail page loads, the audio player's `loadedmetadata` event fires and gives the real duration. `detail.js` compares it against `audio.estMinutes` — if different, it calls `syncAudioDuration(audioId, realMin)` in `db.js` to update `audio_files.duration_minutes` in Supabase. The table Duration column self-corrects for any file once its detail page has been visited.
 
 ### DB column: `comments` on `audio_files`
-Added via migration `20260323000001_add_audio_comments.sql`. Editable inline in the table; syncs to Supabase on blur via `updateState('audioComments', id, value)` → `syncAudioComment()`.
+Added via migration `20260323000001_add_audio_comments.sql`. Editable inline in the table and in the detail page Comments section; syncs to Supabase on blur via `updateState('audioComments', id, value)` → `syncAudioComment()`. The detail page renders a collapsible "Comments" section between the meta row and the Audio Player.
 
 ### Audio name edits sync to Supabase
 Editing a name in the table or detail page calls `updateState('audioNames', id, newName)` → `syncStateKey` → `syncAudioField(audioId, 'name', value)` → `UPDATE audio_files SET name = ? WHERE id = ?`. The `name_history` trigger on `audio_files` automatically records the old name. `state.audio[n].name` is also updated in memory so filters/search reflect the change immediately.
