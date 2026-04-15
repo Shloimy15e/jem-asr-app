@@ -564,8 +564,14 @@ When a file is rejected in the review section, a **"Re-clean & Re-align"** butto
 ### Library switch confirmation
 `app.js` shows a `confirm()` dialog before calling `location.reload()` when the user switches libraries, to prevent accidental loss of unsaved offline work.
 
-### Bulk selection removed
-The floating bulk action bar (Clean/Align/Approve buttons with "N of M selected" counter) and all row checkboxes have been removed. All items are handled individually through the detail page. `table.js` no longer exports `getSelectedRows()` and has no `selectedIds` tracking.
+### Bulk selection and actions
+Each table row has a checkbox; the header has a select-all checkbox. When one or more rows are selected, a sticky floating `.bulk-action-bar` appears at the bottom of `.table-container` with four buttons:
+- **Add to 50hr** — sets `is_selected_50hr = true` on each selected audio file via `syncAudioField`
+- **Remove from 50hr** — sets `is_selected_50hr = false`
+- **Unlink** — removes transcript mapping, versions, cleaning, alignment, and review data (with confirm dialog)
+- **Clear** — deselects all
+
+Selection state lives in a module-level `const selectedIds = new Set()` in `table.js`. It is cleared automatically when the user changes filter, page, search, or dropdown filters. `getSelectedRows()` is exported. `Ctrl+A` in `app.js` triggers the header select-all checkbox.
 
 ### Table column visibility handles compound filter keys
 Column `showWhen` functions use `filterMatchesStatus(filter, statuses)` which extracts the status portion from compound keys like `'fifty-unmapped'` or `'50hr-mapped'`. This ensures columns like `firstLine` correctly show/hide when viewing 50hr sub-filters.
@@ -954,7 +960,9 @@ Both formats work: `'fifty'` = `'50hr'`, `'fifty-unmapped'` = `'50hr-unmapped'`,
 
 The `'fifty'` view shows all 200 `is_selected_50hr` files — no type filtering is applied.
 
-Valid keys: `fifty`, `fifty-unmapped`, `fifty-mapped`, `fifty-cleaned`, `fifty-aligned`, `fifty-approved`, `all`, `unmapped`, `mapped`, `cleaned`, `benchmark`, `needs-review`, `approved`, `rejected`
+Valid keys: `fifty`, `fifty-unmapped`, `fifty-mapped`, `fifty-cleaned`, `fifty-aligned`, `fifty-approved`, `all`, `unmapped`, `mapped`, `cleaned`, `benchmark`, `needs-review`, `approved`, `rejected`, `perfect-match`, `strong-match`
+
+`perfect-match` shows audio files where `mappings[audioId].confidence === 1` (100% match). `strong-match` shows files where `confidence >= 0.5` (50%+).
 
 ## R2 URL Patterns
 
