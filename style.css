@@ -878,6 +878,35 @@ input {
   color: #fff;
 }
 
+.action-btn-lg {
+  padding: 10px 24px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.mapping-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.mapping-transcript-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.mapping-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
 .action-btn-danger {
   color: var(--red);
   background: transparent;

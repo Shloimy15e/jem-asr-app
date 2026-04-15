@@ -383,7 +383,6 @@ function renderDetailPage(audioId, audio, state, container) {
     playerEl.src = isLibraryR2Url(audio.r2Link) ? `/api/audio?url=${encodeURIComponent(audio.r2Link)}` : audio.r2Link;
     playerSection.content.appendChild(playerEl);
     playerSection.content.appendChild(renderSpeedBar(playerEl, [1, 1.25, 1.5, 2, 2.5, 3]));
-    renderTrimControls(audioId, playerEl, playerSection.content);
   } else if (audio.driveLink) {
     // No R2 link — auto-migrate from Google Drive
     const migrateStatus = document.createElement('div');
@@ -392,7 +391,6 @@ function renderDetailPage(audioId, audio, state, container) {
     playerSection.content.appendChild(migrateStatus);
     playerSection.content.appendChild(playerEl);
     playerSection.content.appendChild(renderSpeedBar(playerEl, [1, 1.25, 1.5, 2, 2.5, 3]));
-    renderTrimControls(audioId, playerEl, playerSection.content);
 
     // Kick off migration in background
     (async () => {
@@ -627,22 +625,13 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       ? state.transcripts.find(t => t.id === manual.sourceTranscriptId)
       : (mapping ? state.transcripts.find(t => t.id === mapping.transcriptId) : null);
 
-    // Header: linked transcript name + view link
+    // Header: compact linked transcript info
     const label = document.createElement('div');
-    label.style.cssText = 'margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;';
-    const strong = document.createElement('strong');
-    strong.textContent = 'Linked to: ';
-    label.appendChild(strong);
-    label.appendChild(document.createTextNode(transcript ? transcript.name : (mapping?.transcriptId || 'unknown')));
-    if (transcript) {
-      const viewLink = document.createElement('a');
-      viewLink.href = `/detail.html?tid=${encodeURIComponent(transcript.id)}`;
-      viewLink.target = '_blank';
-      viewLink.className = 'action-btn';
-      viewLink.style.cssText = 'text-decoration:none;font-size:0.8rem;';
-      viewLink.textContent = 'View Transcript Independently';
-      label.appendChild(viewLink);
-    }
+    label.className = 'mapping-header';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'mapping-transcript-name';
+    nameSpan.textContent = transcript ? transcript.name : (mapping?.transcriptId || 'unknown');
+    label.appendChild(nameSpan);
     container.appendChild(label);
 
     // Version tabs
@@ -762,7 +751,7 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
         if (isManual) {
           // "Start Editing" — creates an Edited copy of the manual text immediately
           const startEditBtn = document.createElement('button');
-          startEditBtn.className = 'action-btn action-btn-primary';
+          startEditBtn.className = 'action-btn action-btn-primary action-btn-lg';
           startEditBtn.textContent = 'Start Editing';
           startEditBtn.addEventListener('click', async () => {
             startEditBtn.disabled = true;
@@ -859,18 +848,18 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       container.appendChild(textarea);
     }
 
-    // ── ASR provider buttons — generate transcript inline ──
+    // Action toolbar — compact row with ASR + Change + Unlink
+    const actionBar = document.createElement('div');
+    actionBar.className = 'mapping-action-bar';
+
+    // ASR provider buttons
     const asrBar = buildAsrProviderBar(audioId, state, () => {
       renderMappingSection(audioId, getState(), container, pageContainer, activeVersionRef);
     });
-    container.appendChild(asrBar);
-
-    // Action buttons
-    const btnBar = document.createElement('div');
-    btnBar.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
+    actionBar.appendChild(asrBar);
 
     const changeBtn = document.createElement('button');
-    changeBtn.className = 'action-btn action-btn-primary';
+    changeBtn.className = 'action-btn';
     changeBtn.textContent = 'Change Transcript';
     changeBtn.addEventListener('click', () => {
       renderSearchModal(document.body, getState(), (transcriptId) => {
@@ -889,7 +878,7 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
         renderDetailPage(audioId, audio, s, pageContainer);
       });
     });
-    btnBar.appendChild(changeBtn);
+    actionBar.appendChild(changeBtn);
 
     const unlinkBtn = document.createElement('button');
     unlinkBtn.className = 'action-btn action-btn-danger';
@@ -908,9 +897,9 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       const audio = s.audio.find(a => a.id === audioId);
       renderDetailPage(audioId, audio, s, pageContainer);
     });
-    btnBar.appendChild(unlinkBtn);
+    actionBar.appendChild(unlinkBtn);
 
-    container.appendChild(btnBar);
+    container.appendChild(actionBar);
   } else {
     // Unmapped: show suggestions + search
     const suggestionsDiv = document.createElement('div');
@@ -1587,7 +1576,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     const alignBar = document.createElement('div');
     alignBar.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;';
     const alignBtn = document.createElement('button');
-    alignBtn.className = 'action-btn action-btn-primary';
+    alignBtn.className = 'action-btn action-btn-primary action-btn-lg';
     const audioName = state.audio.find(a => a.id === audioId)?.name || audioId;
     const alignLabel = alignment ? `Re-align ${audioName}` : `Run alignment for ${audioName}`;
     alignBtn.textContent = alignment ? 'Re-Align' : 'Run Alignment';
