@@ -1232,8 +1232,14 @@ function updateTable() {
   // Clear container
   _container.innerHTML = '';
 
-  // Update UI
-  updateFilterCounts();
+  // Update result count
+  const totalAudio = getState()?.audio?.length || 0;
+  const countEl = document.getElementById('filter-count');
+  if (countEl) {
+    countEl.textContent = rows.length === totalAudio
+      ? `${rows.length} files`
+      : `${rows.length} of ${totalAudio} files`;
+  }
 
   // Build and append table
   const table = buildTable(rows);

@@ -290,8 +290,16 @@ function updateTranscriptTable() {
   const mappedAudio = buildMappedAudio();
   const sorted = sortRows(filtered, mappedAudio);
 
+  // Update result count in filter bar
+  const totalTranscripts = getState()?.transcripts?.length || 0;
+  const countEl = document.getElementById('filter-count');
+  if (countEl) {
+    countEl.textContent = sorted.length === totalTranscripts
+      ? `${sorted.length} transcripts`
+      : `${sorted.length} of ${totalTranscripts} transcripts`;
+  }
+
   _container.innerHTML = '';
-  _container.appendChild(buildCountBar(sorted.length));
   _container.appendChild(buildTable(sorted));
   _container.appendChild(buildPagination(sorted.length));
 }

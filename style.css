@@ -1539,6 +1539,13 @@ input {
   outline: none;
 }
 
+.filter-count {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
 .reset-filters-btn {
   padding: 7px 14px;
   background: var(--surface-hover);
