@@ -91,6 +91,27 @@ export function cleanWhitespace(text) {
   return t;
 }
 
+// ── Intro text removal ────────────────────────────────────────────
+
+export function cleanIntroText(text) {
+  // Remove everything up to and including "הנחה פרטית בלתי מוגה" if found near the start
+  const pattern = /^([\s\S]{0,800}?הנחה\s+פרטית\s+בלתי\s+מוגה[^\n]*\n?)/;
+  const m = text.match(pattern);
+  if (m) return text.slice(m[1].length).replace(/^\s*\n/, '');
+  return text;
+}
+
+// ── Safe clean (no brackets/parentheses — for bulk use) ──────────
+
+export function cleanSafe(text) {
+  let t = text;
+  t = cleanSectionMarkers(t);
+  t = cleanSymbols(t);
+  t = cleanIntroText(t);
+  t = cleanWhitespace(t);
+  return t;
+}
+
 // ── Match extraction for interactive bracket/paren cleaning ─────────
 
 export function findBracketMatches(text) {
@@ -184,7 +205,7 @@ async function fetchTranscriptText(transcript) {
   return transcript.firstLine || '';
 }
 
-export async function batchClean(audioIds, state, onProgress) {
+export async function batchClean(audioIds, state, onProgress, cleanFn = cleanText) {
   const total = audioIds.length;
   const startTime = Date.now();
   const failed = [];
@@ -213,7 +234,7 @@ export async function batchClean(audioIds, state, onProgress) {
       continue;
     }
 
-    const cleanedText = cleanText(rawText);
+    const cleanedText = cleanFn(rawText);
     const cleanRate = calculateCleanRate(rawText, cleanedText);
 
     // Preserve the original raw text — only set originalText if not already stored

@@ -2633,20 +2633,30 @@ input {
 
 /* Row-level diff lines */
 .diff-line-removed {
-  background: var(--red-dim);
-  color: var(--red);
   padding: 4px 8px;
   border-radius: 3px;
   font-family: 'SBL Hebrew', 'David Libre', 'Noto Serif Hebrew', serif;
   word-break: break-word;
   font-size: 0.85rem;
   line-height: 1.8;
+  color: var(--text);
 }
 
-/* Inline removed chars within a diff-line-removed row */
+.diff-inline {
+  padding: 6px 10px;
+  font-family: 'SBL Hebrew', 'David Libre', 'Noto Serif Hebrew', serif;
+  word-break: break-word;
+  font-size: 0.85rem;
+  line-height: 1.8;
+  color: var(--text);
+}
+
 .diff-char-removed {
   text-decoration: line-through;
-  opacity: 0.75;
+  color: var(--red);
+  background: var(--red-dim);
+  border-radius: 2px;
+  padding: 0 1px;
 }
 
 .diff-line-added {

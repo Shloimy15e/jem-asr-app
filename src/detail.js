@@ -1,7 +1,7 @@
 import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions, getPipelineStep, getIterationCount, setSegmentApprovals, getApprovedSegments, toggleSegmentApproval } from './state.js';
 import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, setActiveLibrary, getActiveLibraryConfig, isLibraryR2Url, getAccessToken } from './auth.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
-import { batchClean, cleanSectionMarkers, cleanMinor, findBracketMatches, findParenMatches, applyMatchActions, calculateCleanRate } from './cleaning.js';
+import { batchClean, cleanSectionMarkers, cleanMinor, cleanIntroText, findBracketMatches, findParenMatches, applyMatchActions, calculateCleanRate } from './cleaning.js';
 import { alignRow, transcribeAudio } from './alignment.js';
 import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark.js';
 import { buildAsrConfigPanel } from './asr-config.js';
@@ -1333,26 +1333,11 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
       });
       rowEl.appendChild(cb);
 
-      // Row-by-row diff: original line (red) then cleaned line (green)
+      // Single row with inline strikethrough on removed chars
       const diffBlock = document.createElement('div');
-      diffBlock.className = 'diff-block';
-
-      const origRow = document.createElement('div');
-      origRow.className = 'diff-line-removed';
-      origRow.dir = 'rtl';
-      renderInlineDiff(origRow, row.orig, row.clean);
-      diffBlock.appendChild(origRow);
-
-      if (row.clean.trim()) {
-        const cleanRow = document.createElement('div');
-        cleanRow.className = 'diff-line-added';
-        cleanRow.dir = 'rtl';
-        cleanRow.contentEditable = 'true';
-        cleanRow.textContent = row.clean;
-        cleanRow.title = 'Edit cleaned text before accepting';
-        cleanRow.addEventListener('blur', () => { row.editedClean = cleanRow.textContent; });
-        diffBlock.appendChild(cleanRow);
-      }
+      diffBlock.className = 'diff-block diff-inline';
+      diffBlock.dir = 'rtl';
+      renderInlineDiff(diffBlock, row.orig, row.clean);
       rowEl.appendChild(diffBlock);
     } else {
       const spacer = document.createElement('span');
@@ -1558,6 +1543,30 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       }
     });
     btnBar.appendChild(minorBtn);
+
+    // ── Remove intro text ──
+    const introBtn = document.createElement('button');
+    introBtn.className = 'action-btn clean-pass-btn';
+    introBtn.textContent = 'Remove intro text';
+    introBtn.addEventListener('click', async () => {
+      introBtn.disabled = true;
+      introBtn.textContent = 'Loading...';
+      try {
+        const rawOriginal = await getOriginalText();
+        const currentText = await getCurrentText();
+        const previewText = cleanIntroText(currentText);
+        if (previewText === currentText) {
+          introBtn.textContent = 'No intro found';
+          setTimeout(() => { introBtn.textContent = 'Remove intro text'; }, 2000);
+          return;
+        }
+        openPassPreviewModal(audioId, 'Remove intro text', currentText, previewText, rawOriginal, pageContainer);
+      } finally {
+        introBtn.textContent = 'Remove intro text';
+        introBtn.disabled = false;
+      }
+    });
+    btnBar.appendChild(introBtn);
 
     // ── Clean All ──
     const cleanAllBtn = document.createElement('button');
