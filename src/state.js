@@ -458,6 +458,12 @@ export function getFilteredRows(filter, searchTerm, sortCol, sortDir, yearFilter
         return m && m.confidence === 1;
       });
       break;
+    case 'strong-match':
+      rows = audio.filter(a => {
+        const m = state.mappings[a.id];
+        return m && m.confidence >= 0.5;
+      });
+      break;
     case 'all':
     default:
       rows = audio;
@@ -516,6 +522,7 @@ export function getFilterCounts() {
   let benchmarkCount = 0;
   let fiftyCount = 0;
   let perfectMatchCount = 0;
+  let strongMatchCount = 0;
 
   audio.forEach(a => {
     const s = getStatus(a.id);
@@ -527,6 +534,7 @@ export function getFilterCounts() {
     }
     const m = state.mappings[a.id];
     if (m && m.confidence === 1) perfectMatchCount++;
+    if (m && m.confidence >= 0.5) strongMatchCount++;
   });
 
   const counts = {
@@ -535,6 +543,7 @@ export function getFilterCounts() {
     mapped: statusCounts.mapped,
     benchmark: benchmarkCount,
     'perfect-match': perfectMatchCount,
+    'strong-match': strongMatchCount,
     'needs-review': statusCounts.aligned,
     cleaned: statusCounts.cleaned || 0,
     approved: statusCounts.approved,
