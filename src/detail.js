@@ -383,6 +383,7 @@ function renderDetailPage(audioId, audio, state, container) {
     playerEl.src = isLibraryR2Url(audio.r2Link) ? `/api/audio?url=${encodeURIComponent(audio.r2Link)}` : audio.r2Link;
     playerSection.content.appendChild(playerEl);
     playerSection.content.appendChild(renderSpeedBar(playerEl, [1, 1.25, 1.5, 2, 2.5, 3]));
+    renderTrimControls(audioId, playerEl, playerSection.content);
   } else if (audio.driveLink) {
     // No R2 link — auto-migrate from Google Drive
     const migrateStatus = document.createElement('div');
@@ -391,6 +392,7 @@ function renderDetailPage(audioId, audio, state, container) {
     playerSection.content.appendChild(migrateStatus);
     playerSection.content.appendChild(playerEl);
     playerSection.content.appendChild(renderSpeedBar(playerEl, [1, 1.25, 1.5, 2, 2.5, 3]));
+    renderTrimControls(audioId, playerEl, playerSection.content);
 
     // Kick off migration in background
     (async () => {
@@ -885,17 +887,8 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
     unlinkBtn.textContent = 'Unlink';
     unlinkBtn.addEventListener('click', () => {
       unlinkMatch(audioId);
-      const s = getState();
-      s.transcriptVersions[audioId] = [];
-      // TODO: updateState with null does not delete Supabase rows — sync functions
-      // bail on null values. Needs db.js delete helpers for cleaning/alignments/reviews.
-      if (s.cleaning[audioId]) updateState('cleaning', audioId, null);
-      if (s.alignments[audioId]) updateState('alignments', audioId, null);
-      if (s.reviews[audioId]) updateState('reviews', audioId, null);
-      // Ensure transcriptVersions reset is persisted even if no updateState fired above
-      updateState('transcriptVersions', null, s.transcriptVersions);
       const audio = s.audio.find(a => a.id === audioId);
-      renderDetailPage(audioId, audio, s, pageContainer);
+      renderDetailPage(audioId, audio, getState(), pageContainer);
     });
     actionBar.appendChild(unlinkBtn);
 
