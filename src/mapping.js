@@ -153,6 +153,8 @@ export function unlinkMatch(audioId) {
   if (state.cleaning) delete state.cleaning[audioId];
   if (state.alignments) delete state.alignments[audioId];
   if (state.reviews) delete state.reviews[audioId];
+  if (state.edited) delete state.edited[audioId];
+  if (state.asr) delete state.asr[audioId];
   // Delete orphaned work data from Supabase (transcript_edits, alignments, reviews, segment_approvals)
   deleteAllWorkData(audioId).catch(console.warn);
   // Persist deletions to localStorage (direct mutations above bypass updateState)
