@@ -2,6 +2,7 @@ import { getState, getFilteredRows, getFilterCounts, getStatus, updateState } fr
 import { truncateWords, formatConfidence, debounce } from './utils.js';
 import { linkMatch, unlinkMatch, getSuggestedMatches } from './mapping.js';
 import { isLibraryR2Url } from './auth.js';
+import { syncAudioField } from './db.js';
 
 // ── Inline audio player ─────────────────────────────────────────────
 let _activeInlinePlayer = null;
@@ -138,6 +139,7 @@ function getRowData(audio) {
     comments: audio.comments || '',
     status,
     isBenchmark: !!audio.isBenchmark,
+    isSelected50hr: !!audio.isSelected50hr,
   };
 }
 
@@ -545,6 +547,13 @@ function buildTable(rows) {
           badge.className = `status-badge ${getStatusClass(row.status)}`;
           badge.textContent = row.status;
           td.appendChild(badge);
+          if (row.isSelected50hr) {
+            const fiftyBadge = document.createElement('span');
+            fiftyBadge.className = 'status-badge status-fifty';
+            fiftyBadge.textContent = '50hr';
+            fiftyBadge.style.marginLeft = '4px';
+            td.appendChild(fiftyBadge);
+          }
           break;
         }
         case 'actions': {
@@ -591,6 +600,21 @@ function buildTable(rows) {
               updateTable();
             });
             td.appendChild(unlinkBtn);
+          }
+          // 50hr toggle button
+          {
+            const fiftyBtn = document.createElement('button');
+            fiftyBtn.className = 'action-btn fifty-toggle-btn' + (audioEntry?.isSelected50hr ? ' fifty-active' : '');
+            fiftyBtn.textContent = audioEntry?.isSelected50hr ? '50hr' : '+50hr';
+            fiftyBtn.title = audioEntry?.isSelected50hr ? 'Remove from 50hr set' : 'Add to 50hr set';
+            fiftyBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              if (!audioEntry) return;
+              audioEntry.isSelected50hr = !audioEntry.isSelected50hr;
+              syncAudioField(row.id, 'is_selected_50hr', audioEntry.isSelected50hr).catch(console.warn);
+              updateTable();
+            });
+            td.appendChild(fiftyBtn);
           }
           break;
         }
@@ -730,6 +754,7 @@ function updateFilterCounts() {
     'count-approved': 'approved',
     'count-benchmark': 'benchmark',
     'count-perfect-match': 'perfect-match',
+    'count-strong-match': 'strong-match',
   };
   for (const [elId, stateKey] of Object.entries(map)) {
     const el = document.getElementById(elId);

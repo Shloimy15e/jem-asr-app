@@ -549,7 +549,11 @@ Clicking a table row calls `onRowExpand(audioId, e)` in `app.js`, which dispatch
 
 **Arrow keys** (`↑`/`↓`) only highlight/select rows — they do NOT trigger expansion or navigation. Only `Enter` or a click expands/navigates.
 
-The inline mapping bar (Linked to / Unlink / Change Transcript / Split Transcript) has been removed from all expanded panels — those controls are on the detail page. However, an **Unlink** button is available directly in the table Actions column for any mapped row (alongside Play and Open). It runs the same cleanup as the detail page unlink (clears mapping, versions, cleaning, alignments, reviews) and refreshes the table immediately.
+The inline mapping bar (Linked to / Unlink / Change Transcript / Split Transcript) has been removed from all expanded panels — those controls are on the detail page. However, two quick-action buttons are available directly in the table Actions column:
+- **Unlink** — shown for mapped rows. Runs the same cleanup as the detail page unlink (clears mapping, versions, cleaning, alignments, reviews) and refreshes the table.
+- **50hr toggle** — shown for all rows. Displays "50hr" (blue, active) when the file is in the 50hr set, or "+50hr" (muted) when it's not. Toggles `isSelected50hr` and syncs to Supabase via `syncAudioField`.
+
+The Status column also shows a blue "50hr" badge next to the status badge for files in the 50hr collection.
 
 ### Filter, page, and search state in URL
 `table.js` uses `history.replaceState` to keep `?filter=`, `?page=`, and `?q=` in sync with the current view. On init, these are read from `URLSearchParams` so a page refresh restores position. The detail page back button uses `history.back()` to return to the table preserving this state.

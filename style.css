@@ -459,6 +459,11 @@ input {
   color: var(--purple);
 }
 
+.status-fifty {
+  background: var(--blue-dim);
+  color: var(--accent);
+}
+
 /* === Confidence Colors === */
 .confidence-high {
   color: var(--green);
