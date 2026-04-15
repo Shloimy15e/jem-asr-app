@@ -43,18 +43,36 @@ export async function onRequestGet(context) {
   }
 
   try {
-    const resp = await fetch(url, { cf: { cacheTtl: 86400 } });
-    if (!resp.ok) {
+    // Forward Range header so the browser can seek within the audio
+    const headers = {};
+    const rangeHeader = context.request.headers.get('Range');
+    if (rangeHeader) {
+      headers['Range'] = rangeHeader;
+    }
+
+    const resp = await fetch(url, { headers, cf: { cacheTtl: 86400 } });
+    if (!resp.ok && resp.status !== 206) {
       return new Response('Audio not found', { status: resp.status });
     }
 
+    const responseHeaders = {
+      'Content-Type': resp.headers.get('Content-Type') || 'audio/mpeg',
+      'Cache-Control': 'public, max-age=86400',
+      'Access-Control-Allow-Origin': '*',
+      'Accept-Ranges': 'bytes',
+    };
+
+    // Forward content-length and content-range for partial responses
+    if (resp.headers.get('Content-Length')) {
+      responseHeaders['Content-Length'] = resp.headers.get('Content-Length');
+    }
+    if (resp.headers.get('Content-Range')) {
+      responseHeaders['Content-Range'] = resp.headers.get('Content-Range');
+    }
+
     return new Response(resp.body, {
-      headers: {
-        'Content-Type': resp.headers.get('Content-Type') || 'audio/mpeg',
-        'Content-Length': resp.headers.get('Content-Length') || '',
-        'Cache-Control': 'public, max-age=86400',
-        'Access-Control-Allow-Origin': '*',
-      },
+      status: resp.status, // 200 for full, 206 for partial
+      headers: responseHeaders,
     });
   } catch (err) {
     return new Response('Failed to fetch audio', { status: 500 });
