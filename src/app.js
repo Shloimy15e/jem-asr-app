@@ -2,7 +2,7 @@ import { initState, getState, getStatus, exportState, importState, mergeSupabase
 import { checkAuth, signOut, getUserLibraries, getActiveLibrary, setActiveLibrary, isLibraryR2Url } from './auth.js';
 import { loadFromSupabase } from './db.js';
 import { renderTable, updateTable } from './table.js';
-import { renderSuggestedMatches, linkMatch, renderSearchModal } from './mapping.js';
+import { renderSuggestedMatches, linkMatch, renderSearchModal, renderGlobalTranscriptSearch } from './mapping.js';
 
 
 import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark.js';
@@ -120,12 +120,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Navigate to detail page for all non-unmapped, non-benchmark rows
     if (status === 'mapped' || status === 'cleaned' || status === 'aligned' || status === 'approved') {
       expandedRow = null;
-      const detailUrl = `/detail.html?id=${encodeURIComponent(audioId)}`;
-      if (e && (e.ctrlKey || e.metaKey)) {
-        window.open(detailUrl, '_blank');
-      } else {
-        window.location.href = detailUrl;
-      }
+      window.open(`/detail.html?id=${encodeURIComponent(audioId)}`, '_blank');
       return;
     }
 
@@ -328,6 +323,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // ── Export / Import ─────────────────────────────────────────────
+
+  document.getElementById('btn-search-transcripts').addEventListener('click', () => {
+    renderGlobalTranscriptSearch(document.body);
+  });
 
   document.getElementById('btn-asr-settings').addEventListener('click', () => {
     modalContent.innerHTML = '';

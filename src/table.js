@@ -567,12 +567,7 @@ function buildTable(rows) {
           btn.textContent = 'Open';
           btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            const url = `/detail.html?id=${encodeURIComponent(row.id)}`;
-            if (e.ctrlKey || e.metaKey) {
-              window.open(url, '_blank');
-            } else {
-              window.location.href = url;
-            }
+            window.open(`/detail.html?id=${encodeURIComponent(row.id)}`, '_blank');
           });
           td.appendChild(btn);
           break;
@@ -650,24 +645,14 @@ function buildCardView(rows) {
     openBtn.textContent = 'Open';
     openBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const url = `/detail.html?id=${encodeURIComponent(row.id)}`;
-      if (e.ctrlKey || e.metaKey) {
-        window.open(url, '_blank');
-      } else {
-        window.location.href = url;
-      }
+      window.open(`/detail.html?id=${encodeURIComponent(row.id)}`, '_blank');
     });
     actions.appendChild(openBtn);
 
     card.appendChild(actions);
 
-    card.addEventListener('click', (e) => {
-      const url = `/detail.html?id=${encodeURIComponent(row.id)}`;
-      if (e.ctrlKey || e.metaKey) {
-        window.open(url, '_blank');
-      } else {
-        window.location.href = url;
-      }
+    card.addEventListener('click', () => {
+      window.open(`/detail.html?id=${encodeURIComponent(row.id)}`, '_blank');
     });
 
     container.appendChild(card);

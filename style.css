@@ -1887,6 +1887,59 @@ input {
   white-space: pre-wrap;
 }
 
+/* === Global Transcript Search === */
+.global-transcript-search {
+  max-width: 800px;
+}
+
+.global-search-input-row {
+  margin-bottom: 8px;
+}
+
+.global-search-input-row .search-input {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 0.95rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+}
+
+.global-search-input-row .search-input:focus {
+  border-color: var(--accent);
+}
+
+.global-search-status {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  padding: 4px 2px 8px;
+}
+
+.global-search-result .search-result-row {
+  cursor: default;
+}
+
+.global-search-result .result-preview {
+  white-space: normal;
+  line-height: 1.6;
+  font-size: 0.85rem;
+}
+
+.global-search-result .result-preview mark {
+  background: var(--orange-dim);
+  color: var(--text);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.global-search-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 /* === Inline Audio Name Edit === */
 .audio-name-editable {
   cursor: text;

@@ -1,7 +1,7 @@
 import { getState, updateState, saveToStorage } from './state.js';
-import { deleteMapping } from './db.js';
+import { deleteMapping, searchTranscriptText } from './db.js';
 import { getCurrentUser } from './auth.js';
-import { truncateWords, formatConfidence } from './utils.js';
+import { truncateWords, formatConfidence, debounce } from './utils.js';
 
 const CONTENT_TYPES = ['sicha', 'maamar', 'farbrengen'];
 
@@ -317,6 +317,182 @@ export function renderSearchModal(container, state, onSelect) {
 
   container.appendChild(overlay);
   renderResults();
+}
+
+// ── Global transcript text search ───────────────────────────────────
+// Searches across all transcript content via Supabase full-text query.
+
+export function renderGlobalTranscriptSearch(container) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal search-modal global-transcript-search';
+
+  const header = document.createElement('div');
+  header.className = 'modal-header';
+  const headerTitle = document.createElement('h2');
+  headerTitle.textContent = 'Search All Transcripts';
+  header.appendChild(headerTitle);
+
+  const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
+  function closeModal() {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  }
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'btn btn-close';
+  closeBtn.textContent = '\u00D7';
+  closeBtn.addEventListener('click', closeModal);
+  header.appendChild(closeBtn);
+
+  const searchRow = document.createElement('div');
+  searchRow.className = 'global-search-input-row';
+
+  const textInput = document.createElement('input');
+  textInput.type = 'text';
+  textInput.className = 'search-input';
+  textInput.placeholder = 'Search transcript content…';
+  textInput.autofocus = true;
+  searchRow.appendChild(textInput);
+
+  const results = document.createElement('div');
+  results.className = 'search-results';
+
+  const statusLine = document.createElement('div');
+  statusLine.className = 'global-search-status';
+
+  let searching = false;
+
+  async function doSearch() {
+    const term = textInput.value.trim();
+    if (term.length < 2) {
+      results.innerHTML = '';
+      statusLine.textContent = 'Type at least 2 characters to search';
+      return;
+    }
+    if (searching) return;
+    searching = true;
+    statusLine.textContent = 'Searching…';
+    results.innerHTML = '';
+
+    try {
+      const hits = await searchTranscriptText(term);
+      searching = false;
+
+      if (hits.length === 0) {
+        statusLine.textContent = 'No transcripts found';
+        return;
+      }
+      statusLine.textContent = `Found ${hits.length} transcript${hits.length > 1 ? 's' : ''}`;
+
+      const state = getState();
+
+      for (const t of hits) {
+        const rowWrapper = document.createElement('div');
+        rowWrapper.className = 'global-search-result';
+
+        const row = document.createElement('div');
+        row.className = 'search-result-row';
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'result-name';
+        nameEl.textContent = t.name || t.id;
+        nameEl.title = t.name || t.id;
+
+        // Build snippet around the match
+        const snippet = document.createElement('span');
+        snippet.className = 'result-preview hebrew-text';
+        snippet.dir = 'rtl';
+        const fullText = t.text || t.first_line || '';
+        snippet.innerHTML = getHighlightedSnippet(fullText, term);
+
+        // Find mapped audio for this transcript
+        const mappedAudioId = Object.entries(state.mappings || {})
+          .find(([, m]) => m.transcriptId === t.id)?.[0];
+
+        const actions = document.createElement('div');
+        actions.className = 'global-search-actions';
+
+        if (mappedAudioId) {
+          const openBtn = document.createElement('button');
+          openBtn.className = 'action-btn action-btn-primary';
+          openBtn.textContent = 'Open';
+          openBtn.title = 'Open in new tab';
+          openBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            window.open(`/detail.html?id=${encodeURIComponent(mappedAudioId)}`, '_blank');
+          });
+          actions.appendChild(openBtn);
+        } else {
+          const badge = document.createElement('span');
+          badge.className = 'text-secondary';
+          badge.textContent = 'Not mapped';
+          badge.style.fontSize = '0.8rem';
+          actions.appendChild(badge);
+        }
+
+        row.appendChild(nameEl);
+        row.appendChild(snippet);
+        row.appendChild(actions);
+        rowWrapper.appendChild(row);
+        results.appendChild(rowWrapper);
+      }
+    } catch (err) {
+      searching = false;
+      statusLine.textContent = 'Search error: ' + err.message;
+    }
+  }
+
+  const debouncedSearch = debounce(doSearch, 400);
+  textInput.addEventListener('input', debouncedSearch);
+  textInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      doSearch();
+    }
+  });
+
+  modal.appendChild(header);
+  modal.appendChild(searchRow);
+  modal.appendChild(statusLine);
+  modal.appendChild(results);
+  overlay.appendChild(modal);
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeModal();
+  });
+  document.addEventListener('keydown', onKey);
+
+  container.appendChild(overlay);
+  setTimeout(() => textInput.focus(), 50);
+}
+
+function getHighlightedSnippet(text, term, contextChars = 60) {
+  if (!text) return '';
+  const lowerText = text.toLowerCase();
+  const lowerTerm = term.toLowerCase();
+  const idx = lowerText.indexOf(lowerTerm);
+  if (idx === -1) {
+    // No match in text body — just show start
+    const preview = text.substring(0, 120);
+    return escapeHtml(preview) + (text.length > 120 ? '…' : '');
+  }
+  const start = Math.max(0, idx - contextChars);
+  const end = Math.min(text.length, idx + term.length + contextChars);
+  let before = escapeHtml(text.substring(start, idx));
+  let match = escapeHtml(text.substring(idx, idx + term.length));
+  let after = escapeHtml(text.substring(idx + term.length, end));
+  let result = '';
+  if (start > 0) result += '…';
+  result += `${before}<mark>${match}</mark>${after}`;
+  if (end < text.length) result += '…';
+  return result;
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function createSelect(name, placeholder, options) {

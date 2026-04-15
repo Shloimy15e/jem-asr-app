@@ -535,13 +535,12 @@ The `timeupdate` handler pauses at the end of the current segment **only when th
 `renderTrimControls` sets `document.body.style.userSelect = 'none'` on `mousedown` and clears it on `mouseup`. Without this, the browser treats the drag as text selection and interrupts it. Always restore `userSelect` in the `onEnd` handler.
 
 ### Mobile card view opens detail page
-At ≤480px the table switches to card view (`buildCardView` in `table.js`). Each card has an **"Open"** button and the card itself is clickable — both navigate to `detail.html?id=<audioId>` **in the same tab**. Ctrl/Cmd+click opens in a new tab.
+At ≤480px the table switches to card view (`buildCardView` in `table.js`). Each card has an **"Open"** button and the card itself is clickable — both open `detail.html?id=<audioId>` **in a new tab** so the main table stays visible.
 
 ### Row click and keyboard behavior by status
 Clicking a table row calls `onRowExpand(audioId, e)` in `app.js`, which dispatches based on status:
 - `unmapped` → expands inline to show mapping suggestions + Search Transcripts button
-- `mapped` / `cleaned` → navigates directly to `detail.html?id=` **in the same tab** (Ctrl/Cmd+click for new tab)
-- `aligned` / `approved` → expands inline to show the review panel + Open Detail Page button
+- `mapped` / `cleaned` / `aligned` / `approved` → opens `detail.html?id=` **in a new tab** (table stays visible)
 - `benchmark` → expands inline to show benchmark tools
 
 **Arrow keys** (`↑`/`↓`) only highlight/select rows — they do NOT trigger expansion or navigation. Only `Enter` or a click expands/navigates.
@@ -687,9 +686,9 @@ jem-asr-app/
 ├── src/
 │   ├── app.js                  # Entry: load catalog from Supabase, init state, wire everything
 │   ├── state.js                # State management, localStorage + Supabase sync
-│   ├── db.js                   # Supabase client, loadFromSupabase(), syncStateKey()
+│   ├── db.js                   # Supabase client, loadFromSupabase(), syncStateKey(), searchTranscriptText()
 │   ├── table.js                # Unified table: filters, sort, pagination, bulk select
-│   ├── mapping.js              # Matching algorithm, suggested matches, search modal
+│   ├── mapping.js              # Matching algorithm, suggested matches, search modal, global transcript search
 │   ├── cleaning.js             # 5-pass regex cleaner, clean rate, batch clean
 │   ├── alignment.js            # RunPod API calls, confidence parsing, batch align + transcribeAudio()
 │   ├── review.js               # Diff viewer, inline editing, approve/reject
@@ -821,9 +820,13 @@ renderSuggestedMatches(container, audioId, state, onLink)          // container 
 linkMatch(audioId, transcriptId, confidence, reason)
 unlinkMatch(audioId)   // also calls deleteMapping() to persist deletion in Supabase
 renderSearchModal(container, state, onSelect)
+renderGlobalTranscriptSearch(container)  // toolbar "Search Transcripts" — full-text search via Supabase ilike
 ```
 
 Scoring includes `firstLine` bonus: +0.05 if transcript has firstLine, +0.05 more if firstLine contains content-type keyword matching the audio filename.
+
+### Global transcript search
+The "Search Transcripts" toolbar button opens `renderGlobalTranscriptSearch()` — a modal that queries Supabase `transcripts` table with `ilike` across `text`, `first_line`, and `name` columns (`searchTranscriptText()` in `db.js`). Results show transcript name, a highlighted snippet with context around the match, and an "Open" button that opens the mapped audio's detail page in a new tab. Transcripts not mapped to any audio show "Not mapped" instead of Open. Search is debounced at 400ms and requires ≥2 characters.
 
 ### cleaning.js
 ```javascript

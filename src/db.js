@@ -261,6 +261,26 @@ export async function bulkSyncTranscripts(transcriptArray) {
   }
 }
 
+// ── Global transcript text search ───────────────────────────────────
+// Searches transcript full text in Supabase using ilike.
+
+export async function searchTranscriptText(term, libraryId = null) {
+  const lib = libraryId || getActiveLibrary();
+  if (!term || term.length < 2) return [];
+  const pattern = `%${term}%`;
+  const { data, error } = await supabase
+    .from('transcripts')
+    .select('id, name, year, month, day, first_line, text')
+    .eq('library_id', lib)
+    .or(`text.ilike.${pattern},first_line.ilike.${pattern},name.ilike.${pattern}`)
+    .limit(50);
+  if (error) {
+    console.warn('[DB] searchTranscriptText:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
 // ── Lazy detail loaders ──────────────────────────────────────────────
 // Called from the detail page — loads the heavy fields not fetched at startup.
 
