@@ -549,7 +549,7 @@ Clicking a table row calls `onRowExpand(audioId, e)` in `app.js`, which dispatch
 
 **Arrow keys** (`↑`/`↓`) only highlight/select rows — they do NOT trigger expansion or navigation. Only `Enter` or a click expands/navigates.
 
-The inline mapping bar (Linked to / Unlink / Change Transcript / Split Transcript) has been removed from all expanded panels — those controls are on the detail page.
+The inline mapping bar (Linked to / Unlink / Change Transcript / Split Transcript) has been removed from all expanded panels — those controls are on the detail page. However, an **Unlink** button is available directly in the table Actions column for any mapped row (alongside Play and Open). It runs the same cleanup as the detail page unlink (clears mapping, versions, cleaning, alignments, reviews) and refreshes the table immediately.
 
 ### Filter, page, and search state in URL
 `table.js` uses `history.replaceState` to keep `?filter=`, `?page=`, and `?q=` in sync with the current view. On init, these are read from `URLSearchParams` so a page refresh restores position. The detail page back button uses `history.back()` to return to the table preserving this state.

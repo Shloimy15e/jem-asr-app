@@ -1,6 +1,6 @@
 import { getState, getFilteredRows, getFilterCounts, getStatus, updateState } from './state.js';
 import { truncateWords, formatConfidence, debounce } from './utils.js';
-import { linkMatch, getSuggestedMatches } from './mapping.js';
+import { linkMatch, unlinkMatch, getSuggestedMatches } from './mapping.js';
 import { isLibraryR2Url } from './auth.js';
 
 // ── Inline audio player ─────────────────────────────────────────────
@@ -573,6 +573,25 @@ function buildTable(rows) {
             window.open(`/detail.html?id=${encodeURIComponent(row.id)}`, '_blank');
           });
           td.appendChild(btn);
+          // Unlink button — only shown when audio has a mapping
+          if (state.mappings && state.mappings[row.id]) {
+            const unlinkBtn = document.createElement('button');
+            unlinkBtn.className = 'action-btn action-btn-danger';
+            unlinkBtn.textContent = 'Unlink';
+            unlinkBtn.title = 'Unlink transcript';
+            unlinkBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              unlinkMatch(row.id);
+              const s = getState();
+              s.transcriptVersions[row.id] = [];
+              if (s.cleaning[row.id]) updateState('cleaning', row.id, null);
+              if (s.alignments[row.id]) updateState('alignments', row.id, null);
+              if (s.reviews[row.id]) updateState('reviews', row.id, null);
+              updateState('transcriptVersions', null, s.transcriptVersions);
+              updateTable();
+            });
+            td.appendChild(unlinkBtn);
+          }
           break;
         }
         default:
