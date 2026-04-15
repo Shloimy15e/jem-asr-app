@@ -4,6 +4,14 @@ import { resolve } from 'path'
 export default defineConfig({
   root: '.',
   publicDir: 'public',
+  server: {
+    proxy: {
+      '/api': {
+        target: 'https://jem-asr-app.pages.dev',
+        changeOrigin: true,
+      },
+    },
+  },
   build: {
     outDir: 'dist',
     rollupOptions: {

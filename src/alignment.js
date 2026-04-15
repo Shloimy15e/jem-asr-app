@@ -3,8 +3,8 @@ import { isLibraryR2Url } from './auth.js';
 
 const ALIGN_ENDPOINT = '/api/align';
 
-// RunPod rejects text longer than ~18K chars. Stay safely under that.
-const CHUNK_LIMIT = 15000;
+// Old limit was 15K (empirical guess). Testing if stable_whisper handles longer text natively.
+const CHUNK_LIMIT = 100000;
 
 function getAudioUrl(audioId, state) {
   const entry = state.audio.find(a => a.id === audioId);
@@ -121,6 +121,63 @@ function blobToBase64(blob) {
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
+}
+
+// Fetch the full audio file and decode it to an AudioBuffer in the browser.
+// R2 URLs go through the /api/audio proxy to avoid CORS issues.
+async function fetchAndDecodeFullAudio(url) {
+  const fetchUrl = isLibraryR2Url(url)
+    ? `/api/audio?url=${encodeURIComponent(url)}`
+    : url;
+
+  const res = await fetch(fetchUrl);
+  if (!res.ok) throw new Error(`Failed to fetch full audio: ${res.status}`);
+  const arrayBuffer = await res.arrayBuffer();
+
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  let decoded;
+  try {
+    decoded = await audioCtx.decodeAudioData(arrayBuffer);
+  } catch (e) {
+    await audioCtx.close().catch(() => {});
+    throw new Error(`Audio decode failed for ${url.substring(0, 60)}`);
+  }
+  await audioCtx.close();
+  return decoded;
+}
+
+// Extract a time range from an AudioBuffer as a 16 kHz mono WAV base64 string.
+// Produces a clean WAV with proper headers — no frame-boundary issues.
+async function sliceToWavBase64(audioBuffer, startSec, endSec) {
+  const sr = audioBuffer.sampleRate;
+  const startSample = Math.floor(startSec * sr);
+  const endSample = endSec > 0
+    ? Math.min(Math.floor(endSec * sr), audioBuffer.length)
+    : audioBuffer.length;
+  const sliceLen = Math.max(1, endSample - startSample);
+
+  const TARGET_SR = 16000;
+  const targetLen = Math.ceil(sliceLen / sr * TARGET_SR);
+  const offCtx = new OfflineAudioContext(1, targetLen, TARGET_SR);
+  const tmpBuf = new AudioBuffer({
+    length: sliceLen,
+    numberOfChannels: audioBuffer.numberOfChannels,
+    sampleRate: sr,
+  });
+  for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+    tmpBuf.copyToChannel(
+      audioBuffer.getChannelData(ch).subarray(startSample, startSample + sliceLen),
+      ch,
+    );
+  }
+  const src = offCtx.createBufferSource();
+  src.buffer = tmpBuf;
+  src.connect(offCtx.destination);
+  src.start();
+  const resampled = await offCtx.startRendering();
+
+  const wavBlob = audioBufferToWavBlob(resampled);
+  return blobToBase64(wavBlob);
 }
 
 // Split text into chunks of at most CHUNK_LIMIT chars, splitting at word boundaries.
@@ -249,6 +306,16 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const ANCHOR_PRE_BUFFER = 20;    // seconds of audio before first anchor word
   const BOUNDARY_GAP_THRESHOLD = 5; // seconds — inter-word gap larger than this = inflation artifact
 
+  // For multi-chunk alignment, decode the full audio once in the browser to produce
+  // frame-accurate WAV slices. Byte-level MP3 slicing (the CF Worker path) breaks
+  // frame boundaries and strips the VBR header, causing RunPod's decoder to drift —
+  // that drift compounds across chunks and throws off alignment.
+  let fullAudioBuffer = null;
+  if (chunks.length > 1) {
+    console.log(`[Align] Multi-chunk: decoding full audio in browser for frame-accurate slicing…`);
+    fullAudioBuffer = await fetchAndDecodeFullAudio(url);
+  }
+
   let allWords = [];
   let chunkAudioStart = trimStart;
   let prevChunkWords = null;
@@ -287,7 +354,15 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
 
     console.log(`[Align${chunkLabel}] audioStart=${audioStart.toFixed(1)}s chunkAudioEnd=${chunkAudioEnd || 'eof'} anchorCount=${anchorCount}`);
 
-    const audioResult = await fetchAudioForAlignment(url, audioStart, chunkAudioEnd, audioDuration);
+    let audioResult;
+    if (fullAudioBuffer) {
+      // Multi-chunk: slice a proper WAV from the decoded audio (frame-accurate)
+      const wavBase64 = await sliceToWavBase64(fullAudioBuffer, audioStart, chunkAudioEnd || fullAudioBuffer.duration);
+      audioResult = { base64: wavBase64, format: '.wav' };
+    } else {
+      // Single-chunk: use the existing CF Worker path
+      audioResult = await fetchAudioForAlignment(url, audioStart, chunkAudioEnd, audioDuration);
+    }
     const requestBody = buildRequestBody(audioResult, requestText);
     const data = await doAlignRequest(requestBody, chunkLabel, onProgress);
 
