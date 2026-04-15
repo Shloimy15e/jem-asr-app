@@ -2,8 +2,9 @@ import { initState, getState, getStatus, getVersions, getBestVersion, addVersion
 import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, setActiveLibrary, getActiveLibraryConfig, isLibraryR2Url, getAccessToken } from './auth.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanSectionMarkers, cleanMinor, findBracketMatches, findParenMatches, applyMatchActions, calculateCleanRate } from './cleaning.js';
-import { alignRow } from './alignment.js';
+import { alignRow, transcribeAudio } from './alignment.js';
 import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark.js';
+import { buildAsrConfigPanel } from './asr-config.js';
 
 import { formatConfidence, getConfidenceLevel, generateSRT, generateVTT, downloadFile } from './utils.js';
 import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration, syncAudioField, loadSegmentApprovals, syncSegmentApproval } from './db.js';
@@ -508,6 +509,68 @@ function addCollapseBehavior(section, header, collapseByDefault) {
   }
 }
 
+function buildAsrProviderBar(audioId, state, onComplete) {
+  const audio = state.audio.find(a => a.id === audioId);
+  const audioUrl = audio?.r2Link || audio?.driveLink || null;
+
+  const PROVIDERS = [
+    { key: 'whisper', label: 'Whisper' },
+    { key: 'gemini', label: 'Gemini' },
+    { key: 'mendel', label: 'Mendel' },
+  ];
+
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;';
+
+  const label = document.createElement('span');
+  label.className = 'text-secondary';
+  label.style.fontSize = '0.82rem';
+  label.textContent = 'Generate transcript:';
+  bar.appendChild(label);
+
+  for (const { key, label: btnLabel } of PROVIDERS) {
+    const btn = document.createElement('button');
+    btn.className = 'action-btn action-btn-primary';
+    btn.style.fontSize = '0.8rem';
+    btn.textContent = btnLabel;
+
+    btn.addEventListener('click', async () => {
+      if (!audioUrl) { alert('No audio URL for this file.'); return; }
+      btn.disabled = true;
+      btn.textContent = `${btnLabel}…`;
+
+      try {
+        const providers = getState().transcribeProviders || {};
+        const providerCfg = providers[key] || {};
+        const config = { provider: key, ...providerCfg };
+        const text = await transcribeAudio(audioId, audioUrl, config);
+        if (!text) throw new Error('Empty transcription returned');
+
+        // Save or update ASR version (same logic as transcribe.js)
+        const versions = getVersions(audioId);
+        const existing = versions.find(v => v.type === 'asr' && v.model === key);
+        if (existing) {
+          updateVersion(audioId, existing.id, { text, createdAt: new Date().toISOString() });
+        } else {
+          addVersion(audioId, { type: 'asr', text, model: key });
+        }
+
+        btn.textContent = btnLabel;
+        btn.disabled = false;
+        if (onComplete) onComplete();
+      } catch (err) {
+        console.error('[ASR] transcription failed:', err);
+        btn.textContent = `${btnLabel} — failed`;
+        btn.disabled = false;
+      }
+    });
+
+    bar.appendChild(btn);
+  }
+
+  return bar;
+}
+
 function renderMappingSection(audioId, state, container, pageContainer, activeVersionRef) {
   container.innerHTML = '';
   const versions = getVersions(audioId);
@@ -735,6 +798,8 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       container.appendChild(contentArea);
       renderVersionContent(activeVersionId);
     } else if (transcript) {
+      // No versions yet, just show transcript text
+      // (ASR buttons added below after this block)
       // No versions yet, just show text
       const textarea = document.createElement('textarea');
       textarea.className = 'transcript-editor';
@@ -748,6 +813,12 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       }
       container.appendChild(textarea);
     }
+
+    // ── ASR provider buttons — generate transcript inline ──
+    const asrBar = buildAsrProviderBar(audioId, state, () => {
+      renderMappingSection(audioId, getState(), container, pageContainer, activeVersionRef);
+    });
+    container.appendChild(asrBar);
 
     // Action buttons
     const btnBar = document.createElement('div');
@@ -848,6 +919,24 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       renderDetailPage(audioId, audio, s, pageContainer);
     });
     container.appendChild(createBtn);
+
+    // ASR buttons — generate transcript from audio even when unmapped
+    const asrBar = buildAsrProviderBar(audioId, state, () => {
+      const s = getState();
+      // Ensure a synthetic mapping exists so pipeline can proceed
+      if (!s.mappings[audioId]) {
+        updateState('mappings', audioId, {
+          transcriptId: null,
+          confidence: 1.0,
+          matchReason: 'asr-generated',
+          confirmedBy: getCurrentUser(),
+          confirmedAt: new Date().toISOString(),
+        });
+      }
+      const audio = s.audio.find(a => a.id === audioId);
+      renderDetailPage(audioId, audio, s, pageContainer);
+    });
+    container.appendChild(asrBar);
   }
 }
 
@@ -1492,22 +1581,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     targetEl.appendChild(alignBar);
   }
 
-  // ── Generate Transcript — opens dedicated transcribe page ──
-  const asrLinkCard = document.createElement('div');
-  asrLinkCard.className = 'detail-section asr-link-card';
-
-  const asrLinkBtn = document.createElement('a');
-  asrLinkBtn.href = `/transcribe.html?id=${audioId}`;
-  asrLinkBtn.className = 'asr-link-btn';
-  asrLinkBtn.innerHTML = '🎙 Generate Transcript with ASR';
-
-  const asrLinkDesc = document.createElement('p');
-  asrLinkDesc.className = 'asr-config-note';
-  asrLinkDesc.textContent = 'Opens a dedicated page to run Whisper, Gemini, or Mendel on this audio file.';
-
-  asrLinkCard.appendChild(asrLinkBtn);
-  asrLinkCard.appendChild(asrLinkDesc);
-  container.appendChild(asrLinkCard);
+  // ASR provider buttons are now inline in the Transcript Mapping section
 
   // ── Cleaning section (always visible) ──
   const cleanSection = document.createElement('div');
