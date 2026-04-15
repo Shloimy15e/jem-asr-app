@@ -44,6 +44,10 @@ export function initState(data) {
     },
     trims: saved.trims || {},
     audioNames: saved.audioNames || {},
+    audioYears: saved.audioYears || {},
+    audioMonths: saved.audioMonths || {},
+    audioDays: saved.audioDays || {},
+    audioTypes: saved.audioTypes || {},
   };
   // Migrate old format into transcriptVersions
   migrateToVersions();
@@ -197,6 +201,10 @@ export function updateState(key, audioId, value) {
     if (audioEntry) {
       if (key === 'audioNames') audioEntry.name = value;
       if (key === 'audioComments') audioEntry.comments = value;
+      if (key === 'audioYears') audioEntry.year = value;
+      if (key === 'audioMonths') audioEntry.month = value;
+      if (key === 'audioDays') audioEntry.day = value;
+      if (key === 'audioTypes') audioEntry.type = value;
     }
   }
   saveToStorage();

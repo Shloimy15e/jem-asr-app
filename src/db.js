@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { getActiveLibrary } from './auth.js';
+import { getActiveLibrary, getCurrentUser } from './auth.js';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -40,6 +40,20 @@ async function ensureAudioFile(audio) {
   if (error) console.warn('[DB] ensureAudioFile:', error.message);
 }
 
+// ── Activity logging ────────────────────────────────────────────────
+
+export async function logActivity(action, targetId, targetName, details = {}) {
+  const { error } = await supabase.from('activity_log').insert({
+    user_email: getCurrentUser(),
+    action,
+    target_id: targetId || null,
+    target_name: targetName || null,
+    details,
+    library_id: getActiveLibrary() || 'jemedia',
+  });
+  if (error) console.warn('[DB] logActivity:', error.message);
+}
+
 // ── Per-table sync helpers ───────────────────────────────────────────
 
 export async function syncMapping(audioId, mapping, audioEntry) {
@@ -58,6 +72,7 @@ export async function syncMapping(audioId, mapping, audioEntry) {
     { onConflict: 'audio_id' },
   );
   if (error) console.warn('[DB] syncMapping:', error.message);
+  else logActivity('mapping_confirmed', audioId, audioEntry?.name, { transcriptId: mapping.transcriptId });
 }
 
 export async function deleteMapping(audioId) {
@@ -65,6 +80,7 @@ export async function deleteMapping(audioId) {
     .eq('audio_id', audioId)
     .eq('library_id', getActiveLibrary() || 'jemedia');
   if (error) console.warn('[DB] deleteMapping:', error.message);
+  else logActivity('mapping_removed', audioId);
 }
 
 export async function syncCleaning(audioId, cleaningData, audioEntry) {
@@ -84,6 +100,7 @@ export async function syncCleaning(audioId, cleaningData, audioEntry) {
     { onConflict: 'audio_id,version' },
   );
   if (error) console.warn('[DB] syncCleaning:', error.message);
+  else logActivity('cleaning_run', audioId, audioEntry?.name, { cleanRate: cleaningData.cleanRate });
 }
 
 export async function syncEdited(audioId, text, audioEntry) {
@@ -101,6 +118,7 @@ export async function syncEdited(audioId, text, audioEntry) {
     { onConflict: 'audio_id,version' },
   );
   if (error) console.warn('[DB] syncEdited:', error.message);
+  else logActivity('transcript_edited', audioId, audioEntry?.name);
 }
 
 export async function syncAsr(audioId, text, modelName, audioEntry) {
@@ -137,6 +155,7 @@ export async function syncAlignment(audioId, alignmentData, audioEntry) {
     { onConflict: 'audio_id' },
   );
   if (error) console.warn('[DB] syncAlignment:', error.message);
+  else logActivity('alignment_completed', audioId, audioEntry?.name);
 }
 
 export async function syncReview(audioId, reviewData, audioEntry) {
@@ -153,6 +172,7 @@ export async function syncReview(audioId, reviewData, audioEntry) {
     { onConflict: 'audio_id' },
   );
   if (error) console.warn('[DB] syncReview:', error.message);
+  else logActivity('review_' + reviewData.status, audioId, audioEntry?.name);
 }
 
 // ── Dispatch helper used by state.js ────────────────────────────────
@@ -200,6 +220,18 @@ export function syncStateKey(key, audioId, value, audioEntry) {
       break;
     case 'audioComments':
       syncAudioComment(audioId, value).catch(console.warn);
+      break;
+    case 'audioYears':
+      syncAudioField(audioId, 'year', value || null).catch(console.warn);
+      break;
+    case 'audioMonths':
+      syncAudioField(audioId, 'month', value || null).catch(console.warn);
+      break;
+    case 'audioDays':
+      syncAudioField(audioId, 'day', value ? parseInt(value, 10) : null).catch(console.warn);
+      break;
+    case 'audioTypes':
+      syncAudioField(audioId, 'type', value || null).catch(console.warn);
       break;
     case 'trims':
       syncAudioTrim(audioId, value).catch(console.warn);
@@ -328,12 +360,14 @@ export async function syncSegmentApproval(audioId, segHash, approved, approvedBy
       { onConflict: 'audio_id,segment_hash' },
     );
     if (error) console.warn('[DB] syncSegmentApproval (approve):', error.message);
+    else logActivity('segment_approved', audioId, null, { segmentHash: segHash });
   } else {
     const { error } = await supabase.from('segment_approvals')
       .delete()
       .eq('audio_id', audioId)
       .eq('segment_hash', segHash);
     if (error) console.warn('[DB] syncSegmentApproval (unapprove):', error.message);
+    else logActivity('segment_unapproved', audioId, null, { segmentHash: segHash });
   }
 }
 

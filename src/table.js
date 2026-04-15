@@ -1,5 +1,5 @@
 import { getState, getFilteredRows, getFilterCounts, getStatus, updateState } from './state.js';
-import { truncateWords, formatConfidence, debounce } from './utils.js';
+import { truncateWords, formatConfidence, debounce, HEBREW_MONTHS } from './utils.js';
 import { linkMatch, unlinkMatch, getSuggestedMatches } from './mapping.js';
 import { isLibraryR2Url } from './auth.js';
 import { syncAudioField } from './db.js';
@@ -140,10 +140,10 @@ function getRowData(audio) {
   return {
     id,
     name: (state.audioNames && state.audioNames[id]) || audio.name || '',
-    year: audio.year || '',
-    month: audio.month || '',
-    day: audio.day != null ? audio.day : '',
-    type: audio.type || '',
+    year: (state.audioYears && state.audioYears[id]) || audio.year || '',
+    month: (state.audioMonths && state.audioMonths[id]) || audio.month || '',
+    day: (state.audioDays && state.audioDays[id]) || audio.day || '',
+    type: (state.audioTypes && state.audioTypes[id]) || audio.type || '',
     sichaNum: parseSichaNum(audio.name) || '',
     estMinutes: audio.estMinutes != null ? audio.estMinutes + ' min' : '',
     firstLine: transcript ? truncateWords(transcript.firstLine || '', 15) : '',
@@ -531,6 +531,169 @@ function buildTable(rows) {
             });
           });
           td.appendChild(nameSpan);
+          break;
+        }
+        case 'year': {
+          const yearSpan = document.createElement('span');
+          yearSpan.className = 'editable-cell';
+          yearSpan.textContent = row.year || '—';
+          yearSpan.title = 'Click to edit';
+          if (!row.year) yearSpan.classList.add('editable-cell-empty');
+          yearSpan.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'inline-edit-input';
+            input.value = row.year;
+            input.placeholder = '5748';
+            input.style.width = '60px';
+            input.addEventListener('click', (e2) => e2.stopPropagation());
+            td.replaceChild(input, yearSpan);
+            input.focus();
+            input.select();
+            let saved = false;
+            const save = () => {
+              if (saved) return;
+              saved = true;
+              const val = input.value.trim();
+              if (val !== (row.year || '')) {
+                updateState('audioYears', row.id, val);
+              }
+              updateTable();
+            };
+            input.addEventListener('blur', save);
+            input.addEventListener('keydown', (ke) => {
+              if (ke.key === 'Enter') { ke.preventDefault(); input.blur(); }
+              if (ke.key === 'Escape') { ke.preventDefault(); saved = true; input.removeEventListener('blur', save); td.replaceChild(yearSpan, input); }
+            });
+          });
+          td.appendChild(yearSpan);
+          break;
+        }
+        case 'month': {
+          const monthSpan = document.createElement('span');
+          monthSpan.className = 'editable-cell';
+          monthSpan.textContent = row.month || '—';
+          monthSpan.title = 'Click to edit';
+          if (!row.month) monthSpan.classList.add('editable-cell-empty');
+          monthSpan.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const select = document.createElement('select');
+            select.className = 'inline-edit-select';
+            const blankOpt = document.createElement('option');
+            blankOpt.value = '';
+            blankOpt.textContent = '—';
+            select.appendChild(blankOpt);
+            for (const m of HEBREW_MONTHS) {
+              const opt = document.createElement('option');
+              opt.value = m;
+              opt.textContent = m;
+              if (m === row.month) opt.selected = true;
+              select.appendChild(opt);
+            }
+            select.addEventListener('click', (e2) => e2.stopPropagation());
+            td.replaceChild(select, monthSpan);
+            select.focus();
+            let saved = false;
+            const save = () => {
+              if (saved) return;
+              saved = true;
+              const val = select.value;
+              if (val !== (row.month || '')) {
+                updateState('audioMonths', row.id, val);
+              }
+              updateTable();
+            };
+            select.addEventListener('blur', save);
+            select.addEventListener('change', () => { select.blur(); });
+            select.addEventListener('keydown', (ke) => {
+              if (ke.key === 'Escape') { ke.preventDefault(); saved = true; select.removeEventListener('blur', save); td.replaceChild(monthSpan, select); }
+            });
+          });
+          td.appendChild(monthSpan);
+          break;
+        }
+        case 'day': {
+          const daySpan = document.createElement('span');
+          daySpan.className = 'editable-cell';
+          daySpan.textContent = row.day || '—';
+          daySpan.title = 'Click to edit';
+          if (!row.day) daySpan.classList.add('editable-cell-empty');
+          daySpan.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.className = 'inline-edit-input';
+            input.value = row.day || '';
+            input.min = '1';
+            input.max = '30';
+            input.style.width = '50px';
+            input.addEventListener('click', (e2) => e2.stopPropagation());
+            td.replaceChild(input, daySpan);
+            input.focus();
+            input.select();
+            let saved = false;
+            const save = () => {
+              if (saved) return;
+              saved = true;
+              const val = input.value.trim();
+              const numVal = val ? parseInt(val, 10) : '';
+              if (String(numVal) !== String(row.day || '')) {
+                updateState('audioDays', row.id, numVal || '');
+              }
+              updateTable();
+            };
+            input.addEventListener('blur', save);
+            input.addEventListener('keydown', (ke) => {
+              if (ke.key === 'Enter') { ke.preventDefault(); input.blur(); }
+              if (ke.key === 'Escape') { ke.preventDefault(); saved = true; input.removeEventListener('blur', save); td.replaceChild(daySpan, input); }
+            });
+          });
+          td.appendChild(daySpan);
+          break;
+        }
+        case 'type': {
+          const CONTENT_TYPES = ['sicha', 'maamar', 'farbrengen'];
+          const typeSpan = document.createElement('span');
+          typeSpan.className = 'editable-cell';
+          typeSpan.textContent = row.type || '—';
+          typeSpan.title = 'Click to edit';
+          if (!row.type) typeSpan.classList.add('editable-cell-empty');
+          typeSpan.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const select = document.createElement('select');
+            select.className = 'inline-edit-select';
+            const blankOpt = document.createElement('option');
+            blankOpt.value = '';
+            blankOpt.textContent = '—';
+            select.appendChild(blankOpt);
+            for (const t of CONTENT_TYPES) {
+              const opt = document.createElement('option');
+              opt.value = t;
+              opt.textContent = t;
+              if (t === row.type) opt.selected = true;
+              select.appendChild(opt);
+            }
+            select.addEventListener('click', (e2) => e2.stopPropagation());
+            td.replaceChild(select, typeSpan);
+            select.focus();
+            let saved = false;
+            const save = () => {
+              if (saved) return;
+              saved = true;
+              const val = select.value;
+              if (val !== (row.type || '')) {
+                updateState('audioTypes', row.id, val);
+              }
+              updateTable();
+            };
+            select.addEventListener('blur', save);
+            select.addEventListener('change', () => { select.blur(); });
+            select.addEventListener('keydown', (ke) => {
+              if (ke.key === 'Escape') { ke.preventDefault(); saved = true; select.removeEventListener('blur', save); td.replaceChild(typeSpan, select); }
+            });
+          });
+          td.appendChild(typeSpan);
           break;
         }
         case 'transcript': {

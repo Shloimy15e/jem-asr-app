@@ -1,16 +1,37 @@
+// Hebrew month number → canonical name (1-based: 1=Tishrei … 12=Elul)
+const HEBREW_MONTH_BY_NUM = [
+  null, 'Tishrei', 'Cheshvan', 'Kislev', 'Teves', 'Shevat', 'Adar',
+  'Nissan', 'Iyar', 'Sivan', 'Tammuz', 'Av', 'Elul',
+];
+
+export const HEBREW_MONTHS = [
+  'Tishrei', 'Cheshvan', 'Kislev', 'Teves', 'Shevat', 'Adar',
+  'Adar I', 'Adar II', 'Nissan', 'Iyar', 'Sivan', 'Tammuz', 'Av', 'Elul',
+];
+
 export function parseHebrewDate(filename) {
   const base = filename.replace(/\.[^.]+$/, '');
+
+  // ── Numeric format: M-DD-YY (e.g. 6-26-51 = Adar 26, 5751) ──────
+  const numericMatch = base.match(/^(\d{1,2})[-./](\d{1,2})[-./](\d{2,4})/);
+  if (numericMatch) {
+    const mNum = parseInt(numericMatch[1], 10);
+    const d = parseInt(numericMatch[2], 10);
+    let y = parseInt(numericMatch[3], 10);
+    if (y < 100) y += 5700; // 51 → 5751
+    const monthName = (mNum >= 1 && mNum <= 12) ? HEBREW_MONTH_BY_NUM[mNum] : null;
+    if (monthName) {
+      return { year: String(y), month: monthName, day: d || null };
+    }
+  }
+
+  // ── Named format: "5748-Tishrei 24 Sicha" ─────────────────────────
   const yearMatch = base.match(/\b(5[67]\d{2})\b/);
   const year = yearMatch ? yearMatch[1] : null;
 
-  const months = [
-    'Tishrei', 'Cheshvan', 'Kislev', 'Teves', 'Teives', 'Shvat', 'Shevat', 'Adar',
-    'Adar I', 'Adar II', 'Nissan', 'Iyar', 'Sivan', 'Tammuz', 'Tamuz',
-    'Av', 'Elul',
-  ];
   let month = null;
   const lowerBase = base.toLowerCase().replace(/[-_]/g, ' ');
-  for (const m of months) {
+  for (const m of HEBREW_MONTHS) {
     if (lowerBase.includes(m.toLowerCase())) {
       month = m;
       break;

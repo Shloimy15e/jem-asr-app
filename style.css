@@ -2064,6 +2064,46 @@ input {
   box-shadow: 0 0 0 2px var(--accent-dim);
 }
 
+/* === Inline Editable Cells (year, month, day, type) === */
+.editable-cell {
+  cursor: text;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 0.15s;
+  white-space: nowrap;
+}
+
+.editable-cell:hover {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+.editable-cell-empty {
+  color: var(--text-muted);
+}
+
+.inline-edit-input {
+  padding: 2px 4px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-family: inherit;
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+.inline-edit-select {
+  padding: 2px 4px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-family: inherit;
+  box-shadow: 0 0 0 2px var(--accent-dim);
+  cursor: pointer;
+}
+
 /* === Inline Comment Cell === */
 .comment-cell {
   display: block;

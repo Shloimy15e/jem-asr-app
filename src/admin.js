@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
-import { checkAuth, signOut, getUserLibraries } from './auth.js';
+import { checkAuth, signOut, getUserLibraries, getActiveLibrary } from './auth.js';
+import { logActivity } from './db.js';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -33,6 +34,7 @@ function renderAdmin(page, adminLibs) {
   const tabs = [
     { id: 'members',   label: 'Members' },
     { id: 'upload',    label: 'Upload' },
+    { id: 'activity',  label: 'Activity' },
   ];
 
   const panels = {};
@@ -72,9 +74,18 @@ function renderAdmin(page, adminLibs) {
 
   renderUploadPanel(uploadPanel, adminLibs);
 
+  // ── Activity panel ────────────────────────────────────────────────────
+  const activityPanel = document.createElement('div');
+  activityPanel.className = 'admin-panel';
+  activityPanel.style.display = 'none';
+  panels['activity'] = activityPanel;
+
+  renderActivityPanel(activityPanel, adminLibs);
+
   page.appendChild(tabBar);
   page.appendChild(memPanel);
   page.appendChild(uploadPanel);
+  page.appendChild(activityPanel);
 }
 
 // ── Members panel ────────────────────────────────────────────────────────
@@ -175,6 +186,7 @@ function renderMemberList(container, libraryId, members) {
         .eq('user_id', m.user_id)
         .eq('library_id', libraryId);
       if (error) { alert(error.message); saveRoleBtn.disabled = false; return; }
+      logActivity('role_changed', null, m.email, { newRole: roleSelect.value, libraryId });
       m.role = roleSelect.value;
       saveRoleBtn.style.display = 'none';
       saveRoleBtn.disabled = false;
@@ -196,6 +208,7 @@ function renderMemberList(container, libraryId, members) {
         .eq('user_id', m.user_id)
         .eq('library_id', libraryId);
       if (error) { alert(error.message); return; }
+      logActivity('member_removed', null, m.email, { libraryId });
       tr.remove();
     });
     tdActions.appendChild(removeBtn);
@@ -276,6 +289,7 @@ function renderMemberList(container, libraryId, members) {
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || 'Invite failed');
 
+      logActivity('member_invited', null, email, { role: roleSelect.value, libraryId });
       emailInput.value = '';
       pwInput.value = '';
       addBtn.disabled = false;
@@ -508,6 +522,7 @@ function renderUploadPanel(container, adminLibs) {
         if (error) throw new Error('DB insert failed: ' + error.message);
       }
 
+      logActivity('file_uploaded', recId, name, { type, libraryId: libId });
       statusEl.style.color = 'var(--green)';
       statusEl.innerHTML = `Uploaded successfully!<br>
         <span class="text-secondary" style="font-size:0.8rem">
@@ -527,6 +542,274 @@ function renderUploadPanel(container, adminLibs) {
       uploadBtn.textContent = 'Upload';
     }
   });
+}
+
+// ── Activity panel ───────────────────────────────────────────────────────────
+
+const ACTION_LABELS = {
+  mapping_confirmed: 'Mapping confirmed',
+  mapping_removed: 'Mapping removed',
+  cleaning_run: 'Cleaning run',
+  transcript_edited: 'Transcript edited',
+  alignment_completed: 'Alignment completed',
+  review_approved: 'Review approved',
+  review_rejected: 'Review rejected',
+  segment_approved: 'Segment approved',
+  segment_unapproved: 'Segment unapproved',
+  file_uploaded: 'File uploaded',
+  member_invited: 'Member invited',
+  member_removed: 'Member removed',
+  role_changed: 'Role changed',
+};
+
+const ACTION_COLORS = {
+  mapping_confirmed: 'blue',
+  mapping_removed: 'red',
+  cleaning_run: 'cyan',
+  transcript_edited: 'gray',
+  alignment_completed: 'orange',
+  review_approved: 'green',
+  review_rejected: 'red',
+  segment_approved: 'green',
+  segment_unapproved: 'red',
+  file_uploaded: 'gray',
+  member_invited: 'blue',
+  member_removed: 'red',
+  role_changed: 'gray',
+};
+
+const PAGE_SIZE = 50;
+
+function renderActivityPanel(container, adminLibs) {
+  container.innerHTML = '';
+
+  const heading = document.createElement('h2');
+  heading.className = 'admin-section-title';
+  heading.textContent = 'Activity Log';
+  container.appendChild(heading);
+
+  // ── Filter row ────────────────────────────────────────────────────────
+  const filterRow = document.createElement('div');
+  filterRow.className = 'admin-form admin-form-inline';
+  filterRow.style.marginBottom = '1rem';
+
+  // Library picker
+  const libSelect = document.createElement('select');
+  libSelect.className = 'filter-select';
+  for (const lib of adminLibs) {
+    const opt = document.createElement('option');
+    opt.value = lib.id;
+    opt.textContent = lib.name;
+    libSelect.appendChild(opt);
+  }
+
+  // User filter
+  const userSelect = document.createElement('select');
+  userSelect.className = 'filter-select';
+  userSelect.innerHTML = '<option value="">All users</option>';
+
+  // Action filter
+  const actionSelect = document.createElement('select');
+  actionSelect.className = 'filter-select';
+  actionSelect.innerHTML = '<option value="">All actions</option>';
+  for (const [val, label] of Object.entries(ACTION_LABELS)) {
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = label;
+    actionSelect.appendChild(opt);
+  }
+
+  // Date range filter
+  const dateSelect = document.createElement('select');
+  dateSelect.className = 'filter-select';
+  for (const [val, label] of [['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days'], ['', 'All time']]) {
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = label;
+    dateSelect.appendChild(opt);
+  }
+
+  if (adminLibs.length > 1) filterRow.appendChild(libSelect);
+  filterRow.appendChild(userSelect);
+  filterRow.appendChild(actionSelect);
+  filterRow.appendChild(dateSelect);
+  container.appendChild(filterRow);
+
+  // ── Results area ──────────────────────────────────────────────────────
+  const resultsArea = document.createElement('div');
+  container.appendChild(resultsArea);
+
+  let currentPage = 0;
+
+  async function loadActivity() {
+    resultsArea.innerHTML = '<div class="text-secondary" style="padding:1rem">Loading activity…</div>';
+
+    const libraryId = libSelect.value;
+    let query = supabase
+      .from('activity_log')
+      .select('*', { count: 'exact' })
+      .eq('library_id', libraryId)
+      .order('created_at', { ascending: false })
+      .range(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE - 1);
+
+    if (userSelect.value) query = query.eq('user_email', userSelect.value);
+    if (actionSelect.value) query = query.eq('action', actionSelect.value);
+    if (dateSelect.value) {
+      const d = new Date();
+      d.setDate(d.getDate() - parseInt(dateSelect.value));
+      query = query.gte('created_at', d.toISOString());
+    }
+
+    const { data, error, count } = await query;
+    if (error) {
+      resultsArea.innerHTML = `<div class="admin-error">${esc(error.message)}</div>`;
+      return;
+    }
+
+    renderActivityTable(resultsArea, data || [], count || 0);
+  }
+
+  // Populate user filter from distinct emails
+  async function loadUsers() {
+    const { data } = await supabase
+      .from('activity_log')
+      .select('user_email')
+      .eq('library_id', libSelect.value);
+    const emails = [...new Set((data || []).map(r => r.user_email))].sort();
+    userSelect.innerHTML = '<option value="">All users</option>';
+    for (const email of emails) {
+      const opt = document.createElement('option');
+      opt.value = email;
+      opt.textContent = email;
+      userSelect.appendChild(opt);
+    }
+  }
+
+  function renderActivityTable(container, rows, totalCount) {
+    container.innerHTML = '';
+
+    if (rows.length === 0) {
+      container.innerHTML = '<div class="empty-state"><div class="empty-state-title">No activity yet</div><div class="empty-state-sub">Actions will appear here as users work in the app.</div></div>';
+      return;
+    }
+
+    const table = document.createElement('table');
+    table.className = 'admin-table';
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>User</th>
+          <th>Action</th>
+          <th>Target</th>
+          <th>Details</th>
+        </tr>
+      </thead>
+    `;
+    const tbody = document.createElement('tbody');
+
+    for (const row of rows) {
+      const tr = document.createElement('tr');
+
+      const tdTime = document.createElement('td');
+      tdTime.style.whiteSpace = 'nowrap';
+      tdTime.style.fontSize = '0.8rem';
+      tdTime.textContent = formatTime(row.created_at);
+
+      const tdUser = document.createElement('td');
+      tdUser.textContent = row.user_email;
+      tdUser.style.fontSize = '0.8rem';
+
+      const tdAction = document.createElement('td');
+      const badge = document.createElement('span');
+      badge.className = 'status-badge';
+      const color = ACTION_COLORS[row.action] || 'gray';
+      badge.style.background = `var(--${color}-dim, var(--gray-dim))`;
+      badge.style.color = `var(--${color}, var(--gray))`;
+      badge.textContent = ACTION_LABELS[row.action] || row.action;
+      tdAction.appendChild(badge);
+
+      const tdTarget = document.createElement('td');
+      tdTarget.style.fontSize = '0.8rem';
+      tdTarget.className = 'admin-cell-mono';
+      if (row.target_name) {
+        tdTarget.textContent = row.target_name;
+        tdTarget.title = row.target_id || '';
+      } else if (row.target_id) {
+        tdTarget.textContent = row.target_id;
+      }
+
+      const tdDetails = document.createElement('td');
+      tdDetails.style.fontSize = '0.78rem';
+      tdDetails.style.color = 'var(--text-secondary)';
+      const d = row.details || {};
+      const parts = Object.entries(d).map(([k, v]) => `${k}: ${v}`);
+      tdDetails.textContent = parts.join(', ');
+
+      tr.appendChild(tdTime);
+      tr.appendChild(tdUser);
+      tr.appendChild(tdAction);
+      tr.appendChild(tdTarget);
+      tr.appendChild(tdDetails);
+      tbody.appendChild(tr);
+    }
+
+    table.appendChild(tbody);
+    container.appendChild(table);
+
+    // ── Pagination ──────────────────────────────────────────────────────
+    const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+    if (totalPages > 1) {
+      const pag = document.createElement('div');
+      pag.style.cssText = 'display:flex;align-items:center;gap:8px;padding:12px 0;font-size:0.82rem;';
+
+      const prevBtn = document.createElement('button');
+      prevBtn.className = 'action-btn action-btn-secondary';
+      prevBtn.textContent = 'Prev';
+      prevBtn.disabled = currentPage === 0;
+      prevBtn.addEventListener('click', () => { currentPage--; loadActivity(); });
+
+      const info = document.createElement('span');
+      info.className = 'text-secondary';
+      info.textContent = `Page ${currentPage + 1} of ${totalPages} (${totalCount} total)`;
+
+      const nextBtn = document.createElement('button');
+      nextBtn.className = 'action-btn action-btn-secondary';
+      nextBtn.textContent = 'Next';
+      nextBtn.disabled = currentPage >= totalPages - 1;
+      nextBtn.addEventListener('click', () => { currentPage++; loadActivity(); });
+
+      pag.appendChild(prevBtn);
+      pag.appendChild(info);
+      pag.appendChild(nextBtn);
+      container.appendChild(pag);
+    }
+  }
+
+  // Wire up filter changes
+  libSelect.addEventListener('change', () => { currentPage = 0; loadUsers(); loadActivity(); });
+  userSelect.addEventListener('change', () => { currentPage = 0; loadActivity(); });
+  actionSelect.addEventListener('change', () => { currentPage = 0; loadActivity(); });
+  dateSelect.addEventListener('change', () => { currentPage = 0; loadActivity(); });
+
+  // Initial load
+  loadUsers();
+  loadActivity();
+}
+
+function formatTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  const diffMs = now - d;
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return 'just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDays = Math.floor(diffHr / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
 }
 
 // ── Utils ─────────────────────────────────────────────────────────────────

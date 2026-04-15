@@ -216,6 +216,7 @@ stateDiagram-v2
 | `segment_approvals` | `(audio_id, segment_hash)` | Persistent per-segment approval state. `segment_hash` is the space-joined word text of the segment. Approved state survives re-alignment as long as text is unchanged. |
 | `asr_models` | `id` | ASR model configurations |
 | `benchmark_results` | `id` | WER/CER benchmark run results |
+| `activity_log` | `id` (BIGSERIAL) | Centralized audit trail. Columns: `user_email`, `action` (e.g. `mapping_confirmed`, `review_approved`), `target_id`, `target_name`, `details` (JSONB), `library_id`, `created_at`. Logged fire-and-forget from `db.js` via `logActivity()`. Viewable in Admin → Activity tab. |
 
 #### Views
 
