@@ -63,6 +63,7 @@ let searchTerm = '';
 let filterYear = '';
 let filterMonth = '';
 let filterType = '';
+let filterConfidence = '';
 
 function buildFilter() {
   if (fiftyOnly && statusFilter) return 'fifty-' + statusFilter;
@@ -86,6 +87,7 @@ function updateURL() {
   if (filterYear) params.set('year', filterYear);
   if (filterMonth) params.set('month', filterMonth);
   if (filterType) params.set('type', filterType);
+  if (filterConfidence) params.set('confidence', filterConfidence);
   const qs = params.toString();
   window.history.replaceState(null, '', qs ? '?' + qs : window.location.pathname);
 }
@@ -1093,6 +1095,7 @@ function renderTable(container, options = {}) {
   if (initParams.has('year')) filterYear = initParams.get('year') || '';
   if (initParams.has('month')) filterMonth = initParams.get('month') || '';
   if (initParams.has('type')) filterType = initParams.get('type') || '';
+  if (initParams.has('confidence')) filterConfidence = initParams.get('confidence') || '';
   currentFilter = buildFilter();
 
   // Wire 50hr toggle
@@ -1116,6 +1119,18 @@ function renderTable(container, options = {}) {
     statusSelect.addEventListener('change', () => {
       statusFilter = statusSelect.value;
       currentFilter = buildFilter();
+      currentPage = 1;
+      selectedIds.clear();
+      updateURL();
+      updateTable();
+    });
+  }
+
+  // Wire confidence filter
+  const confSelect = document.getElementById('filter-confidence');
+  if (confSelect) {
+    confSelect.addEventListener('change', () => {
+      filterConfidence = confSelect.value;
       currentPage = 1;
       selectedIds.clear();
       updateURL();
@@ -1180,12 +1195,14 @@ function renderTable(container, options = {}) {
       filterYear = '';
       filterMonth = '';
       filterType = '';
+      filterConfidence = '';
       searchTerm = '';
       currentPage = 1;
       currentFilter = buildFilter();
       selectedIds.clear();
       if (fiftyCheckbox) fiftyCheckbox.checked = false;
       if (statusSelect) statusSelect.value = '';
+      if (confSelect) confSelect.value = '';
       if (yearSelect) yearSelect.value = '';
       if (monthSelect) monthSelect.value = '';
       if (typeSelect) typeSelect.value = '';
@@ -1203,6 +1220,7 @@ function renderTable(container, options = {}) {
   if (filterYear && yearSelect) yearSelect.value = filterYear;
   if (filterMonth && monthSelect) monthSelect.value = filterMonth;
   if (filterType && typeSelect) typeSelect.value = filterType;
+  if (filterConfidence && confSelect) confSelect.value = filterConfidence;
   if (searchTerm) {
     const searchInput = document.getElementById('search-input');
     if (searchInput) searchInput.value = searchTerm;
@@ -1215,7 +1233,23 @@ function updateTable() {
   if (!_container) return;
 
   // Get filtered rows from state
-  const filteredAudio = getFilteredRows(currentFilter);
+  let filteredAudio = getFilteredRows(currentFilter);
+
+  // Apply confidence filter
+  if (filterConfidence) {
+    const state = getState();
+    filteredAudio = filteredAudio.filter(a => {
+      const m = state.mappings && state.mappings[a.id];
+      const conf = m ? m.confidence : null;
+      switch (filterConfidence) {
+        case 'perfect': return conf === 1;
+        case 'strong':  return conf !== null && conf >= 0.5;
+        case 'weak':    return conf !== null && conf < 0.5;
+        case 'none':    return conf === null || conf === undefined;
+        default:        return true;
+      }
+    });
+  }
 
   // Build row data
   let rows = filteredAudio.map(getRowData);

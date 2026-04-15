@@ -43,8 +43,13 @@
         <option value="approved">Approved</option>
         <option value="rejected">Rejected</option>
         <option value="benchmark">Benchmark</option>
-        <option value="perfect-match">Perfect Match</option>
-        <option value="strong-match">Match 50%+</option>
+      </select>
+      <select id="filter-confidence" class="filter-select">
+        <option value="">All Confidence</option>
+        <option value="perfect">Perfect Match (100%)</option>
+        <option value="strong">Match 50%+</option>
+        <option value="weak">Match &lt;50%</option>
+        <option value="none">No Match</option>
       </select>
     </div>
     <div class="filter-controls">
