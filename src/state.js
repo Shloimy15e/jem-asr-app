@@ -452,6 +452,12 @@ export function getFilteredRows(filter, searchTerm, sortCol, sortDir, yearFilter
     case 'rejected':
       rows = audio.filter(a => getStatus(a.id) === 'rejected');
       break;
+    case 'perfect-match':
+      rows = audio.filter(a => {
+        const m = state.mappings[a.id];
+        return m && m.confidence === 1;
+      });
+      break;
     case 'all':
     default:
       rows = audio;
@@ -509,6 +515,7 @@ export function getFilterCounts() {
   const fiftyStatusCounts = { unmapped: 0, mapped: 0, cleaned: 0, aligned: 0, approved: 0, rejected: 0 };
   let benchmarkCount = 0;
   let fiftyCount = 0;
+  let perfectMatchCount = 0;
 
   audio.forEach(a => {
     const s = getStatus(a.id);
@@ -518,6 +525,8 @@ export function getFilterCounts() {
       fiftyCount++;
       if (fiftyStatusCounts[s] !== undefined) fiftyStatusCounts[s]++;
     }
+    const m = state.mappings[a.id];
+    if (m && m.confidence === 1) perfectMatchCount++;
   });
 
   const counts = {
@@ -525,6 +534,7 @@ export function getFilterCounts() {
     unmapped: statusCounts.unmapped,
     mapped: statusCounts.mapped,
     benchmark: benchmarkCount,
+    'perfect-match': perfectMatchCount,
     'needs-review': statusCounts.aligned,
     cleaned: statusCounts.cleaned || 0,
     approved: statusCounts.approved,

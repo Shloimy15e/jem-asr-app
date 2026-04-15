@@ -710,6 +710,7 @@ function updateFilterCounts() {
     'count-unmapped': 'unmapped',
     'count-approved': 'approved',
     'count-benchmark': 'benchmark',
+    'count-perfect-match': 'perfect-match',
   };
   for (const [elId, stateKey] of Object.entries(map)) {
     const el = document.getElementById(elId);
