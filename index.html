@@ -31,9 +31,11 @@
   </button>
   <nav class="filter-bar" id="filter-bar">
     <div class="filter-controls" data-tab="audio">
-      <label class="fifty-toggle-label">
-        <input type="checkbox" id="filter-fifty" /> 50hr only
-      </label>
+      <select id="filter-fifty" class="filter-select">
+        <option value="">All Files</option>
+        <option value="yes">50hr only</option>
+        <option value="no">Not in 50hr</option>
+      </select>
       <select id="filter-status" class="filter-select">
         <option value="">All Statuses</option>
         <option value="unmapped">Unmapped</option>

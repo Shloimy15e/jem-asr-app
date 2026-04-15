@@ -408,13 +408,16 @@ export function getFilteredRows(filter, searchTerm, sortCol, sortDir, yearFilter
   if (!state) return [];
   const { audio } = state;
 
-  // Support legacy compound keys (fifty-unmapped, 50hr-mapped, etc.)
-  let fiftyOnly = false;
+  // Support compound keys (fifty-unmapped, not-fifty-mapped, etc.)
+  let fiftyMode = '';  // '' = all, 'yes' = 50hr only, 'no' = not in 50hr
   let statusFilter = '';
   if (typeof filter === 'string') {
     const f = filter.replace('50hr', 'fifty');
-    if (f === 'fifty' || f.startsWith('fifty-')) {
-      fiftyOnly = true;
+    if (f === 'not-fifty' || f.startsWith('not-fifty-')) {
+      fiftyMode = 'no';
+      statusFilter = f === 'not-fifty' ? '' : f.replace('not-fifty-', '');
+    } else if (f === 'fifty' || f.startsWith('fifty-')) {
+      fiftyMode = 'yes';
       statusFilter = f === 'fifty' ? '' : f.replace('fifty-', '');
     } else if (['unmapped', 'mapped', 'cleaned', 'aligned', 'approved', 'rejected', 'benchmark'].includes(f)) {
       statusFilter = f;
@@ -431,7 +434,8 @@ export function getFilteredRows(filter, searchTerm, sortCol, sortDir, yearFilter
   let rows = audio;
 
   // 50hr filter
-  if (fiftyOnly) rows = rows.filter(a => a.isSelected50hr);
+  if (fiftyMode === 'yes') rows = rows.filter(a => a.isSelected50hr);
+  if (fiftyMode === 'no') rows = rows.filter(a => !a.isSelected50hr);
 
   // Status filter
   if (statusFilter === 'benchmark') {

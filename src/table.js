@@ -55,8 +55,8 @@ function toggleInlinePlay(btn, audioUrl, audioId) {
 }
 
 // ── Internal state ──────────────────────────────────────────────────
-let currentFilter = 'all';  // composed from fiftyOnly + statusFilter
-let fiftyOnly = false;
+let currentFilter = 'all';  // composed from fiftyFilter + statusFilter
+let fiftyFilter = '';  // '' = all, 'yes' = 50hr only, 'no' = not in 50hr
 let statusFilter = '';
 let currentSort = { column: null, dir: 'asc' };
 let currentPage = 1;
@@ -67,8 +67,10 @@ let filterType = '';
 let filterConfidence = '';
 
 function buildFilter() {
-  if (fiftyOnly && statusFilter) return 'fifty-' + statusFilter;
-  if (fiftyOnly) return 'fifty';
+  if (fiftyFilter === 'yes' && statusFilter) return 'fifty-' + statusFilter;
+  if (fiftyFilter === 'yes') return 'fifty';
+  if (fiftyFilter === 'no' && statusFilter) return 'not-fifty-' + statusFilter;
+  if (fiftyFilter === 'no') return 'not-fifty';
   if (statusFilter) return statusFilter;
   return 'all';
 }
@@ -81,7 +83,7 @@ function getSelectedRows() {
 
 function updateURL() {
   const params = new URLSearchParams();
-  if (fiftyOnly) params.set('fifty', '1');
+  if (fiftyFilter) params.set('fifty', fiftyFilter);
   if (statusFilter) params.set('status', statusFilter);
   if (currentPage > 1) params.set('page', String(currentPage));
   if (searchTerm) params.set('q', searchTerm);
@@ -822,12 +824,6 @@ function buildTable(rows) {
             unlinkBtn.addEventListener('click', (e) => {
               e.stopPropagation();
               unlinkMatch(row.id);
-              const s = getState();
-              s.transcriptVersions[row.id] = [];
-              if (s.cleaning[row.id]) updateState('cleaning', row.id, null);
-              if (s.alignments[row.id]) updateState('alignments', row.id, null);
-              if (s.reviews[row.id]) updateState('reviews', row.id, null);
-              updateState('transcriptVersions', null, s.transcriptVersions);
               updateTable();
             });
             td.appendChild(unlinkBtn);
@@ -1041,15 +1037,9 @@ function buildBulkBar() {
   unlinkBtn.textContent = 'Unlink';
   unlinkBtn.addEventListener('click', () => {
     if (!confirm(`Unlink transcripts from ${selectedIds.size} file(s)? This removes mapping, cleaning, alignment, and review data.`)) return;
-    const s = getState();
     for (const id of selectedIds) {
       unlinkMatch(id);
-      s.transcriptVersions[id] = [];
-      if (s.cleaning[id]) s.cleaning[id] = null;
-      if (s.alignments[id]) s.alignments[id] = null;
-      if (s.reviews[id]) s.reviews[id] = null;
     }
-    updateState('transcriptVersions', null, s.transcriptVersions);
     selectedIds.clear();
     updateTable();
   });
@@ -1093,18 +1083,18 @@ function renderTable(container, options = {}) {
   _container = container;
   _onRowExpand = options.onRowExpand || null;
 
-  // Default: show 50hr if library has them
-  if (options.filter === 'fifty') fiftyOnly = true;
+  // Default status: unmapped
+  statusFilter = 'unmapped';
 
   // Read initial state from URL query params
   const initParams = new URLSearchParams(window.location.search);
-  if (initParams.has('fifty')) fiftyOnly = initParams.get('fifty') === '1';
-  if (initParams.has('status')) statusFilter = initParams.get('status') || '';
+  if (initParams.has('fifty')) fiftyFilter = initParams.get('fifty') || '';
+  if (initParams.has('status')) statusFilter = initParams.get('status');
   // Legacy: support old ?filter= param
   if (initParams.has('filter')) {
     const f = initParams.get('filter').replace('50hr', 'fifty');
     if (f === 'fifty' || f.startsWith('fifty-')) {
-      fiftyOnly = true;
+      fiftyFilter = 'yes';
       statusFilter = f === 'fifty' ? '' : f.replace('fifty-', '');
     } else if (f !== 'all') {
       statusFilter = f;
@@ -1118,12 +1108,12 @@ function renderTable(container, options = {}) {
   if (initParams.has('confidence')) filterConfidence = initParams.get('confidence') || '';
   currentFilter = buildFilter();
 
-  // Wire 50hr toggle
-  const fiftyCheckbox = document.getElementById('filter-fifty');
-  if (fiftyCheckbox) {
-    fiftyCheckbox.checked = fiftyOnly;
-    fiftyCheckbox.addEventListener('change', () => {
-      fiftyOnly = fiftyCheckbox.checked;
+  // Wire 50hr filter
+  const fiftySelect = document.getElementById('filter-fifty');
+  if (fiftySelect) {
+    fiftySelect.value = fiftyFilter;
+    fiftySelect.addEventListener('change', () => {
+      fiftyFilter = fiftySelect.value;
       currentFilter = buildFilter();
       currentPage = 1;
       selectedIds.clear();
@@ -1210,7 +1200,7 @@ function renderTable(container, options = {}) {
   const resetBtn = document.getElementById('btn-reset-filters');
   if (resetBtn) {
     resetBtn.addEventListener('click', () => {
-      fiftyOnly = false;
+      fiftyFilter = '';
       statusFilter = '';
       filterYear = '';
       filterMonth = '';
@@ -1220,7 +1210,7 @@ function renderTable(container, options = {}) {
       currentPage = 1;
       currentFilter = buildFilter();
       selectedIds.clear();
-      if (fiftyCheckbox) fiftyCheckbox.checked = false;
+      if (fiftySelect) fiftySelect.value = '';
       if (statusSelect) statusSelect.value = '';
       if (confSelect) confSelect.value = '';
       if (yearSelect) yearSelect.value = '';

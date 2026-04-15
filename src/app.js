@@ -272,7 +272,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   renderTable(tableContainer, {
     onRowExpand,
-    filter: has50hr ? 'fifty' : 'all',
+    filter: 'unmapped',
   });
 
   // ── Tab switching (Audio / Transcripts) ─────────────────────────
@@ -294,7 +294,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Clear and re-render
       tableContainer.innerHTML = '';
       if (tab === 'audio') {
-        renderTable(tableContainer, { onRowExpand, filter: has50hr ? 'fifty' : 'all' });
+        renderTable(tableContainer, { onRowExpand, filter: 'unmapped' });
       } else {
         renderTranscriptTable(tableContainer);
       }
