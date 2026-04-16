@@ -103,7 +103,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   let activeTab = 'audio';
   const tabBtns = document.querySelectorAll('#tab-bar .tab-btn');
-  const audioOnlyEls = document.querySelectorAll('[data-tab="audio"]');
+  const audioOnlyEls = document.querySelectorAll('[data-tab="audio"]:not(.tab-btn)');
 
   tabBtns.forEach(btn => {
     btn.addEventListener('click', () => {

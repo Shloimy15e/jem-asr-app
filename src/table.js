@@ -55,9 +55,8 @@ function toggleInlinePlay(btn, audioUrl, audioId) {
 }
 
 // ── Internal state ──────────────────────────────────────────────────
-let currentFilter = 'all';  // composed from fiftyFilter + statusFilter
 let fiftyFilter = '';  // '' = all, 'yes' = 50hr only, 'no' = not in 50hr
-let statusFilter = '';
+let statusFilter = [];  // array of selected statuses, empty = all
 let currentSort = { column: null, dir: 'asc' };
 let currentPage = 1;
 let searchTerm = '';
@@ -67,12 +66,19 @@ let filterType = '';
 let filterConfidence = '';
 
 function buildFilter() {
-  if (fiftyFilter === 'yes' && statusFilter) return 'fifty-' + statusFilter;
+  const sf = statusFilter.length === 1 ? statusFilter[0] : '';
+  if (fiftyFilter === 'yes' && sf) return 'fifty-' + sf;
   if (fiftyFilter === 'yes') return 'fifty';
-  if (fiftyFilter === 'no' && statusFilter) return 'not-fifty-' + statusFilter;
+  if (fiftyFilter === 'no' && sf) return 'not-fifty-' + sf;
   if (fiftyFilter === 'no') return 'not-fifty';
-  if (statusFilter) return statusFilter;
+  if (sf) return sf;
   return 'all';
+}
+
+function updateMultiSelectLabel(btn, selected, allLabel) {
+  if (selected.length === 0) btn.textContent = allLabel;
+  else if (selected.length <= 2) btn.textContent = selected.map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(', ');
+  else btn.textContent = selected.length + ' selected';
 }
 const PAGE_SIZE = 50;
 const selectedIds = new Set();
@@ -84,7 +90,7 @@ function getSelectedRows() {
 function updateURL() {
   const params = new URLSearchParams();
   if (fiftyFilter) params.set('fifty', fiftyFilter);
-  if (statusFilter) params.set('status', statusFilter);
+  if (statusFilter.length) params.set('status', statusFilter.join(','));
   if (currentPage > 1) params.set('page', String(currentPage));
   if (searchTerm) params.set('q', searchTerm);
   if (filterYear) params.set('year', filterYear);
@@ -132,7 +138,7 @@ function filterMatchesStatus(filter, statuses) {
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function getVisibleColumns() {
-  return COLUMNS.filter(c => c.showWhen(currentFilter));
+  return COLUMNS.filter(c => c.showWhen(buildFilter()));
 }
 
 function getTranscriptForAudio(audioId) {
@@ -1125,20 +1131,21 @@ function renderTable(container, options = {}) {
   _onRowExpand = options.onRowExpand || null;
 
   // Default status: unmapped
-  statusFilter = 'unmapped';
+  statusFilter = ['unmapped'];
 
   // Read initial state from URL query params
   const initParams = new URLSearchParams(window.location.search);
   if (initParams.has('fifty')) fiftyFilter = initParams.get('fifty') || '';
-  if (initParams.has('status')) statusFilter = initParams.get('status');
+  if (initParams.has('status')) statusFilter = initParams.get('status').split(',').filter(Boolean);
   // Legacy: support old ?filter= param
   if (initParams.has('filter')) {
     const f = initParams.get('filter').replace('50hr', 'fifty');
     if (f === 'fifty' || f.startsWith('fifty-')) {
       fiftyFilter = 'yes';
-      statusFilter = f === 'fifty' ? '' : f.replace('fifty-', '');
+      const s = f === 'fifty' ? '' : f.replace('fifty-', '');
+      statusFilter = s ? [s] : [];
     } else if (f !== 'all') {
-      statusFilter = f;
+      statusFilter = [f];
     }
   }
   if (initParams.has('page')) currentPage = parseInt(initParams.get('page') || '1', 10);
@@ -1147,7 +1154,7 @@ function renderTable(container, options = {}) {
   if (initParams.has('month')) filterMonth = initParams.get('month') || '';
   if (initParams.has('type')) filterType = initParams.get('type') || '';
   if (initParams.has('confidence')) filterConfidence = initParams.get('confidence') || '';
-  currentFilter = buildFilter();
+  // buildFilter() computed on demand — no cached currentFilter needed
 
   // Wire 50hr filter
   const fiftySelect = document.getElementById('filter-fifty');
@@ -1155,7 +1162,7 @@ function renderTable(container, options = {}) {
     fiftySelect.value = fiftyFilter;
     fiftySelect.addEventListener('change', () => {
       fiftyFilter = fiftySelect.value;
-      currentFilter = buildFilter();
+      // buildFilter() computed on demand — no cached currentFilter needed
       currentPage = 1;
       selectedIds.clear();
       updateURL();
@@ -1163,17 +1170,29 @@ function renderTable(container, options = {}) {
     });
   }
 
-  // Wire status dropdown
-  const statusSelect = document.getElementById('filter-status');
-  if (statusSelect) {
-    statusSelect.value = statusFilter;
-    statusSelect.addEventListener('change', () => {
-      statusFilter = statusSelect.value;
-      currentFilter = buildFilter();
-      currentPage = 1;
-      selectedIds.clear();
-      updateURL();
-      updateTable();
+  // Wire multi-select status dropdown
+  const statusContainer = document.getElementById('filter-status');
+  if (statusContainer) {
+    const statusBtn = statusContainer.querySelector('.multi-select-btn');
+    const statusCheckboxes = statusContainer.querySelectorAll('input[type="checkbox"]');
+    statusCheckboxes.forEach(cb => { cb.checked = statusFilter.includes(cb.value); });
+    updateMultiSelectLabel(statusBtn, statusFilter, 'All Statuses');
+    statusBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      statusContainer.classList.toggle('open');
+    });
+    statusCheckboxes.forEach(cb => {
+      cb.addEventListener('change', () => {
+        statusFilter = [...statusCheckboxes].filter(c => c.checked).map(c => c.value);
+        updateMultiSelectLabel(statusBtn, statusFilter, 'All Statuses');
+        currentPage = 1;
+        selectedIds.clear();
+        updateURL();
+        updateTable();
+      });
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (!statusContainer.contains(e.target)) statusContainer.classList.remove('open');
     });
   }
 
@@ -1242,17 +1261,20 @@ function renderTable(container, options = {}) {
   if (resetBtn) {
     resetBtn.addEventListener('click', () => {
       fiftyFilter = '';
-      statusFilter = '';
+      statusFilter = [];
       filterYear = '';
       filterMonth = '';
       filterType = '';
       filterConfidence = '';
       searchTerm = '';
       currentPage = 1;
-      currentFilter = buildFilter();
       selectedIds.clear();
       if (fiftySelect) fiftySelect.value = '';
-      if (statusSelect) statusSelect.value = '';
+      if (statusContainer) {
+        statusContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+        const btn = statusContainer.querySelector('.multi-select-btn');
+        if (btn) btn.textContent = 'All Statuses';
+      }
       if (confSelect) confSelect.value = '';
       if (yearSelect) yearSelect.value = '';
       if (monthSelect) monthSelect.value = '';
@@ -1283,8 +1305,22 @@ function renderTable(container, options = {}) {
 function updateTable() {
   if (!_container) return;
 
-  // Get filtered rows from state
-  let filteredAudio = getFilteredRows(currentFilter);
+  // Get filtered rows from state — multi-status support
+  let filteredAudio;
+  if (statusFilter.length > 1) {
+    // Multi-select: union results for each status
+    const prefix = fiftyFilter === 'yes' ? 'fifty-' : fiftyFilter === 'no' ? 'not-fifty-' : '';
+    const seen = new Set();
+    filteredAudio = [];
+    for (const sf of statusFilter) {
+      const filter = prefix ? prefix + sf : sf;
+      for (const row of getFilteredRows(filter)) {
+        if (!seen.has(row.id)) { seen.add(row.id); filteredAudio.push(row); }
+      }
+    }
+  } else {
+    filteredAudio = getFilteredRows(buildFilter());
+  }
 
   // Apply confidence filter
   if (filterConfidence) {

@@ -679,226 +679,75 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
     label.appendChild(nameSpan);
     container.appendChild(label);
 
-    // Version tabs
+    // Set active version ref to best version (edited > cleaned > manual)
     if (versions.length > 0) {
-      const tabBar = document.createElement('div');
-      tabBar.className = 'version-tab-bar';
-      const contentArea = document.createElement('div');
-
-      let activeVersionId = getBestVersion(audioId)?.id || versions[0].id;
+      const activeVersionId = getBestVersion(audioId)?.id || versions[0].id;
       if (activeVersionRef) activeVersionRef.id = activeVersionId;
+    }
 
-      function renderVersionContent(versionId) {
-        contentArea.innerHTML = '';
-        const version = versions.find(v => v.id === versionId);
-        if (!version) return;
-
-        // Update tab active states
-        tabBar.querySelectorAll('.version-tab').forEach(tab => {
-          tab.classList.toggle('active', tab.dataset.versionId === versionId);
+    // Compact info bar — version metadata only, no textarea (text editor is in the word view)
+    const bestVersion = getBestVersion(audioId);
+    if (bestVersion) {
+      const infoBar = document.createElement('div');
+      infoBar.style.cssText = 'display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:4px;';
+      const typeLabel = document.createElement('span');
+      typeLabel.className = `version-type-badge version-type-${bestVersion.type}`;
+      typeLabel.textContent = bestVersion.type.charAt(0).toUpperCase() + bestVersion.type.slice(1);
+      infoBar.appendChild(typeLabel);
+      if (bestVersion.cleanRate) {
+        const cr = document.createElement('span');
+        cr.className = 'text-secondary';
+        cr.style.fontSize = '0.8rem';
+        cr.textContent = `Clean rate: ${bestVersion.cleanRate}%`;
+        infoBar.appendChild(cr);
+      }
+      if (bestVersion.alignment) {
+        const al = document.createElement('span');
+        al.className = 'text-secondary';
+        al.style.fontSize = '0.8rem';
+        al.textContent = `Avg confidence: ${formatConfidence(bestVersion.alignment.avgConfidence)}`;
+        infoBar.appendChild(al);
+      }
+      if (bestVersion.updatedAt || bestVersion.createdAt) {
+        const ts = document.createElement('span');
+        ts.className = 'text-secondary';
+        ts.style.fontSize = '0.8rem';
+        const d = new Date(bestVersion.updatedAt || bestVersion.createdAt);
+        ts.textContent = `Saved ${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        infoBar.appendChild(ts);
+      }
+      // If only manual version exists, offer Start Editing
+      if (bestVersion.type === 'manual' && !versions.some(v => v.type === 'edited')) {
+        const startBtn = document.createElement('button');
+        startBtn.className = 'action-btn action-btn-primary';
+        startBtn.textContent = 'Start Editing';
+        startBtn.addEventListener('click', async () => {
+          startBtn.disabled = true;
+          startBtn.textContent = 'Loading...';
+          let text = transcript?.text;
+          if (!text && transcript) text = await loadFullText(transcript);
+          addVersion(audioId, { type: 'edited', sourceTranscriptId: mapping?.transcriptId, text: text || '', createdBy: getCurrentUser() });
+          const s = getState();
+          renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
         });
-
-        const isManual = version.type === 'manual';
-
-        // Textarea (read-only for manual versions)
-        const textarea = document.createElement('textarea');
-        textarea.className = 'transcript-editor';
-        textarea.dir = 'rtl';
-        textarea.rows = 12;
-        textarea.placeholder = 'Loading transcript text...';
-        if (isManual) {
-          textarea.readOnly = true;
-          textarea.style.opacity = '0.75';
-          textarea.style.cursor = 'default';
-        }
-
-        // Load text into textarea
-        if (isManual) {
-          // Manual versions always reflect the live transcript — never use a stale version.text cache
-          if (transcript?.text) {
-            textarea.value = transcript.text;
-          } else if (transcript?.firstLine) {
-            textarea.value = transcript.firstLine;
-            loadFullText(transcript).then(text => {
-              if (text) textarea.value = text;
-            }).catch(() => {});
-          }
-        } else if (version.text) {
-          textarea.value = version.text;
-        } else if (transcript?.firstLine) {
-          textarea.value = transcript.firstLine;
-          loadFullText(transcript).then(text => {
-            if (text && !version.text) {
-              version.text = text;
-              textarea.value = text;
-            }
-          }).catch(() => {});
-        }
-
-        // Save on change (debounced) — not available for manual versions
-        const saveStatus = document.createElement('span');
-        saveStatus.className = 'save-status text-secondary';
-        saveStatus.style.fontSize = '0.8rem';
-
-        function formatSaveTime(isoString) {
-          if (!isoString) return '';
-          const d = new Date(isoString);
-          return `Saved ${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-        }
-
-        // Show existing save time on load
-        if (!isManual && (version.updatedAt || version.createdAt)) {
-          saveStatus.textContent = formatSaveTime(version.updatedAt || version.createdAt);
-        }
-
-        if (!isManual) {
-          let saveTimer = null;
-          textarea.addEventListener('input', () => {
-            saveStatus.textContent = 'Unsaved...';
-            clearTimeout(saveTimer);
-            saveTimer = setTimeout(() => {
-              const now = new Date().toISOString();
-              updateVersion(audioId, version.id, { text: textarea.value, updatedAt: now });
-              saveStatus.textContent = formatSaveTime(now);
-            }, 800);
-          });
-        }
-
-        contentArea.appendChild(textarea);
-
-        // Info bar below textarea
-        const infoBar = document.createElement('div');
-        infoBar.style.cssText = 'display:flex;align-items:center;gap:12px;margin-top:6px;flex-wrap:wrap;';
-        const typeLabel = document.createElement('span');
-        typeLabel.className = `version-type-badge version-type-${version.type}`;
-        typeLabel.textContent = version.type;
-        infoBar.appendChild(typeLabel);
-        if (isManual) {
-          const lockBadge = document.createElement('span');
-          lockBadge.className = 'text-secondary';
-          lockBadge.textContent = '🔒 read-only';
-          infoBar.appendChild(lockBadge);
-        }
-        if (version.cleanRate) {
-          const cr = document.createElement('span');
-          cr.className = 'text-secondary';
-          cr.textContent = `Clean rate: ${version.cleanRate}%`;
-          infoBar.appendChild(cr);
-        }
-        if (version.alignment) {
-          const al = document.createElement('span');
-          al.className = 'text-secondary';
-          al.textContent = `Avg confidence: ${formatConfidence(version.alignment.avgConfidence)}`;
-          infoBar.appendChild(al);
-        }
-        if (!isManual) infoBar.appendChild(saveStatus);
-
-        if (isManual) {
-          // "Start Editing" — switch to existing Edited version or create one
-          const existingEdited = versions.find(v => v.type === 'edited');
-          const startEditBtn = document.createElement('button');
-          startEditBtn.className = 'action-btn action-btn-primary action-btn-lg';
-          startEditBtn.textContent = existingEdited ? 'Edit' : 'Start Editing';
-          startEditBtn.addEventListener('click', async () => {
-            if (existingEdited) {
-              // Switch to the existing edited tab instead of creating a duplicate
-              activeVersionId = existingEdited.id;
-              if (activeVersionRef) activeVersionRef.id = existingEdited.id;
-              renderVersionContent(existingEdited.id);
-              return;
-            }
-            startEditBtn.disabled = true;
-            startEditBtn.textContent = 'Loading...';
-            // Ensure full text is loaded before copying
-            let text = textarea.value;
-            if (!transcript?.text && transcript) {
-              const full = await loadFullText(transcript);
-              if (full) { text = full; }
-            } else if (transcript?.text) {
-              text = transcript.text;
-            }
-            addVersion(audioId, {
-              type: 'edited',
-              parentVersionId: version.id,
-              sourceTranscriptId: version.sourceTranscriptId,
-              text,
-              createdBy: getCurrentUser(),
-            });
-            const s = getState();
-            renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
-          });
-          infoBar.appendChild(startEditBtn);
-        } else {
-          // "Save as new edited version" button
-          const saveAsBtn = document.createElement('button');
-          saveAsBtn.className = 'action-btn';
-          saveAsBtn.textContent = 'Save as Edited Version';
-          saveAsBtn.addEventListener('click', () => {
-            const newText = textarea.value;
-            if (newText === version.text && version.type === 'edited') return;
-            addVersion(audioId, {
-              type: 'edited',
-              parentVersionId: version.id,
-              sourceTranscriptId: version.sourceTranscriptId || manual?.sourceTranscriptId,
-              text: newText,
-              createdBy: getCurrentUser(),
-            });
-            const s = getState();
-            const audio = s.audio.find(a => a.id === audioId);
-            renderDetailPage(audioId, audio, s, pageContainer);
-          });
-          infoBar.appendChild(saveAsBtn);
-        }
-
-        contentArea.appendChild(infoBar);
+        infoBar.appendChild(startBtn);
       }
-
-      // Expose re-render on the shared ref so the word view can refresh the textarea after saving edits
-      if (activeVersionRef) {
-        activeVersionRef.rerenderContent = () => renderVersionContent(activeVersionRef.id);
-      }
-
-      // Build tabs — hide the cleaned tab when an edited (working) version exists
-      const hasEditedVersion = versions.some(v => v.type === 'edited');
-      for (const v of versions) {
-        if (v.type === 'cleaned' && hasEditedVersion) continue;
-        const tab = document.createElement('button');
-        tab.className = 'version-tab';
-        tab.dataset.versionId = v.id;
-        let tabLabel = v.type.charAt(0).toUpperCase() + v.type.slice(1);
-        if (v.type === 'asr') {
-          // Show model name if available, and mark as draft (not yet approved)
-          if (v.model) tabLabel = 'ASR (' + v.model + ')';
-          tabLabel += ' — draft';
-        }
-        tab.textContent = tabLabel;
-        if (v.id === activeVersionId) tab.classList.add('active');
-        tab.addEventListener('click', () => {
-          activeVersionId = v.id;
-          if (activeVersionRef) activeVersionRef.id = v.id;
-          renderVersionContent(v.id);
-        });
-        tabBar.appendChild(tab);
-      }
-
-      container.appendChild(tabBar);
-      container.appendChild(contentArea);
-      renderVersionContent(activeVersionId);
-    } else if (transcript) {
-      // No versions yet, just show transcript text
-      // (ASR buttons added below after this block)
-      // No versions yet, just show text
-      const textarea = document.createElement('textarea');
-      textarea.className = 'transcript-editor';
-      textarea.dir = 'rtl';
-      textarea.rows = 12;
-      textarea.value = transcript.text || transcript.firstLine || '';
-      if (!transcript.text) {
-        loadFullText(transcript).then(text => {
-          if (text) textarea.value = text;
-        }).catch(() => {});
-      }
-      container.appendChild(textarea);
+      container.appendChild(infoBar);
+    } else if (!versions.length && transcript) {
+      // No versions yet — offer "Start Editing" to create an edited version
+      const startBtn = document.createElement('button');
+      startBtn.className = 'action-btn action-btn-primary';
+      startBtn.textContent = 'Start Editing';
+      startBtn.addEventListener('click', async () => {
+        startBtn.disabled = true;
+        startBtn.textContent = 'Loading...';
+        let text = transcript.text;
+        if (!text) text = await loadFullText(transcript);
+        addVersion(audioId, { type: 'edited', sourceTranscriptId: mapping?.transcriptId, text: text || '', createdBy: getCurrentUser() });
+        const s = getState();
+        renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
+      });
+      container.appendChild(startBtn);
     }
 
     // Action toolbar — compact row with ASR + Change + Unlink
@@ -1077,7 +926,7 @@ function renderInlineDiff(container, orig, clean) {
 // ── Match preview modal for brackets / parentheses ──────────────────
 // Shows each match individually with Delete / Unwrap / Keep options.
 
-function openMatchPreviewModal(audioId, label, currentText, matches, rawOriginal, pageContainer, opts) {
+function openMatchPreviewModal(audioId, label, currentText, matches, rawOriginal, pageContainer, opts, pushUndo = () => {}) {
   if (matches.length === 0) {
     alert('No matches found.');
     return;
@@ -1216,6 +1065,7 @@ function openMatchPreviewModal(audioId, label, currentText, matches, rawOriginal
   applyBtn.addEventListener('click', () => {
     // Check if all actions are 'keep' — nothing to do
     if (actions.every(a => a === 'keep')) { closeModal(); return; }
+    pushUndo(currentText, label);
     let finalText = applyMatchActions(currentText, matches, actions);
     if (opts.postProcess) finalText = opts.postProcess(finalText);
     const cleanRate = calculateCleanRate(rawOriginal, finalText);
@@ -1250,7 +1100,7 @@ function openMatchPreviewModal(audioId, label, currentText, matches, rawOriginal
 
 // rawOriginal: the locked original transcript text (never overwritten).
 // Accepted lines are applied; rejected lines keep their original content.
-function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawOriginal, pageContainer) {
+function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawOriginal, pageContainer, pushUndo = () => {}) {
   const origLines = currentText.split('\n');
   const cleanLines = previewText.split('\n');
   const maxLen = Math.max(origLines.length, cleanLines.length);
@@ -1414,11 +1264,10 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
   applyBtn.className = 'btn btn-secondary';
   applyBtn.textContent = 'Apply Selected';
   applyBtn.addEventListener('click', () => {
+    pushUndo(currentText, passLabel);
     const finalLines = rows.map(r => r.changed ? (r.accepted ? r.editedClean : r.orig) : r.orig);
     const finalText = finalLines.join('\n');
     const cleanRate = calculateCleanRate(rawOriginal, finalText);
-    // Update the edited (working) version — cleaning and manual editing share one version.
-    // getStatus() treats 'edited' as 'cleaned' for pipeline tracking.
     const versions = getVersions(audioId);
     const existingEdited = versions.find(v => v.type === 'edited');
     if (existingEdited) {
@@ -1450,12 +1299,35 @@ function openPassPreviewModal(audioId, passLabel, currentText, previewText, rawO
 }
 
 
+// Module-level undo stack — persists across re-renders within the same page session
+if (!window._undoStack) window._undoStack = {}; // keyed by audioId
+
 function renderUnifiedWorkSection(audioId, state, container, pageContainer, playerEl, activeVersionRef) {
   const cleaning = state.cleaning[audioId];
   const alignment = state.alignments[audioId];
+  const undoStack = window._undoStack[audioId] || (window._undoStack[audioId] = []);
+
+  function pushUndo(text, label) {
+    if (!text) return;
+    undoStack.push({ text, label, time: new Date().toISOString() });
+    if (undoStack.length > 20) undoStack.shift(); // cap at 20
+  }
 
   // ── Shared text helpers ──
   async function getCurrentText() {
+    // If a text editor is live on the page, read directly from it (captures unsaved edits)
+    const liveEditor = document.querySelector('.text-editor-view');
+    if (liveEditor) {
+      const clone = liveEditor.cloneNode(true);
+      clone.querySelectorAll('.timestamp-anchor').forEach(a => a.remove());
+      const liveText = clone.innerText.replace(/\n{3,}/g, '\n\n').trim();
+      if (liveText) {
+        // Also flush save to state so version stays in sync
+        const versionId = activeVersionRef?.id;
+        if (versionId) updateVersion(audioId, versionId, { text: liveText, updatedAt: new Date().toISOString() });
+        return liveText;
+      }
+    }
     const selectedId = activeVersionRef?.id;
     if (selectedId) {
       const versions = getVersions(audioId);
@@ -1517,7 +1389,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
         const rawOriginal = await getOriginalText();
         const currentText = await getCurrentText();
         const matches = findBracketMatches(currentText);
-        openMatchPreviewModal(audioId, 'Remove [brackets]', currentText, matches, rawOriginal, pageContainer);
+        openMatchPreviewModal(audioId, 'Remove [brackets]', currentText, matches, rawOriginal, pageContainer, undefined, pushUndo);
       } finally {
         bracketsBtn.textContent = 'Remove [brackets]';
         bracketsBtn.disabled = false;
@@ -1536,7 +1408,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
         const rawOriginal = await getOriginalText();
         const currentText = await getCurrentText();
         const matches = findParenMatches(currentText);
-        openMatchPreviewModal(audioId, 'Remove (parentheses)', currentText, matches, rawOriginal, pageContainer);
+        openMatchPreviewModal(audioId, 'Remove (parentheses)', currentText, matches, rawOriginal, pageContainer, undefined, pushUndo);
       } finally {
         parenBtn.textContent = 'Remove (parentheses)';
         parenBtn.disabled = false;
@@ -1555,7 +1427,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
         const rawOriginal = await getOriginalText();
         const currentText = await getCurrentText();
         const previewText = cleanSectionMarkers(currentText);
-        openPassPreviewModal(audioId, 'Remove section markers', currentText, previewText, rawOriginal, pageContainer);
+        openPassPreviewModal(audioId, 'Remove section markers', currentText, previewText, rawOriginal, pageContainer, pushUndo);
       } finally {
         sectionBtn.textContent = 'Remove section markers';
         sectionBtn.disabled = false;
@@ -1578,7 +1450,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
           actions: [['unwrap', 'Remove'], ['keep', 'Keep']],
           defaultAction: 'unwrap',
           postProcess: cleanWhitespace,
-        });
+        }, pushUndo);
       } finally {
         minorBtn.textContent = 'Clean symbols & whitespace';
         minorBtn.disabled = false;
@@ -1602,7 +1474,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
           setTimeout(() => { introBtn.textContent = 'Remove intro text'; }, 2000);
           return;
         }
-        openPassPreviewModal(audioId, 'Remove intro text', currentText, previewText, rawOriginal, pageContainer);
+        openPassPreviewModal(audioId, 'Remove intro text', currentText, previewText, rawOriginal, pageContainer, pushUndo);
       } finally {
         introBtn.textContent = 'Remove intro text';
         introBtn.disabled = false;
@@ -1688,6 +1560,44 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
   cleanLabel.textContent = 'Cleaning — click a pass to preview changes line by line';
   cleanSection.appendChild(cleanLabel);
   buildPassButtons(cleanSection);
+
+  // Revert button — undo last cleaning operation
+  const revertRow = document.createElement('div');
+  revertRow.style.cssText = 'margin-top:8px;display:flex;align-items:center;gap:8px;';
+  const revertBtn = document.createElement('button');
+  revertBtn.className = 'btn btn-secondary';
+  revertBtn.style.cssText = 'font-size:0.8rem;padding:4px 12px;color:var(--red);border-color:var(--red);';
+  const revertInfo = document.createElement('span');
+  revertInfo.className = 'text-secondary';
+  revertInfo.style.fontSize = '0.78rem';
+  function updateRevertBtn() {
+    if (undoStack.length === 0) {
+      revertBtn.textContent = '↩ Revert';
+      revertBtn.disabled = true;
+      revertInfo.textContent = '';
+    } else {
+      const last = undoStack[undoStack.length - 1];
+      revertBtn.textContent = `↩ Revert (${undoStack.length})`;
+      revertBtn.disabled = false;
+      revertInfo.textContent = `Undo: ${last.label}`;
+    }
+  }
+  updateRevertBtn();
+  revertBtn.addEventListener('click', () => {
+    if (undoStack.length === 0) return;
+    const prev = undoStack.pop();
+    const versions = getVersions(audioId);
+    const existingEdited = versions.find(v => v.type === 'edited');
+    if (existingEdited) {
+      updateVersion(audioId, existingEdited.id, { text: prev.text, createdAt: new Date().toISOString() });
+    }
+    const s = getState();
+    renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
+  });
+  revertRow.appendChild(revertBtn);
+  revertRow.appendChild(revertInfo);
+  cleanSection.appendChild(revertRow);
+
   container.appendChild(cleanSection);
 
   // ── Align section (always visible) ──
@@ -1707,17 +1617,53 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       const fullAlignment = words ? { ...alignment, words } : alignment;
       if (words) updateState('alignments', audioId, fullAlignment);
       placeholder.remove();
-      renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl, activeVersionRef);
+      renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl, activeVersionRef, getCurrentText);
       renderIterationHistory(audioId, container, pageContainer, playerEl);
     });
   } else if (alignment) {
-    renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef);
+    renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef, getCurrentText);
     renderIterationHistory(audioId, container, pageContainer, playerEl);
   } else {
-    const placeholder = document.createElement('div');
-    placeholder.className = 'word-view-placeholder';
-    placeholder.textContent = 'Run alignment above to see word-level timestamps and confidence scores.';
-    container.appendChild(placeholder);
+    // No alignment yet — show plain text editor for editing before alignment
+    const preAlignEditor = document.createElement('div');
+    preAlignEditor.className = 'text-editor-view';
+    preAlignEditor.contentEditable = 'true';
+    preAlignEditor.dir = 'rtl';
+    preAlignEditor.spellcheck = false;
+    preAlignEditor.style.marginTop = '8px';
+
+    // Load text into editor
+    getCurrentText().then(text => {
+      preAlignEditor.textContent = text || 'Click "Start Editing" above to load the transcript text, then edit here.';
+    });
+
+    // Auto-save
+    const preSaveStatus = document.createElement('span');
+    preSaveStatus.className = 'text-secondary';
+    preSaveStatus.style.fontSize = '0.8rem';
+    let _preTimer = null;
+    preAlignEditor.addEventListener('input', () => {
+      preSaveStatus.textContent = 'Unsaved...';
+      clearTimeout(_preTimer);
+      _preTimer = setTimeout(() => {
+        const text = preAlignEditor.innerText.trim();
+        const versionId = activeVersionRef?.id;
+        if (versionId && text) {
+          updateVersion(audioId, versionId, { text, updatedAt: new Date().toISOString() });
+          const now = new Date();
+          preSaveStatus.textContent = `Saved ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+        }
+      }, 800);
+    });
+
+    container.appendChild(preSaveStatus);
+    container.appendChild(preAlignEditor);
+
+    const hint = document.createElement('div');
+    hint.className = 'text-secondary';
+    hint.style.cssText = 'font-size:0.8rem;margin-top:6px;';
+    hint.textContent = 'Edit the text above, then click Re-Align to generate word timestamps and confidence scores.';
+    container.appendChild(hint);
   }
 }
 
@@ -2428,9 +2374,7 @@ player.addEventListener('timeupdate',()=>{
 </html>`;
 }
 
-function renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef) {
-  const origText = cleaning?.originalText || '';
-  const cleanedTextFallback = cleaning?.cleanedText || origText;
+function renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef, getCurrentText) {
   const words = alignment?.words ?? [];
 
   const viewer = document.createElement('div');
@@ -2486,9 +2430,8 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     return;
   }
 
-  // ── Segment-based word review UI ──
+  // ── Two-column layout: Text Editor (main) + Karaoke Sidebar (right) ──
 
-  // Group words into segments by time gap
   const GAP_THRESHOLD = 1.0;
   const segments = (() => {
     const segs = [];
@@ -2501,851 +2444,226 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     return segs;
   })();
 
-  const editModeWords = words.map(w => ({ ...w }));
-  // insertions[segIdx][posInSeg] = [{word, start, end}]
-  // posInSeg=0 means before first word; posInSeg=N means after last word
-  const insertions = {}; // segIdx → { posInSeg → [{word,start,end}] }
-  const approvedHashes = getApprovedSegments(audioId); // persistent, DB-backed Set
-  let currentSegIdx = 0;
-  let problemFilterActive = false;
-  let editMode = false; // false = karaoke mode (click-to-seek), true = edit mode (click-to-edit)
-  let allWordsMode = true; // true = show all words in one scrollable grid
-  let chipEls = [];
-
-  // Compute a stable hash for a segment based on its word text
-  function segHash(segIdx) {
-    return (segments[segIdx] || []).map(w => w.word || '').join(' ').trim();
-  }
-
-  // Problem segment: 3+ consecutive low-confidence (red) words
-  function isProblemSegment(segIdx) {
-    const seg = segments[segIdx] || [];
-    let consecutive = 0;
-    for (const w of seg) {
-      if ((w.confidence ?? 1) < 0.4) {
-        if (++consecutive >= 3) return true;
-      } else {
-        consecutive = 0;
-      }
-    }
-    return false;
-  }
-
-  // ── Segment navigation header ──
-  const segHeader = document.createElement('div');
-  segHeader.className = 'seg-header';
-
-  const prevBtn = document.createElement('button');
-  prevBtn.className = 'btn btn-secondary seg-nav-btn';
-  prevBtn.textContent = '‹';
-  prevBtn.title = 'Previous segment';
-
-  const segInfo = document.createElement('div');
-  segInfo.className = 'seg-info';
-
-  const nextBtn = document.createElement('button');
-  nextBtn.className = 'btn btn-secondary seg-nav-btn';
-  nextBtn.textContent = '›';
-  nextBtn.title = 'Next segment';
-
-  segHeader.appendChild(prevBtn);
-  segHeader.appendChild(segInfo);
-  segHeader.appendChild(nextBtn);
-
-  if (playerEl) {
-    const playPauseBtn = document.createElement('button');
-    playPauseBtn.className = 'btn btn-secondary seg-nav-btn';
-    playPauseBtn.style.cssText = 'font-size:1.3rem;min-width:48px;';
-    const updatePlayBtn = () => {
-      playPauseBtn.textContent = playerEl.paused ? '▶' : '⏸';
-      playPauseBtn.setAttribute('aria-label', playerEl.paused ? 'Play audio' : 'Pause audio');
-    };
-    updatePlayBtn();
-    playPauseBtn.addEventListener('click', () => { if (playerEl.paused) playerEl.play(); else playerEl.pause(); });
-    playerEl.addEventListener('play', updatePlayBtn);
-    playerEl.addEventListener('pause', updatePlayBtn);
-    segHeader.appendChild(playPauseBtn);
-  }
-
-  // Edit toggle button
-  const editToggleBtn = document.createElement('button');
-  editToggleBtn.className = 'btn btn-secondary seg-edit-toggle';
-  editToggleBtn.style.cssText = 'margin-left:auto;font-size:0.85rem;padding:5px 14px;';
-  editToggleBtn.textContent = '✏ Edit';
-  editToggleBtn.title = 'Toggle inline word editing';
-  editToggleBtn.addEventListener('click', () => {
-    editMode = !editMode;
-    editToggleBtn.textContent = editMode ? '✏ Done' : '✏ Edit';
-    editToggleBtn.classList.toggle('seg-edit-active', editMode);
-    bulkPanel.style.display = editMode ? '' : 'none';
-    // Switch to segment mode when entering edit (editing is per-segment)
-    if (editMode && allWordsMode) {
-      allWordsMode = false;
-      updateAllWordsBtn();
-    }
-    if (allWordsMode) renderAllWords(); else renderSegmentChips();
-    if (editMode) refreshBulkTextarea();
-  });
-  viewer.appendChild(segHeader);
-
-  // Stats bar removed for cleaner karaoke UI
-
-  // ── Two-column layout ──
-  const mainLayout = document.createElement('div');
-  mainLayout.className = 'seg-main-layout';
-
-  const leftPanel = document.createElement('div');
-  leftPanel.className = 'seg-left';
-
-  // Toolbar
-  const toolbar = document.createElement('div');
-  toolbar.className = 'seg-toolbar';
-
-  const problemFilterBtn = document.createElement('button');
-  problemFilterBtn.className = 'btn btn-secondary';
-  problemFilterBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
-  problemFilterBtn.title = 'Show only segments with 3+ consecutive low-confidence (red) words';
-  function updateProblemFilterBtn() {
-    const n = segments.filter((_, i) => isProblemSegment(i)).length;
-    problemFilterBtn.textContent = `⚠ Problems (${n})`;
-    problemFilterBtn.classList.toggle('seg-filter-active', problemFilterActive);
-  }
-  updateProblemFilterBtn();
-  problemFilterBtn.addEventListener('click', () => {
-    problemFilterActive = !problemFilterActive;
-    updateProblemFilterBtn();
-    // Jump to first problem segment when activating if current isn't one
-    if (problemFilterActive && !isProblemSegment(currentSegIdx)) {
-      const first = segments.findIndex((_, i) => isProblemSegment(i));
-      if (first >= 0) { currentSegIdx = first; renderSegmentChips(); }
-    }
-    updateSegHeader();
-    if (sidebar._renderList) sidebar._renderList();
-  });
-
-  const editStatus = document.createElement('span');
-  editStatus.className = 'text-secondary';
-  editStatus.style.cssText = 'font-size:0.8rem;min-width:60px;';
-
-  const allWordsBtn = document.createElement('button');
-  allWordsBtn.className = 'btn btn-secondary';
-  allWordsBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
-  allWordsBtn.title = 'Toggle between all-words view and segment-by-segment view';
-  function updateAllWordsBtn() {
-    allWordsBtn.textContent = allWordsMode ? 'Segments' : 'All Words';
-    allWordsBtn.classList.toggle('seg-filter-active', allWordsMode);
-    segHeader.style.display = allWordsMode ? 'none' : '';
-    bulkPanel.style.display = allWordsMode ? 'none' : (editMode ? '' : 'none');
-  }
-  allWordsBtn.addEventListener('click', () => {
-    allWordsMode = !allWordsMode;
-    updateAllWordsBtn();
-    if (allWordsMode) renderAllWords(); else renderSegmentChips();
-    if (sidebar._renderList) sidebar._renderList();
-  });
-
-  toolbar.appendChild(allWordsBtn);
-  toolbar.appendChild(problemFilterBtn);
-  toolbar.appendChild(editToggleBtn);
-  toolbar.appendChild(editStatus);
-  leftPanel.appendChild(toolbar);
-
-  // Word grid
-  const wordGrid = document.createElement('div');
-  wordGrid.className = 'word-view-grid seg-word-grid';
-  wordGrid.dir = 'rtl';
-  leftPanel.appendChild(wordGrid);
-
-  // Bulk edit panel (always visible)
-  const bulkPanel = document.createElement('div');
-  bulkPanel.style.cssText = 'margin-top:8px;';
-  const bulkHint = document.createElement('div');
-  bulkHint.className = 'text-secondary';
-  bulkHint.style.cssText = 'font-size:0.75rem;margin-bottom:4px;';
-  bulkHint.textContent = 'Edit segment text below. Same word count keeps timestamps; different count redistributes evenly.';
-  bulkPanel.appendChild(bulkHint);
-  const bulkTextarea = document.createElement('textarea');
-  bulkTextarea.className = 'transcript-editor';
-  bulkTextarea.dir = 'rtl';
-  bulkTextarea.rows = 4;
-  bulkTextarea.style.cssText = 'width:100%;box-sizing:border-box;font-size:0.85rem;';
-  const bulkBtnRow = document.createElement('div');
-  bulkBtnRow.style.cssText = 'margin-top:6px;display:flex;gap:8px;align-items:center;';
-  const saveContBtn = document.createElement('button');
-  saveContBtn.className = 'action-btn action-btn-primary';
-  saveContBtn.style.cssText = 'font-size:0.85rem;padding:6px 16px;';
-  saveContBtn.textContent = 'Save & Continue';
-  saveContBtn.addEventListener('click', () => {
-    applyBulkText();
-    commitEdits();
-    // Advance to next segment
-    if (currentSegIdx < segments.length - 1) {
-      currentSegIdx++;
-    }
-    renderSegmentChips();
-    refreshBulkTextarea();
-    updateSegHeader();
-    updateStats();
-    if (sidebar._renderList) sidebar._renderList();
-    bulkTextarea.focus();
-  });
-  bulkBtnRow.appendChild(saveContBtn);
-  const bulkStatus = document.createElement('span');
-  bulkStatus.className = 'text-secondary';
-  bulkStatus.style.fontSize = '0.78rem';
-  bulkBtnRow.appendChild(bulkStatus);
-  bulkPanel.appendChild(bulkTextarea);
-  bulkPanel.appendChild(bulkBtnRow);
-  bulkPanel.style.display = 'none'; // hidden until edit mode is toggled on
-  leftPanel.appendChild(bulkPanel);
-
-  // ── Sidebar ──
-  const sidebar = document.createElement('div');
-  sidebar.className = 'seg-sidebar';
-
-  mainLayout.appendChild(leftPanel);
-  mainLayout.appendChild(sidebar);
-  viewer.appendChild(mainLayout);
-
-  // ── Legend ──
-  const legend = document.createElement('div');
-  legend.className = 'seg-legend';
-  [['confidence-high', 'High confidence'], ['confidence-mid', 'Medium confidence'], ['confidence-low', 'Low confidence']].forEach(([cls, label]) => {
-    const item = document.createElement('span');
-    item.className = 'seg-legend-item';
-    const dot = document.createElement('span');
-    dot.className = `seg-legend-dot word-chip ${cls}`;
-    dot.textContent = 'א';
-    const lbl = document.createElement('span');
-    lbl.textContent = label;
-    item.appendChild(dot);
-    item.appendChild(lbl);
-    legend.appendChild(item);
-  });
-  viewer.appendChild(legend);
-
-  renderApproveBar(audioId, viewer, pageContainer);
-
-  // === LOGIC ===
-
   function fmtSec(s) {
     if (s == null || isNaN(s)) return '?';
     return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
   }
 
-  function findNextUnreviewed() {
-    for (let i = 0; i < segments.length; i++) {
-      if (approvedHashes.has(segHash(i))) continue;
-      if (problemFilterActive && !isProblemSegment(i)) continue;
-      return i;
-    }
-    return -1;
-  }
 
-  function updateStats() {
-    // stats bar removed — no-op
-  }
+  // ── Layout: Text Editor (main) + Karaoke Sidebar (right) ──
+  const layout = document.createElement('div');
+  layout.style.cssText = 'display:flex;gap:16px;';
 
-  function updateSegHeader() {
-    const seg = segments[currentSegIdx];
-    if (!seg) return;
-    segInfo.innerHTML = '';
-    const pos = document.createElement('span');
-    pos.className = 'seg-position';
-    pos.textContent = `${currentSegIdx + 1} / ${segments.length}`;
-    const times = document.createElement('span');
-    times.className = 'seg-time-range';
-    times.textContent = `${fmtSec(seg[0]?.start)} – ${fmtSec(seg[seg.length - 1]?.end)}`;
-    const wc = document.createElement('span');
-    wc.className = 'seg-word-count';
-    wc.textContent = `${seg.length} words`;
-    segInfo.appendChild(pos);
-    segInfo.appendChild(times);
-    segInfo.appendChild(wc);
-    if (isProblemSegment(currentSegIdx)) {
-      const badge = document.createElement('span');
-      badge.className = 'seg-problem-badge';
-      badge.textContent = '⚠ problem';
-      segInfo.appendChild(badge);
-    }
+  const leftPanel = document.createElement('div');
+  leftPanel.style.cssText = 'flex:1;min-width:0;';
 
-    prevBtn.disabled = currentSegIdx === 0;
-    nextBtn.disabled = currentSegIdx === segments.length - 1;
-  }
+  const sidebar = document.createElement('div');
+  sidebar.className = 'karaoke-sidebar';
+  sidebar.style.cssText = 'width:260px;flex-shrink:0;max-height:600px;overflow-y:auto;padding:8px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);';
 
-  function getSegInsertions(segIdx, posInSeg) {
-    return insertions[segIdx]?.[posInSeg] || [];
-  }
-
-  function addInsertion(segIdx, posInSeg, word, start, end) {
-    if (!insertions[segIdx]) insertions[segIdx] = {};
-    if (!insertions[segIdx][posInSeg]) insertions[segIdx][posInSeg] = [];
-    insertions[segIdx][posInSeg].push({ word, start, end });
-  }
-
-  function interpolateTimestamps(segIdx, posInSeg) {
-    const seg = segments[segIdx] || [];
-    const prev = posInSeg > 0 ? seg[posInSeg - 1] : null;
-    const next = posInSeg < seg.length ? seg[posInSeg] : null;
-    const prevEnd = prev?.end ?? (next?.start != null ? next.start - 0.5 : 0);
-    const nextStart = next?.start ?? (prevEnd + 0.5);
-    const mid = (prevEnd + nextStart) / 2;
-    return { start: Math.max(0, mid - 0.05), end: mid + 0.05 };
-  }
-
-  function startAddWord(plusBtn, segIdx, posInSeg) {
-    if (plusBtn.querySelector('input')) return;
-    const { start, end } = interpolateTimestamps(segIdx, posInSeg);
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = 'new word';
-    input.dir = 'rtl';
-    input.style.cssText = 'width:80px;font-size:inherit;padding:2px 4px;background:var(--surface);color:var(--text);border:1px solid var(--accent);border-radius:3px;';
-    const confirmBtn = document.createElement('button');
-    confirmBtn.textContent = '✓';
-    confirmBtn.style.cssText = 'font-size:0.75rem;padding:0 4px;color:var(--green);background:none;border:none;cursor:pointer;line-height:1;';
-    const cancelBtn = document.createElement('button');
-    cancelBtn.textContent = '✗';
-    cancelBtn.style.cssText = 'font-size:0.75rem;padding:0 4px;color:var(--text-secondary);background:none;border:none;cursor:pointer;line-height:1;';
-    plusBtn.textContent = '';
-    plusBtn.appendChild(input);
-    plusBtn.appendChild(confirmBtn);
-    plusBtn.appendChild(cancelBtn);
-    input.focus();
-    let done = false;
-    const commit = () => {
-      if (done) return; done = true;
-      const val = input.value.trim();
-      if (val) addInsertion(segIdx, posInSeg, val, start, end);
-      renderSegmentChips();
-      refreshBulkTextarea();
-      scheduleAutoSave();
+  // ── Play/pause button ──
+  let playPauseBtn = null;
+  if (playerEl) {
+    playPauseBtn = document.createElement('button');
+    playPauseBtn.className = 'btn btn-secondary';
+    playPauseBtn.style.cssText = 'font-size:1.2rem;min-width:44px;padding:4px 12px;';
+    const updatePlayBtn = () => {
+      playPauseBtn.textContent = playerEl.paused ? '▶' : '⏸';
     };
-    const cancel = () => { if (done) return; done = true; renderSegmentChips(); };
-    confirmBtn.addEventListener('mousedown', e => { e.preventDefault(); commit(); });
-    cancelBtn.addEventListener('mousedown', e => { e.preventDefault(); cancel(); });
-    input.addEventListener('blur', e => { setTimeout(() => { if (!done) commit(); }, 150); });
-    input.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); commit(); }
-      if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-    });
+    updatePlayBtn();
+    playPauseBtn.addEventListener('click', () => { if (playerEl.paused) playerEl.play().catch(() => {}); else playerEl.pause(); });
+    playerEl.addEventListener('play', updatePlayBtn);
+    playerEl.addEventListener('pause', updatePlayBtn);
   }
 
-  function refreshBulkTextarea() {
-    const segWords = segments[currentSegIdx] || [];
-    const tokens = [];
-    for (let pos = 0; pos <= segWords.length; pos++) {
-      getSegInsertions(currentSegIdx, pos).forEach(ins => tokens.push(ins.word));
-      if (pos < segWords.length) {
-        const gi = words.indexOf(segWords[pos]);
-        if (gi >= 0 && editModeWords[gi]?._deleted) continue;
-        tokens.push(gi >= 0 ? (editModeWords[gi]?.word || segWords[pos].word || '') : (segWords[pos].word || ''));
-      }
-    }
-    bulkTextarea.value = tokens.join(' ');
-  }
+  // ── Toolbar ──
+  const toolbar = document.createElement('div');
+  toolbar.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;';
+  if (playPauseBtn) toolbar.appendChild(playPauseBtn);
 
-  function startChipEdit(chip, globalIdx) {
-    if (chip.querySelector('input')) return;
-    const origWord = editModeWords[globalIdx]?.word || '';
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.value = origWord;
-    input.style.cssText = 'width:auto;min-width:30px;max-width:120px;font-size:inherit;padding:1px 3px;background:var(--surface);color:var(--text);border:1px solid var(--accent);border-radius:3px;box-sizing:content-box;';
-    input.size = Math.max(3, origWord.length + 1);
-    const confirmBtn = document.createElement('button');
-    confirmBtn.textContent = '✓';
-    confirmBtn.title = 'Confirm';
-    confirmBtn.style.cssText = 'font-size:0.75rem;padding:0 4px;color:var(--green);background:none;border:none;cursor:pointer;line-height:1;';
-    const deleteBtn = document.createElement('button');
-    deleteBtn.textContent = '🗑';
-    deleteBtn.title = 'Delete word';
-    deleteBtn.style.cssText = 'font-size:0.75rem;padding:0 4px;color:var(--red);background:none;border:none;cursor:pointer;line-height:1;';
-    const cancelBtn = document.createElement('button');
-    cancelBtn.textContent = '✗';
-    cancelBtn.title = 'Cancel';
-    cancelBtn.style.cssText = 'font-size:0.75rem;padding:0 4px;color:var(--text-secondary);background:none;border:none;cursor:pointer;line-height:1;';
-    chip.textContent = '';
-    chip.appendChild(input);
-    chip.appendChild(confirmBtn);
-    chip.appendChild(deleteBtn);
-    chip.appendChild(cancelBtn);
-    input.focus();
-    input.select();
-    let done = false;
-    const commit = () => {
-      if (done) return; done = true;
-      const val = input.value.trim() || origWord;
-      editModeWords[globalIdx] = { ...editModeWords[globalIdx], word: val, _deleted: false };
-      chip.textContent = val;
-      refreshBulkTextarea();
-      scheduleAutoSave();
-    };
-    const doDelete = () => {
-      if (done) return; done = true;
-      editModeWords[globalIdx] = { ...editModeWords[globalIdx], _deleted: true };
-      chip.textContent = origWord;
-      chip.classList.add('word-deleted');
-      chip.style.cursor = 'pointer';
-      // Allow clicking deleted chip to un-delete
-      chip.onclick = () => {
-        editModeWords[globalIdx] = { ...editModeWords[globalIdx], _deleted: false };
-        chip.classList.remove('word-deleted');
-        chip.onclick = null;
-        chip.addEventListener('click', () => startChipEdit(chip, globalIdx));
-        refreshBulkTextarea();
-        scheduleAutoSave();
-      };
-      refreshBulkTextarea();
-      scheduleAutoSave();
-    };
-    const cancel = () => { if (done) return; done = true; chip.textContent = origWord; };
-    confirmBtn.addEventListener('mousedown', e => { e.preventDefault(); commit(); });
-    deleteBtn.addEventListener('mousedown', e => { e.preventDefault(); doDelete(); });
-    cancelBtn.addEventListener('mousedown', e => { e.preventDefault(); cancel(); });
-    input.addEventListener('blur', commit);
-    input.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); commit(); }
-      if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-      if (e.key === 'Delete' && input.value === '') { e.preventDefault(); doDelete(); }
-      if (e.key === 'Tab') {
-        e.preventDefault(); commit();
-        const curPos = chipEls.findIndex(c => c === chip);
-        const nextChip = chipEls[curPos + (e.shiftKey ? -1 : 1)];
-        if (nextChip) { const gi = parseInt(nextChip.dataset.globalIdx, 10); if (!isNaN(gi)) startChipEdit(nextChip, gi); }
+  const saveStatus = document.createElement('span');
+  saveStatus.className = 'text-secondary';
+  saveStatus.style.cssText = 'font-size:0.8rem;margin-left:auto;';
+  toolbar.appendChild(saveStatus);
+  leftPanel.appendChild(toolbar);
+
+  // ── Text Editor: contenteditable div with timestamp anchors ──
+  const editorDiv = document.createElement('div');
+  editorDiv.className = 'text-editor-view';
+  editorDiv.contentEditable = 'true';
+  editorDiv.dir = 'rtl';
+  editorDiv.spellcheck = false;
+
+  // Build editor content: flowing text with timestamp anchors at segment boundaries
+  function buildEditorContent() {
+    editorDiv.innerHTML = '';
+    segments.forEach((seg, segIdx) => {
+      // Timestamp anchor at segment start
+      const anchor = document.createElement('span');
+      anchor.className = 'timestamp-anchor';
+      anchor.contentEditable = 'false';
+      anchor.dataset.time = String(seg[0]?.start || 0);
+      anchor.textContent = `[${fmtSec(seg[0]?.start)}]`;
+      anchor.title = 'Click to seek • Drag to adjust timestamp';
+      anchor.dataset.segIdx = String(segIdx);
+      // Click = seek audio to this timestamp
+      anchor.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (playerEl) {
+          playerEl.currentTime = parseFloat(anchor.dataset.time);
+          playerEl.play().catch(() => {});
+        }
+        const sidebarSeg = sidebar.querySelector(`[data-seg-idx="${segIdx}"]`);
+        if (sidebarSeg) sidebarSeg.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      });
+      // Double-click = pin this anchor to current playhead position
+      anchor.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        if (!playerEl) return;
+        const newTime = playerEl.currentTime;
+        anchor.dataset.time = String(newTime);
+        anchor.textContent = `[${fmtSec(newTime)}]`;
+        anchor.classList.add('timestamp-adjusted');
+        anchor.title = `📌 Adjusted to ${fmtSec(newTime)} — will be used as boundary on next Re-Align`;
+      });
+      editorDiv.appendChild(anchor);
+
+      // Segment text
+      const text = seg.map(w => w.word || w.text || '').join(' ');
+      editorDiv.appendChild(document.createTextNode(' ' + text + ' '));
+
+      // Line break between segments for visual clarity
+      if (segIdx < segments.length - 1) {
+        editorDiv.appendChild(document.createElement('br'));
       }
     });
   }
+  buildEditorContent();
 
-  function renderAllWords() {
-    wordGrid.innerHTML = '';
-    wordGrid.classList.add('all-words-scroll');
-    chipEls = [];
+  // ── Auto-save: debounced 800ms ──
+  let _editorSaveTimer = null;
+  function getEditorPlainText() {
+    // Extract text, stripping timestamp anchors
+    const clone = editorDiv.cloneNode(true);
+    clone.querySelectorAll('.timestamp-anchor').forEach(a => a.remove());
+    // Replace <br> with newlines, then collapse
+    return clone.innerText.replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  editorDiv.addEventListener('input', () => {
+    saveStatus.textContent = 'Unsaved...';
+    clearTimeout(_editorSaveTimer);
+    _editorSaveTimer = setTimeout(() => {
+      const text = getEditorPlainText();
+      const versionId = activeVersionRef?.id;
+      if (versionId && text) {
+        updateVersion(audioId, versionId, { text, updatedAt: new Date().toISOString() });
+        const now = new Date();
+        saveStatus.textContent = `Saved ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+      }
+    }, 800);
+  });
+
+  leftPanel.appendChild(editorDiv);
+
+  // ── Karaoke Sidebar: read-only word chips with confidence ──
+  function renderKaraokeSidebar() {
+    sidebar.innerHTML = '';
+    const sidebarLabel = document.createElement('div');
+    sidebarLabel.style.cssText = 'font-size:0.75rem;color:var(--text-secondary);margin-bottom:6px;font-weight:600;';
+    const problemCount = segments.filter((seg) => {
+      let run = 0;
+      for (const w of seg) { if ((w.confidence || 0) < 0.4) { run++; if (run >= 3) return true; } else run = 0; }
+      return false;
+    }).length;
+    sidebarLabel.textContent = `Alignment Quality • ${words.length} words • ${problemCount} problems`;
+    sidebar.appendChild(sidebarLabel);
 
     segments.forEach((seg, segIdx) => {
-      // Segment divider
-      if (segIdx > 0) {
-        const divider = document.createElement('div');
-        divider.className = 'seg-divider';
-        divider.id = `seg-divider-${segIdx}`;
-
-        const label = document.createElement('span');
-        label.className = 'seg-divider-label';
-        label.textContent = `— ${segIdx + 1} · ${fmtSec(seg[0]?.start)} —`;
-
-        const realignBtn = document.createElement('button');
-        realignBtn.className = 'btn btn-secondary seg-realign-btn';
-        realignBtn.textContent = 'Re-align from here';
-        realignBtn.addEventListener('click', () => realignFromSegment(segIdx));
-
-        divider.appendChild(label);
-        divider.appendChild(realignBtn);
-        wordGrid.appendChild(divider);
-      }
-
-      // Render all words in this segment
-      seg.forEach(w => {
-        const globalIdx = words.indexOf(w);
-        const conf = typeof w.confidence === 'number' ? w.confidence : 1;
-        const span = document.createElement('span');
-        span.className = `word-chip confidence-${getConfidenceLevel(conf)}`;
-        span.textContent = w.word || w.text || '';
-        span.title = `${(conf * 100).toFixed(0)}% | ${fmtSec(w.start)}–${fmtSec(w.end)}`;
-        span.dataset.globalIdx = String(globalIdx);
-
-        if (playerEl) {
-          span.style.cursor = 'pointer';
-          const seekFn = () => { playerEl.currentTime = w.start; if (playerEl.paused) playerEl.play().catch(() => {}); };
-          span._seekHandler = seekFn;
-          span.addEventListener('click', seekFn);
-        }
-
-        wordGrid.appendChild(span);
-        chipEls.push(span);
+      // Segment header
+      const segHeader = document.createElement('div');
+      segHeader.dataset.segIdx = String(segIdx);
+      segHeader.style.cssText = 'font-size:0.7rem;color:var(--text-secondary);margin:8px 0 3px;border-top:1px solid var(--border);padding-top:4px;cursor:pointer;';
+      segHeader.textContent = `${segIdx + 1}. ${fmtSec(seg[0]?.start)}–${fmtSec(seg[seg.length - 1]?.end)}`;
+      segHeader.addEventListener('click', () => {
+        // Scroll editor to this segment's anchor
+        const anchor = editorDiv.querySelector(`[data-seg-idx="${segIdx}"]`);
+        if (anchor) anchor.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        if (playerEl) { playerEl.currentTime = seg[0]?.start || 0; playerEl.play().catch(() => {}); }
       });
-    });
-  }
+      sidebar.appendChild(segHeader);
 
-  async function realignFromSegment(segIdx) {
-    const segStartWordIdx = segments.slice(0, segIdx).reduce((sum, s) => sum + s.length, 0);
-    const keepWords = words.slice(0, segStartWordIdx);
-    const remainingText = words.slice(segStartWordIdx).map(w => w.word || w.text || '').join(' ');
-    const audioStart = segments[segIdx][0]?.start || 0;
-
-    if (!remainingText.trim()) return;
-
-    const state = getState();
-    const audioEntry = state.audio?.find(a => a.id === audioId);
-    const url = audioEntry?.r2Link || audioEntry?.driveLink;
-    if (!url) { alert('No audio URL found'); return; }
-
-    // Show progress
-    const btn = wordGrid.querySelector(`#seg-divider-${segIdx} .seg-realign-btn`);
-    if (btn) { btn.textContent = 'Aligning…'; btn.disabled = true; }
-
-    try {
-      const { fetchAudioForAlignment, buildRequestBody, doAlignRequest } = await import('./alignment.js');
-      const audioDuration = (audioEntry?.estMinutes || 0) * 60;
-      const trim = state.trims?.[audioId] || {};
-      const trimEnd = trim.end || 0;
-
-      const audioResult = await fetchAudioForAlignment(url, audioStart, trimEnd, audioDuration);
-      const requestBody = buildRequestBody(audioResult, remainingText);
-      const onProgress = (attempt, max) => {
-        if (btn) btn.textContent = `Retrying ${attempt}/${max}…`;
-      };
-      const data = await doAlignRequest(requestBody, ' re-align', onProgress);
-
-      let rawWords = data.timestamps || [];
-      if (rawWords.length === 0 && data.segments) {
-        rawWords = data.segments.flatMap(s => s.words || []);
-      }
-
-      const newWords = rawWords.map(t => ({
-        word: t.word || t.text || '',
-        start: (t.start || 0) + audioStart,
-        end: (t.end || 0) + audioStart,
-        confidence: t.confidence ?? t.probability ?? t.score ?? 0,
-      }));
-
-      const merged = [...keepWords, ...newWords];
-      const totalConf = merged.reduce((sum, w) => sum + (w.confidence || 0), 0);
-      const alignment = {
-        words: merged,
-        avgConfidence: merged.length > 0 ? totalConf / merged.length : 0,
-        lowConfidenceCount: merged.filter(w => (w.confidence || 0) < 0.4).length,
-        alignedAt: new Date().toISOString(),
-      };
-
-      const { updateState } = await import('./state.js');
-      updateState('alignments', audioId, alignment);
-
-      // Re-render the entire detail page
-      const s = getState();
-      renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
-    } catch (err) {
-      console.error('Re-align failed:', err);
-      alert('Re-align failed: ' + err.message);
-      if (btn) { btn.textContent = 'Re-align from here'; btn.disabled = false; }
-    }
-  }
-
-  function renderSegmentChips() {
-    wordGrid.innerHTML = '';
-    chipEls = [];
-    const segWords = segments[currentSegIdx] || [];
-
-    if (segWords.length === 0) {
-      const notice = document.createElement('div');
-      notice.style.cssText = 'padding:16px;color:var(--text-secondary);font-size:0.9rem;text-align:center;';
-      notice.textContent = 'Empty segment.';
-      wordGrid.appendChild(notice);
-      return;
-    }
-
-    const addPlusBtn = (posInSeg) => {
-      const btn = document.createElement('span');
-      btn.className = 'word-add-btn';
-      btn.textContent = '+';
-      btn.title = 'Insert word here';
-      btn.addEventListener('click', () => startAddWord(btn, currentSegIdx, posInSeg));
-      wordGrid.appendChild(btn);
-    };
-
-    segWords.forEach((w, posInSeg) => {
-      const globalIdx = words.indexOf(w);
-      const isDeleted = globalIdx >= 0 && editModeWords[globalIdx]?._deleted;
-      const conf = typeof w.confidence === 'number' ? w.confidence : 1;
-      const span = document.createElement('span');
-      span.className = `word-chip confidence-${getConfidenceLevel(conf)}${isDeleted ? ' word-deleted' : ''}`;
-      const wordText = (globalIdx >= 0 ? editModeWords[globalIdx]?.word : null) || w.word || w.text || '';
-      span.title = isDeleted ? `Deleted` : `${(conf * 100).toFixed(0)}% | ${fmtSec(w.start)}–${fmtSec(w.end)}`;
-      span.textContent = wordText;
-      span.dataset.globalIdx = String(globalIdx);
-
-      // In edit mode chips are read-only reference; in karaoke mode they seek audio
-      if (!editMode && playerEl) {
-        span.style.cursor = isDeleted ? 'default' : 'pointer';
-        if (!isDeleted) {
-          const seekFn = () => { playerEl.currentTime = w.start; if (playerEl.paused) playerEl.play().catch(() => {}); };
-          span._seekHandler = seekFn;
-          span.addEventListener('click', seekFn);
-        }
-      }
-
-      wordGrid.appendChild(span);
-      if (!isDeleted) chipEls.push(span);
-    });
-
-    if (editMode) refreshBulkTextarea();
-  }
-
-  function renderSidebar() {
-    sidebar.innerHTML = '';
-
-    const title = document.createElement('div');
-    title.style.cssText = 'font-size:0.72rem;font-weight:600;color:var(--text-secondary);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;';
-    title.textContent = `Segments (${segments.length})`;
-    sidebar.appendChild(title);
-
-    const listEl = document.createElement('div');
-    listEl.className = 'seg-sidebar-list';
-    sidebar.appendChild(listEl);
-
-    function renderList() {
-      listEl.innerHTML = '';
-      for (let i = 0; i < segments.length; i++) {
-        const seg = segments[i];
-        const isProb = isProblemSegment(i);
-        const isApproved = approvedHashes.has(segHash(i));
-        if (problemFilterActive && !isProb) continue; // hide non-problem segs when filter active
-        const item = document.createElement('div');
-        item.className = 'seg-sidebar-item'
-          + (i === currentSegIdx ? ' active' : '')
-          + (isApproved ? ' reviewed' : '');
-
-        if (isApproved) {
-          const check = document.createElement('span');
-          check.className = 'seg-sidebar-check';
-          check.textContent = '✓';
-          item.appendChild(check);
-        } else if (isProb) {
-          const warn = document.createElement('span');
-          warn.className = 'seg-sidebar-warn';
-          warn.textContent = '⚠';
-          item.appendChild(warn);
-        }
-
-        const numEl = document.createElement('span');
-        numEl.className = 'seg-sidebar-num';
-        numEl.textContent = i + 1;
-
-        const infoEl = document.createElement('div');
-        infoEl.className = 'seg-sidebar-info';
-        const timeSpan = document.createElement('span');
-        timeSpan.textContent = `${fmtSec(seg[0]?.start)}–${fmtSec(seg[seg.length - 1]?.end)}`;
-        const wcSpan = document.createElement('span');
-        wcSpan.textContent = seg.length + 'w';
-        infoEl.appendChild(timeSpan);
-        infoEl.appendChild(wcSpan);
-
-        item.appendChild(numEl);
-        item.appendChild(infoEl);
-        item.addEventListener('click', () => {
-          if (allWordsMode) {
-            const divider = wordGrid.querySelector(`#seg-divider-${i}`);
-            if (divider) divider.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          } else {
-            goToSegment(i);
-          }
+      // Word chips
+      const chipRow = document.createElement('div');
+      chipRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:2px;direction:rtl;';
+      seg.forEach(w => {
+        const conf = typeof w.confidence === 'number' ? w.confidence : 1;
+        const chip = document.createElement('span');
+        chip.className = `word-chip confidence-${getConfidenceLevel(conf)}`;
+        chip.style.cssText = 'font-size:0.75rem;padding:1px 4px;cursor:pointer;';
+        chip.textContent = w.word || w.text || '';
+        chip.title = `${(conf * 100).toFixed(0)}% | ${fmtSec(w.start)}`;
+        chip.dataset.start = String(w.start);
+        chip.addEventListener('click', () => {
+          if (playerEl) { playerEl.currentTime = w.start; playerEl.play().catch(() => {}); }
         });
-        listEl.appendChild(item);
-      }
-    }
-
-    renderList();
-    sidebar._renderList = renderList;
+        chipRow.appendChild(chip);
+      });
+      sidebar.appendChild(chipRow);
+    });
   }
+  renderKaraokeSidebar();
 
-  function goToSegment(idx) {
-    if (idx < 0 || idx >= segments.length) return;
-    currentSegIdx = idx;
-    if (playerEl) {
-      playerEl.currentTime = segments[idx][0]?.start ?? 0;
-      if (playerEl.paused) playerEl.play().catch(() => {});
-    }
-    renderSegmentChips();
-    updateSegHeader();
-    updateStats();
-    if (sidebar._renderList) sidebar._renderList();
-  }
-
-  // ── Karaoke highlight + auto-advance ──
+  // ── Karaoke highlighting — keep sidebar + editor in sync ──
   if (playerEl) {
-    if (playerEl._wordViewTimeUpdate) playerEl.removeEventListener('timeupdate', playerEl._wordViewTimeUpdate);
     let prevActiveChip = null;
+    let prevActiveAnchor = null;
     const onTimeUpdate = () => {
       const t = playerEl.currentTime;
-      let found = null;
-      for (const chip of chipEls) {
-        const gi = parseInt(chip.dataset.globalIdx, 10);
-        if (isNaN(gi)) continue;
-        const w = words[gi];
-        if (w && t >= w.start && t < w.end) { found = chip; break; }
-      }
-      if (prevActiveChip && prevActiveChip !== found) prevActiveChip.classList.remove('active');
-      if (found && found !== prevActiveChip) {
-        found.classList.add('active');
-        // Only auto-scroll when the word view section is actually in the viewport
-        const rect = container.getBoundingClientRect();
-        if (rect.top < window.innerHeight && rect.bottom > 0) {
-          found.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+      // Highlight active word chip in sidebar
+      if (prevActiveChip) { prevActiveChip.classList.remove('active'); prevActiveChip = null; }
+      const chips = sidebar.querySelectorAll('.word-chip');
+      for (const chip of chips) {
+        const start = parseFloat(chip.dataset.start);
+        if (!isNaN(start) && t >= start && t < start + 0.5) {
+          chip.classList.add('active');
+          const rect = sidebar.getBoundingClientRect();
+          if (rect.top < window.innerHeight && rect.bottom > 0) {
+            chip.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          }
+          prevActiveChip = chip;
+          break;
         }
       }
-      prevActiveChip = found;
 
-      // Pause at the end of the segment containing the current playback time
-      // In segment mode use currentSegIdx; in all-words mode find the right segment
-      const activeSeg = allWordsMode
-        ? segments.find(seg => seg.length && t >= seg[0].start && t <= seg[seg.length - 1].end)
-        : segments[currentSegIdx];
-      if (activeSeg?.length && !playerEl.paused) {
-        const wvRect = container.getBoundingClientRect();
-        if (wvRect.top < window.innerHeight && wvRect.bottom > 0) {
-          const segEnd = activeSeg[activeSeg.length - 1].end;
-          if (t >= segEnd) playerEl.pause();
+      // Highlight active timestamp anchor in editor
+      if (prevActiveAnchor) { prevActiveAnchor.classList.remove('timestamp-active'); prevActiveAnchor = null; }
+      const anchors = editorDiv.querySelectorAll('.timestamp-anchor');
+      for (let i = 0; i < anchors.length; i++) {
+        const aTime = parseFloat(anchors[i].dataset.time);
+        const nextTime = i < anchors.length - 1 ? parseFloat(anchors[i + 1].dataset.time) : Infinity;
+        if (t >= aTime && t < nextTime) {
+          anchors[i].classList.add('timestamp-active');
+          prevActiveAnchor = anchors[i];
+          break;
         }
       }
     };
+    if (playerEl._wordViewTimeUpdate) playerEl.removeEventListener('timeupdate', playerEl._wordViewTimeUpdate);
     playerEl._wordViewTimeUpdate = onTimeUpdate;
     playerEl.addEventListener('timeupdate', onTimeUpdate);
   }
 
-  function getCurrentWords() {
-    return words.map((w, i) => editModeWords[i] ? { ...w, ...editModeWords[i] } : w).filter(w => !w._deleted);
-  }
+  // ── Approve bar ──
+  renderApproveBar(audioId, viewer, pageContainer);
 
-  // ── Auto-save: commit edits to state after a short debounce ──
-  let _saveTimer = null;
-  function scheduleAutoSave() {
-    clearTimeout(_saveTimer);
-    editStatus.textContent = 'Editing…';
-    _saveTimer = setTimeout(() => commitEdits(), 1500);
-  }
-
-  function commitEdits() {
-    clearTimeout(_saveTimer);
-    const openInput = wordGrid.querySelector('input');
-    if (openInput) openInput.blur(); // commit any open inline edit first
-
-    const currentAlignment = getState().alignments?.[audioId] || alignment;
-    const finalWords = [];
-    let addedCount = 0;
-    let deletedCount = 0;
-    for (let s = 0; s < segments.length; s++) {
-      const seg = segments[s];
-      for (let pos = 0; pos <= seg.length; pos++) {
-        (insertions[s]?.[pos] || []).forEach(ins => {
-          finalWords.push({ word: ins.word, start: ins.start, end: ins.end, confidence: 1 });
-          addedCount++;
-        });
-        if (pos < seg.length) {
-          const gi = words.indexOf(seg[pos]);
-          const ew = gi >= 0 ? editModeWords[gi] : null;
-          if (ew?._deleted) { deletedCount++; continue; }
-          finalWords.push(ew ? { ...ew, _deleted: undefined } : seg[pos]);
-        }
-      }
-    }
-
-    const updatedAlignment = { ...currentAlignment, words: finalWords };
-    updateState('alignments', audioId, updatedAlignment);
-    const versionId = activeVersionRef?.id;
-    if (versionId) {
-      setVersionAlignment(audioId, versionId, updatedAlignment);
-      const newText = finalWords.map(w => w.word || w.text || '').join(' ');
-      updateVersion(audioId, versionId, { text: newText, updatedAt: new Date().toISOString() });
-      activeVersionRef?.rerenderContent?.();
-    }
-
-    // Update live arrays in-place so karaoke/seek stays in sync
-    words.splice(0, words.length, ...finalWords);
-    const newSegs = [];
-    if (words.length) {
-      let cur = [words[0]];
-      for (let i = 1; i < words.length; i++) {
-        if ((words[i].start - words[i - 1].end) > GAP_THRESHOLD) { newSegs.push(cur); cur = [words[i]]; }
-        else cur.push(words[i]);
-      }
-      newSegs.push(cur);
-    }
-    segments.splice(0, segments.length, ...newSegs);
-    editModeWords.splice(0, editModeWords.length, ...finalWords.map(w => ({ ...w })));
-    Object.keys(insertions).forEach(k => delete insertions[k]);
-
-    renderSegmentChips();
-    const parts = [];
-    if (addedCount) parts.push(`+${addedCount}`);
-    if (deletedCount) parts.push(`−${deletedCount}`);
-    editStatus.textContent = parts.length ? `Saved (${parts.join(', ')})` : 'Saved ✓';
-    setTimeout(() => { editStatus.textContent = ''; }, 2000);
-  }
-
-  function getExportBaseName() {
-    const state = getState();
-    const audio = state.audio?.find(a => a.id === audioId);
-    return (audio?.name || audioId).replace(/\.[^.]+$/, '');
-  }
-
-  // Export button handlers removed for cleaner karaoke UI
-
-  // Bulk textarea auto-applies on blur (no button needed)
-  function applyBulkText() {
-    const segWords = segments[currentSegIdx] || [];
-    const tokens = bulkTextarea.value.trim().split(/\s+/).filter(Boolean);
-    if (!tokens.length) return;
-
-    if (tokens.length === segWords.length) {
-      tokens.forEach((tok, i) => {
-        const gi = words.indexOf(segWords[i]);
-        if (gi >= 0) editModeWords[gi] = { ...editModeWords[gi], word: tok };
-      });
-    } else {
-      const segStart = segWords[0]?.start ?? 0;
-      const segEnd = segWords[segWords.length - 1]?.end ?? segStart + 1;
-      const dur = (segEnd - segStart) / tokens.length;
-      segWords.forEach(w => {
-        const gi = words.indexOf(w);
-        if (gi >= 0) editModeWords[gi] = { ...editModeWords[gi], _deleted: true };
-      });
-      if (!insertions[currentSegIdx]) insertions[currentSegIdx] = {};
-      insertions[currentSegIdx][0] = tokens.map((tok, i) => ({
-        word: tok,
-        start: +(segStart + i * dur).toFixed(3),
-        end: +(segStart + (i + 1) * dur).toFixed(3),
-      }));
-    }
-
-    renderSegmentChips();
-    scheduleAutoSave();
-  }
-
-  bulkTextarea.addEventListener('blur', applyBulkText);
-
-  prevBtn.addEventListener('click', () => {
-    if (problemFilterActive) {
-      let idx = currentSegIdx - 1;
-      while (idx >= 0 && !isProblemSegment(idx)) idx--;
-      if (idx >= 0) goToSegment(idx);
-    } else {
-      goToSegment(currentSegIdx - 1);
-    }
-  });
-  nextBtn.addEventListener('click', () => {
-    if (problemFilterActive) {
-      let idx = currentSegIdx + 1;
-      while (idx < segments.length && !isProblemSegment(idx)) idx++;
-      if (idx < segments.length) goToSegment(idx);
-    } else {
-      goToSegment(currentSegIdx + 1);
-    }
-  });
-  // Review button handlers removed for cleaner karaoke UI
-
-  // Initial render
-  if (allWordsMode) {
-    renderAllWords();
-  } else {
-    renderSegmentChips();
-  }
-  updateAllWordsBtn();
-  updateSegHeader();
-  updateStats();
-  renderSidebar();
+  layout.appendChild(leftPanel);
+  layout.appendChild(sidebar);
+  viewer.appendChild(layout);
 
   container.appendChild(viewer);
 }
-
 function formatTime(seconds) {
   if (seconds == null || isNaN(seconds)) return '0:00';
   const s = Math.round(seconds);
