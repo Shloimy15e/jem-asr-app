@@ -117,6 +117,18 @@ function migrateToVersions() {
     for (const v of versions) {
       if (!v.iteration) v.iteration = 1;
     }
+
+    // Deduplicate: keep only the latest version of each type (except 'asr' which allows multiple models)
+    const seen = {};
+    for (let i = versions.length - 1; i >= 0; i--) {
+      const v = versions[i];
+      const key = v.type === 'asr' ? `asr_${v.model || ''}` : v.type;
+      if (seen[key]) {
+        versions.splice(i, 1); // remove older duplicate
+      } else {
+        seen[key] = true;
+      }
+    }
   }
 }
 
@@ -182,8 +194,27 @@ export function mergeSupabaseData(remote) {
     }
   }
 
+  // Reconstruct missing mappings from manual versions BEFORE migration —
+  // covers cases where work was done locally but the mapping wasn't synced
+  // to Supabase.  Must happen first so migrateToVersions sees all mappings
+  // and can deduplicate versions properly.
+  for (const [audioId, versions] of Object.entries(state.transcriptVersions)) {
+    if (state.mappings[audioId]) continue; // already have a mapping
+    const manual = versions.find(v => v.type === 'manual');
+    if (manual?.sourceTranscriptId) {
+      state.mappings[audioId] = {
+        transcriptId: manual.sourceTranscriptId,
+        confidence: manual.confidence || 0,
+        matchReason: manual.matchReason || 'reconstructed from version',
+        confirmedBy: manual.createdBy || 'system',
+        confirmedAt: manual.createdAt || new Date().toISOString(),
+      };
+    }
+  }
+
   // Re-run migration so transcriptVersions reflects the merged data
   migrateToVersions();
+
   saveToStorage();
 }
 
@@ -223,9 +254,16 @@ export function getStatus(audioId) {
   const hasValidTranscript = mapping
     && (state.transcripts || []).some(t => t.id === mapping.transcriptId);
 
-  if (!hasValidTranscript) return 'unmapped';
-
+  // Also check if a manual version exists with a valid sourceTranscriptId —
+  // this covers cases where the mapping was lost during Supabase sync but
+  // versions (with work done) still exist in localStorage.
   const versions = state.transcriptVersions[audioId];
+  const hasVersionMapping = !hasValidTranscript && versions && versions.length > 0
+    && versions.some(v => v.type === 'manual' && v.sourceTranscriptId
+      && (state.transcripts || []).some(t => t.id === v.sourceTranscriptId));
+
+  if (!hasValidTranscript && !hasVersionMapping) return 'unmapped';
+
   if (versions && versions.length > 0) {
     if (versions.some(v => v.review?.status === 'approved')) return 'approved';
     if (versions.some(v => v.review?.status === 'rejected')) return 'rejected';
@@ -239,6 +277,58 @@ export function getStatus(audioId) {
   if (state.alignments[audioId]) return 'aligned';
   if (state.cleaning[audioId]) return 'cleaned';
   return 'mapped';
+}
+
+// ── Pipeline stages ────────────────────────────────────────────────
+
+export const PIPELINE_STAGES = ['mapped', 'cleaned', 'aligned', 'approved'];
+
+// Returns an object of booleans indicating which pipeline stages are complete.
+// Each stage is derived independently so the result is cumulative.
+export function getCompletedStages(audioId) {
+  const result = { mapped: false, cleaned: false, aligned: false, approved: false, rejected: false };
+  if (!state) return result;
+
+  // Check mapping (same logic as getStatus)
+  const mapping = state.mappings[audioId];
+  const versions = state.transcriptVersions[audioId];
+  const hasMapping = (mapping && (state.transcripts || []).some(t => t.id === mapping.transcriptId))
+    || (versions && versions.some(v => v.type === 'manual' && v.sourceTranscriptId
+        && (state.transcripts || []).some(t => t.id === v.sourceTranscriptId)));
+  if (!hasMapping) return result; // unmapped — nothing is done
+
+  result.mapped = true;
+
+  // Check cleaned/edited
+  if (versions && versions.length > 0) {
+    if (versions.some(v => v.type === 'cleaned' || v.type === 'edited')) result.cleaned = true;
+    if (versions.some(v => v.alignment)) result.aligned = true;
+    if (versions.some(v => v.review?.status === 'approved')) result.approved = true;
+    if (versions.some(v => v.review?.status === 'rejected')) result.rejected = true;
+  }
+  // Legacy fallback
+  if (state.cleaning[audioId]) result.cleaned = true;
+  if (state.alignments[audioId]) result.aligned = true;
+  if (state.reviews[audioId]?.status === 'approved') result.approved = true;
+  if (state.reviews[audioId]?.status === 'rejected') result.rejected = true;
+
+  return result;
+}
+
+// Inclusive filter matching — "aligned" includes files that are aligned OR approved,
+// since approved implies all prior stages. Unmapped/rejected are exact.
+export function matchesStatusFilter(audioId, filter) {
+  if (!filter) return true;
+  const stages = getCompletedStages(audioId);
+  switch (filter) {
+    case 'unmapped':  return !stages.mapped;
+    case 'mapped':    return stages.mapped;
+    case 'cleaned':   return stages.cleaned;
+    case 'aligned':   return stages.aligned;
+    case 'approved':  return stages.approved;
+    case 'rejected':  return stages.rejected;
+    default:          return getStatus(audioId) === filter;
+  }
 }
 
 // ── Transcript version helpers ──────────────────────────────────────
@@ -452,7 +542,7 @@ export function getFilteredRows(filter, searchTerm, sortCol, sortDir, yearFilter
   } else if (statusFilter === 'strong-match') {
     rows = rows.filter(a => { const m = state.mappings[a.id]; return m && m.confidence >= 0.5; });
   } else if (statusFilter) {
-    rows = rows.filter(a => getStatus(a.id) === statusFilter);
+    rows = rows.filter(a => matchesStatusFilter(a.id, statusFilter));
   }
 
   // Year/month/type filters
@@ -501,7 +591,7 @@ export function getFilterCounts() {
   if (!state) return {};
   const { audio } = state;
 
-  // Cache status per audio file — avoids calling getStatus multiple times
+  // Inclusive counting — "aligned" count includes approved files too
   const statusCounts = { unmapped: 0, mapped: 0, cleaned: 0, aligned: 0, approved: 0, rejected: 0 };
   const fiftyStatusCounts = { unmapped: 0, mapped: 0, cleaned: 0, aligned: 0, approved: 0, rejected: 0 };
   let benchmarkCount = 0;
@@ -510,12 +600,25 @@ export function getFilterCounts() {
   let strongMatchCount = 0;
 
   audio.forEach(a => {
-    const s = getStatus(a.id);
-    if (statusCounts[s] !== undefined) statusCounts[s]++;
+    const stages = getCompletedStages(a.id);
+    if (!stages.mapped) { statusCounts.unmapped++; }
+    else {
+      statusCounts.mapped++;
+      if (stages.cleaned)  statusCounts.cleaned++;
+      if (stages.aligned)  statusCounts.aligned++;
+      if (stages.approved) statusCounts.approved++;
+      if (stages.rejected) statusCounts.rejected++;
+    }
     if (a.isBenchmark) benchmarkCount++;
     if (a.isSelected50hr) {
       fiftyCount++;
-      if (fiftyStatusCounts[s] !== undefined) fiftyStatusCounts[s]++;
+      if (!stages.mapped) { fiftyStatusCounts.unmapped++; }
+      else {
+        fiftyStatusCounts.mapped++;
+        if (stages.cleaned)  fiftyStatusCounts.cleaned++;
+        if (stages.aligned)  fiftyStatusCounts.aligned++;
+        if (stages.approved) fiftyStatusCounts.approved++;
+      }
     }
     const m = state.mappings[a.id];
     if (m && m.confidence === 1) perfectMatchCount++;

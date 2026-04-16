@@ -512,6 +512,58 @@ input {
   color: var(--accent);
 }
 
+/* === Pipeline Progress Indicator === */
+.pipeline-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  vertical-align: middle;
+}
+.pipeline-stage {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.pipeline-connector {
+  width: 8px;
+  height: 2px;
+  flex-shrink: 0;
+}
+.pipeline-connector.done { background: var(--border); }
+.pipeline-connector.pending { background: var(--border); opacity: 0.4; }
+
+/* Stage colors when done */
+.pipeline-stage.done-mapped   { background: var(--blue);  color: #fff; }
+.pipeline-stage.done-cleaned  { background: var(--cyan);  color: #fff; }
+.pipeline-stage.done-aligned  { background: var(--orange); color: #fff; }
+.pipeline-stage.done-approved { background: var(--green); color: #fff; }
+.pipeline-stage.done-rejected { background: var(--red, #f87171); color: #fff; }
+
+.pipeline-stage.pending {
+  background: var(--gray-dim);
+  color: var(--gray);
+}
+
+/* Tooltip on hover */
+.pipeline-stage[title] { cursor: default; }
+
+/* Larger variant for detail page */
+.pipeline-indicator.pipeline-detail .pipeline-stage {
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+}
+.pipeline-indicator.pipeline-detail .pipeline-connector {
+  width: 12px;
+}
+
 /* === Confidence Colors === */
 .confidence-high {
   color: var(--green);

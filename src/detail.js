@@ -1,4 +1,4 @@
-import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions, getPipelineStep, getIterationCount, setSegmentApprovals, getApprovedSegments, toggleSegmentApproval } from './state.js';
+import { initState, getState, getStatus, getCompletedStages, PIPELINE_STAGES, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions, getPipelineStep, getIterationCount, setSegmentApprovals, getApprovedSegments, toggleSegmentApproval } from './state.js';
 import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, setActiveLibrary, getActiveLibraryConfig, isLibraryR2Url, getAccessToken } from './auth.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanSectionMarkers, cleanMinor, cleanIntroText, cleanWhitespace, findBracketMatches, findParenMatches, findMinorMatches, applyMatchActions, calculateCleanRate } from './cleaning.js';
@@ -8,6 +8,51 @@ import { buildAsrConfigPanel } from './asr-config.js';
 
 import { formatConfidence, getConfidenceLevel, generateSRT, generateVTT, downloadFile } from './utils.js';
 import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration, syncAudioField, loadSegmentApprovals, syncSegmentApproval } from './db.js';
+
+// ── Pipeline indicator for detail page ──────────────────────────────
+
+function renderDetailPipeline(audioId) {
+  const stages = getCompletedStages(audioId);
+
+  // Unmapped — show old-style badge
+  if (!stages.mapped) {
+    const badge = document.createElement('span');
+    badge.className = 'status-badge status-unmapped';
+    badge.textContent = 'unmapped';
+    return badge;
+  }
+
+  const container = document.createElement('span');
+  container.className = 'pipeline-indicator pipeline-detail';
+
+  for (let i = 0; i < PIPELINE_STAGES.length; i++) {
+    if (i > 0) {
+      const conn = document.createElement('span');
+      conn.className = 'pipeline-connector ' + (stages[PIPELINE_STAGES[i]] ? 'done' : 'pending');
+      container.appendChild(conn);
+    }
+    const name = PIPELINE_STAGES[i];
+    const dot = document.createElement('span');
+    const isDone = stages[name];
+    const isRejected = name === 'approved' && stages.rejected && !stages.approved;
+
+    if (isRejected) {
+      dot.className = 'pipeline-stage done-rejected';
+      dot.textContent = '✗';
+      dot.title = 'rejected';
+    } else if (isDone) {
+      dot.className = `pipeline-stage done-${name}`;
+      dot.textContent = '✓';
+      dot.title = name;
+    } else {
+      dot.className = 'pipeline-stage pending';
+      dot.textContent = '○';
+      dot.title = name;
+    }
+    container.appendChild(dot);
+  }
+  return container;
+}
 
 // Loads full transcript text using R2 first, then Supabase fallback.
 // Caches on the transcript object for the session.
@@ -260,10 +305,8 @@ function renderDetailPage(audioId, audio, state, container) {
     if (e.key === 'Enter') { e.preventDefault(); title.blur(); }
   });
   titleBar.appendChild(title);
-  const badge = document.createElement('span');
-  badge.className = `status-badge status-${status}`;
-  badge.textContent = status;
-  titleBar.appendChild(badge);
+  // Pipeline progress indicator
+  titleBar.appendChild(renderDetailPipeline(audioId));
   container.appendChild(titleBar);
 
   // Meta row
@@ -751,11 +794,19 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
         if (!isManual) infoBar.appendChild(saveStatus);
 
         if (isManual) {
-          // "Start Editing" — creates an Edited copy of the manual text immediately
+          // "Start Editing" — switch to existing Edited version or create one
+          const existingEdited = versions.find(v => v.type === 'edited');
           const startEditBtn = document.createElement('button');
           startEditBtn.className = 'action-btn action-btn-primary action-btn-lg';
-          startEditBtn.textContent = 'Start Editing';
+          startEditBtn.textContent = existingEdited ? 'Edit' : 'Start Editing';
           startEditBtn.addEventListener('click', async () => {
+            if (existingEdited) {
+              // Switch to the existing edited tab instead of creating a duplicate
+              activeVersionId = existingEdited.id;
+              if (activeVersionRef) activeVersionRef.id = existingEdited.id;
+              renderVersionContent(existingEdited.id);
+              return;
+            }
             startEditBtn.disabled = true;
             startEditBtn.textContent = 'Loading...';
             // Ensure full text is loaded before copying

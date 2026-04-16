@@ -1,4 +1,4 @@
-import { getState, getFilteredRows, getFilterCounts, getStatus, updateState } from './state.js';
+import { getState, getFilteredRows, getFilterCounts, getStatus, getCompletedStages, PIPELINE_STAGES, updateState } from './state.js';
 import { truncateWords, formatConfidence, debounce, HEBREW_MONTHS } from './utils.js';
 import { linkMatch, unlinkMatch, getSuggestedMatches } from './mapping.js';
 import { isLibraryR2Url } from './auth.js';
@@ -264,6 +264,52 @@ function getStatusClass(status) {
     rejected: 'status-rejected',
   };
   return map[status] || 'status-unmapped';
+}
+
+// ── Pipeline indicator ──────────────────────────────────────────────
+
+function renderPipelineIndicator(audioId, detail) {
+  const stages = getCompletedStages(audioId);
+
+  // Unmapped — show old-style badge
+  if (!stages.mapped) {
+    const badge = document.createElement('span');
+    badge.className = 'status-badge status-unmapped';
+    badge.textContent = 'unmapped';
+    return badge;
+  }
+
+  const container = document.createElement('span');
+  container.className = 'pipeline-indicator' + (detail ? ' pipeline-detail' : '');
+
+  const stageNames = PIPELINE_STAGES; // ['mapped', 'cleaned', 'aligned', 'approved']
+  for (let i = 0; i < stageNames.length; i++) {
+    if (i > 0) {
+      const conn = document.createElement('span');
+      conn.className = 'pipeline-connector ' + (stages[stageNames[i]] ? 'done' : 'pending');
+      container.appendChild(conn);
+    }
+    const name = stageNames[i];
+    const dot = document.createElement('span');
+    const isDone = stages[name];
+    const isRejected = name === 'approved' && stages.rejected && !stages.approved;
+
+    if (isRejected) {
+      dot.className = 'pipeline-stage done-rejected';
+      dot.textContent = '✗';
+      dot.title = 'rejected';
+    } else if (isDone) {
+      dot.className = `pipeline-stage done-${name}`;
+      dot.textContent = '✓';
+      dot.title = name;
+    } else {
+      dot.className = 'pipeline-stage pending';
+      dot.textContent = '○';
+      dot.title = name;
+    }
+    container.appendChild(dot);
+  }
+  return container;
 }
 
 // ── Remap modal ─────────────────────────────────────────────────────
@@ -776,10 +822,7 @@ function buildTable(rows) {
           break;
         }
         case 'status': {
-          const badge = document.createElement('span');
-          badge.className = `status-badge ${getStatusClass(row.status)}`;
-          badge.textContent = row.status;
-          td.appendChild(badge);
+          td.appendChild(renderPipelineIndicator(row.id, false));
           if (row.isSelected50hr) {
             const fiftyBadge = document.createElement('span');
             fiftyBadge.className = 'status-badge status-fifty';
@@ -895,10 +938,7 @@ function buildCardView(rows) {
       typeSpan.textContent = row.type;
       meta.appendChild(typeSpan);
     }
-    const badge = document.createElement('span');
-    badge.className = `status-badge ${getStatusClass(row.status)}`;
-    badge.textContent = row.status;
-    meta.appendChild(badge);
+    meta.appendChild(renderPipelineIndicator(row.id, false));
 
     card.appendChild(header);
     card.appendChild(meta);
