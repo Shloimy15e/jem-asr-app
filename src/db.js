@@ -609,3 +609,81 @@ export async function loadFromSupabase(libraryId = null) {
     return null;
   }
 }
+
+// Lightweight loader for the detail page — fetches only the data needed for one audio file.
+// Returns the same shape as loadFromSupabase() so callers don't need to change.
+export async function loadForDetailPage(audioId, libraryId = null) {
+  const lib = libraryId || getActiveLibrary();
+  try {
+    const [
+      audioRow,
+      transcriptData,
+      mappingRow,
+      alignmentRow,
+      reviewRow,
+      editsRows,
+    ] = await Promise.all([
+      supabase.from('audio_files').select('*').eq('id', audioId).eq('library_id', lib).maybeSingle(),
+      fetchAll('transcripts', 'id,name,year,month,day,first_line,drive_link,r2_transcript_link,source_transcript_id', lib),
+      supabase.from('mappings').select('*').eq('audio_id', audioId).eq('library_id', lib).maybeSingle(),
+      supabase.from('alignments').select('audio_id,avg_confidence,low_confidence_count,aligned_at').eq('audio_id', audioId).eq('library_id', lib).maybeSingle(),
+      supabase.from('reviews').select('*').eq('audio_id', audioId).eq('library_id', lib).maybeSingle(),
+      supabase.from('transcript_edits').select('*').eq('audio_id', audioId).eq('library_id', lib),
+    ]);
+
+    const byId = (a, b) => {
+      const na = parseInt(a.id), nb = parseInt(b.id);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    };
+
+    const a = audioRow.data;
+    const audio = a ? [{
+      id: a.id, name: a.name, year: a.year, month: a.month, day: a.day, type: a.type,
+      estMinutes: a.duration_minutes, isSelected50hr: a.is_selected_50hr, isBenchmark: a.is_benchmark,
+      comments: a.comments || '', r2Link: a.r2_link, driveLink: a.drive_link,
+      trimStart: a.trim_start || 0, trimEnd: a.trim_end || 0,
+    }] : [];
+
+    const trims = {};
+    audio.forEach(x => { if (x.trimStart || x.trimEnd) trims[x.id] = { start: x.trimStart, end: x.trimEnd }; });
+
+    const transcripts = (transcriptData || []).sort(byId).map(t => ({
+      id: t.id, name: t.name, year: t.year, month: t.month, day: t.day,
+      firstLine: t.first_line, driveLink: t.drive_link,
+      r2TranscriptLink: t.r2_transcript_link, sourceTranscriptId: t.source_transcript_id || null,
+    }));
+
+    const mappings = {};
+    const m = mappingRow.data;
+    if (m) mappings[m.audio_id] = { transcriptId: m.transcript_id, confidence: m.confidence, matchReason: m.match_reason, confirmedBy: m.confirmed_by, confirmedAt: m.created_at };
+
+    const alignments = {};
+    const al = alignmentRow.data;
+    if (al) alignments[al.audio_id] = { avgConfidence: al.avg_confidence, lowConfidenceCount: al.low_confidence_count, alignedAt: al.aligned_at };
+
+    const reviews = {};
+    const rv = reviewRow.data;
+    if (rv) reviews[rv.audio_id] = { status: rv.status, editedText: rv.edited_text, reviewedAt: rv.reviewed_at };
+
+    const edits = editsRows.data || [];
+    const cleaning = {};
+    edits.filter(e => e.version === 'cleaned').forEach(e => {
+      cleaning[e.audio_id] = { cleanedText: e.text, originalText: e.original_text, cleanRate: e.clean_rate, cleanedAt: e.created_at };
+    });
+    const edited = {};
+    edits.filter(e => e.version === 'edited').forEach(e => {
+      edited[e.audio_id] = { text: e.text, createdAt: e.created_at };
+    });
+    const asr = {};
+    edits.filter(e => e.version.startsWith('asr-')).forEach(e => {
+      if (!asr[e.audio_id]) asr[e.audio_id] = [];
+      asr[e.audio_id].push({ text: e.text, model: e.version.replace(/^asr-/, ''), createdAt: e.created_at });
+    });
+
+    return { audio, transcripts, mappings, alignments, reviews, cleaning, trims, edited, asr };
+  } catch (err) {
+    console.warn('[DB] loadForDetailPage failed:', err.message);
+    return null;
+  }
+}

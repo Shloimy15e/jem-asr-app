@@ -1,9 +1,31 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import { resolve } from 'path'
+
+// Fail fast if required env vars are missing — prevents deploying a broken build.
+function envGuard() {
+  return {
+    name: 'env-guard',
+    config(_, { mode, command }) {
+      if (command === 'build') {
+        const env = loadEnv(mode, process.cwd(), 'VITE_');
+        const required = ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY'];
+        const missing = required.filter(k => !env[k]);
+        if (missing.length) {
+          throw new Error(
+            `\n\n  ❌ Missing env vars: ${missing.join(', ')}\n` +
+            `  Create a .env file with these values before building.\n` +
+            `  See CLAUDE.md → "Build Rules" for details.\n\n`
+          );
+        }
+      }
+    },
+  };
+}
 
 export default defineConfig({
   root: '.',
   publicDir: 'public',
+  plugins: [envGuard()],
   server: {
     proxy: {
       '/api': {

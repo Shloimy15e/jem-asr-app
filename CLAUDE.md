@@ -784,6 +784,11 @@ exportState(), importState(file)
 // audio[] and transcripts[] are full catalog arrays sorted by numeric ID.
 loadFromSupabase()
 
+// DETAIL PAGE: same return shape but fetches only the single audio row + its work data.
+// Transcripts are still fetched in full (needed for mapping suggestions).
+// Used by detail.js instead of loadFromSupabase() to avoid loading all 4,669 audio rows.
+loadForDetailPage(audioId, libraryId)
+
 syncStateKey(key, audioId, value, audioEntry)  // dispatch upsert for the changed key
 // Handled keys: 'audioNames', 'audioComments', 'mappings', 'cleaning', 'alignments',
 //               'reviews', 'edited', 'trims'
