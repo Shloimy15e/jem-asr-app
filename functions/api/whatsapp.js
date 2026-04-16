@@ -30,22 +30,13 @@
  *  Fields: messages
  */
 
+import { arrayBufferToBase64, b64url, bytesToB64url, sbFetch as _sbFetch } from '../_shared/utils.js';
+
 // ── Supabase REST helpers ────────────────────────────────────────────
 
-async function sbFetch(env, path, opts = {}) {
-  const headers = {
-    'apikey': env.SUPABASE_SERVICE_KEY,
-    'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-    'Content-Type': 'application/json',
-    ...opts.headers,
-  };
-  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, { ...opts, headers });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Supabase ${path}: ${res.status} ${text.slice(0, 200)}`);
-  }
-  const ct = res.headers.get('content-type') || '';
-  return ct.includes('json') ? res.json() : res.text();
+// Thin wrapper to preserve the local call signature: sbFetch(env, path, opts)
+function sbFetch(env, path, opts = {}) {
+  return _sbFetch(`${env.SUPABASE_URL}/rest/v1/${path}`, opts, env);
 }
 
 /** Get or create a whatsapp_users row. Returns the row. */
@@ -90,16 +81,6 @@ async function logUsage(env, phone, status, provider = null) {
 }
 
 // ── WhatsApp API helpers ─────────────────────────────────────────────
-
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const CHUNK = 0x8000;
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
 
 function mimeToExt(mimeType = '') {
   const m = mimeType.toLowerCase();
@@ -158,18 +139,6 @@ async function sendText(env, to, text) {
 }
 
 // ── Transcription (mirrors /api/transcribe) ──────────────────────────
-
-function b64url(str) {
-  const bytes = new TextEncoder().encode(str);
-  let bin = '';
-  bytes.forEach(b => (bin += String.fromCharCode(b)));
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-function bytesToB64url(bytes) {
-  let bin = '';
-  bytes.forEach(b => (bin += String.fromCharCode(b)));
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
 
 async function getVertexToken(saJson) {
   const sa = typeof saJson === 'string' ? JSON.parse(saJson) : saJson;

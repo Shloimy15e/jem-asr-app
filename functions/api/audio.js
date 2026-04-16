@@ -1,20 +1,7 @@
 // Proxy audio from R2 to avoid CORS issues
 // GET /api/audio?url=<encoded-r2-url>
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
-
-// Returns the set of allowed R2 hostnames.
-// Reads ALLOWED_R2_DOMAINS env var (comma-separated) if set; falls back to default.
-function getAllowedDomains(env) {
-  if (env?.ALLOWED_R2_DOMAINS) {
-    return env.ALLOWED_R2_DOMAINS.split(',').map(d => d.trim()).filter(Boolean);
-  }
-  return ['audio.kohnai.ai', 'pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev'];
-}
+import { CORS_HEADERS, getAllowedDomains } from '../_shared/utils.js';
 
 export async function onRequestOptions() {
   return new Response(null, { headers: CORS_HEADERS });

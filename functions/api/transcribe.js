@@ -3,43 +3,14 @@
 // Supports: gemini (Vertex AI service-account OR Gemini API key), mendel
 // Whisper uses /api/align directly with mode:'transcribe'
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
-
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const CHUNK = 0x8000;
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
-
-function errorResponse(status, message) {
-  return new Response(JSON.stringify({ error: message }), {
-    status,
-    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
-  });
-}
-
-// Base64url encode a UTF-8 string (for JWT header/payload)
-function b64url(str) {
-  const bytes = new TextEncoder().encode(str);
-  let binary = '';
-  bytes.forEach(b => (binary += String.fromCharCode(b)));
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-
-// Base64url encode raw bytes (for JWT signature)
-function bytesToB64url(bytes) {
-  let binary = '';
-  bytes.forEach(b => (binary += String.fromCharCode(b)));
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
+import {
+  CORS_HEADERS,
+  arrayBufferToBase64,
+  getAllowedDomains,
+  errorResponse,
+  b64url,
+  bytesToB64url,
+} from '../_shared/utils.js';
 
 /**
  * Exchange a Google service account JSON for a short-lived OAuth2 access token.
@@ -101,15 +72,15 @@ async function getVertexAccessToken(saJson) {
   return tokenData.access_token;
 }
 
-// Resolve audio_url (R2 only, SSRF-protected) or use provided base64.
-async function resolveAudio(payload) {
+// Resolve audio_url (SSRF-protected via ALLOWED_R2_DOMAINS) or use provided base64.
+async function resolveAudio(payload, env) {
   if (payload.audio_url) {
     let parsedUrl;
     try { parsedUrl = new URL(payload.audio_url); } catch {
       throw { status: 400, message: 'Invalid audio_url' };
     }
-    if (parsedUrl.hostname !== 'audio.kohnai.ai') {
-      throw { status: 400, message: 'audio_url must point to audio.kohnai.ai' };
+    if (!getAllowedDomains(env).includes(parsedUrl.hostname)) {
+      throw { status: 400, message: 'audio_url domain not in allowed list' };
     }
     if (parsedUrl.protocol !== 'https:') {
       throw { status: 400, message: 'audio_url must use https' };
@@ -119,8 +90,9 @@ async function resolveAudio(payload) {
       throw { status: 502, message: `Failed to fetch audio: ${audioResp.status}` };
     }
     const buffer = await audioResp.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
     const ext = parsedUrl.pathname.match(/(\.\w+)$/)?.[1] || '.mp3';
-    return { base64: arrayBufferToBase64(buffer), format: ext };
+    return { base64: arrayBufferToBase64(buffer), format: ext, bytes };
   }
   if (!payload.audio_base64) {
     throw { status: 400, message: 'Must provide audio_url or audio_base64' };
@@ -234,50 +206,74 @@ async function handleMendel(audio, payload, env) {
   if (!yl_api_key) throw { status: 500, message: 'Mendel API key not configured — set YL_API_KEY as a Cloudflare Worker secret' };
   const { yl_endpoint } = payload;
 
-  // Sync endpoint handles files up to 5 minutes; longer files use the async endpoint.
-  const endpoint = yl_endpoint || 'https://app.yiddishlabs.com/api/v1/transcriptions/sync';
+  const YL_BASE = 'https://app.yiddishlabs.com';
+  // Sync endpoint: ≤5 min returns text immediately (200), >5 min returns job ID (201).
+  const endpoint = yl_endpoint || `${YL_BASE}/api/v1/transcriptions/sync`;
   const mimeType = MIME_MAP[audio.format] || 'audio/mpeg';
   const filename = 'audio' + (audio.format || '.mp3');
 
-  // Build multipart/form-data — field name is "file" per the Mendel API spec
-  const boundary = '----FormBoundary' + Date.now().toString(36) + Math.random().toString(36).slice(2);
-  const enc = new TextEncoder();
-  const audioBytes = Uint8Array.from(atob(audio.base64), c => c.charCodeAt(0));
+  // Use raw bytes when available (URL path) to avoid base64 round-trip that triples memory
+  const audioBytes = audio.bytes || Uint8Array.from(atob(audio.base64), c => c.charCodeAt(0));
 
-  const parts = [
-    enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mimeType}\r\n\r\n`),
-    audioBytes,
-    enc.encode(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nyi\r\n`),
-    enc.encode(`--${boundary}--\r\n`),
-  ];
+  // Use FormData — runtime handles multipart encoding
+  const formData = new FormData();
+  formData.append('file', new Blob([audioBytes], { type: mimeType }), filename);
+  formData.append('language', 'yi');
+  formData.append('rapid', 'true');
 
-  const totalLength = parts.reduce((s, p) => s + p.length, 0);
-  const body = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const p of parts) { body.set(p, offset); offset += p.length; }
+  const authHeaders = { 'X-API-KEY': yl_api_key };
 
-  // Auth uses X-API-KEY header per Mendel API spec
+  // Submit to sync endpoint
   const resp = await fetch(endpoint, {
     method: 'POST',
-    headers: {
-      'X-API-KEY': yl_api_key,
-      'Content-Type': `multipart/form-data; boundary=${boundary}`,
-    },
-    body,
+    headers: authHeaders,
+    body: formData,
   });
 
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
+  if (!resp.ok && resp.status !== 201) {
     const msg = data.error?.message || data.error?.code || data.message || `Mendel API error ${resp.status}`;
     throw { status: resp.status, message: msg };
   }
 
-  // Response: { id, status, text, summary, keywords, ... }
-  const text = data.text;
-  if (typeof text !== 'string') {
-    throw { status: 502, message: 'Unexpected Mendel response: ' + JSON.stringify(data).slice(0, 300) };
+  // Short file (≤5 min): sync endpoint returns 200 with text immediately
+  if (typeof data.text === 'string') {
+    return data.text.trim();
   }
-  return text.trim();
+
+  // Long file (>5 min): sync endpoint returns 201 with { id, status: "queued" }
+  const jobId = data.id;
+  if (!jobId) {
+    throw { status: 502, message: 'Mendel: no text and no job ID in response: ' + JSON.stringify(data).slice(0, 300) };
+  }
+
+  // Poll GET /api/v1/transcriptions/:id until completed (max ~5 minutes)
+  const POLL_INTERVAL = 10_000; // 10 seconds
+  const MAX_POLLS = 30;         // 30 × 10s = 5 minutes
+  const statusUrl = `${YL_BASE}/api/v1/transcriptions/${jobId}`;
+
+  for (let i = 0; i < MAX_POLLS; i++) {
+    await new Promise(r => setTimeout(r, POLL_INTERVAL));
+
+    const pollResp = await fetch(statusUrl, { headers: authHeaders });
+    const pollData = await pollResp.json().catch(() => ({}));
+
+    if (!pollResp.ok) {
+      const msg = pollData.error?.message || `Mendel poll error ${pollResp.status}`;
+      throw { status: pollResp.status, message: msg };
+    }
+
+    if (pollData.status === 'completed' && typeof pollData.text === 'string') {
+      return pollData.text.trim();
+    }
+
+    if (pollData.status === 'failed' || pollData.status === 'error') {
+      throw { status: 502, message: `Mendel transcription failed: ${pollData.error?.message || pollData.status}` };
+    }
+    // Otherwise status is "queued" or "processing" — keep polling
+  }
+
+  throw { status: 504, message: `Mendel transcription timed out after ${MAX_POLLS * POLL_INTERVAL / 1000}s — job ${jobId} still ${data.status || 'processing'}` };
 }
 
 export async function onRequestPost(context) {
@@ -288,7 +284,7 @@ export async function onRequestPost(context) {
 
     if (!provider) return errorResponse(400, 'Missing provider');
 
-    const audio = await resolveAudio(payload);
+    const audio = await resolveAudio(payload, env);
 
     let text;
     if (provider === 'gemini') {

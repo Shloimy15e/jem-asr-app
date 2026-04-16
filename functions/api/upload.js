@@ -5,13 +5,9 @@
 //   file     — the File blob
 //   key      — R2 object key, e.g. "satmar/hoshana-5710.mp3"
 
-const R2_PUBLIC_BASE = 'https://pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev';
+import { CORS_HEADERS, errorResponse, verifyJWT } from '../_shared/utils.js';
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
+const R2_PUBLIC_BASE = 'https://pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev';
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -27,6 +23,12 @@ export async function onRequestOptions() {
 export async function onRequestPost(context) {
   const { request, env } = context;
 
+  // ── File size pre-check (FIX 4) ───────────────────────────────────────
+  const contentLength = request.headers.get('Content-Length');
+  if (contentLength !== null && parseInt(contentLength, 10) > 99_000_000) {
+    return errorResponse(400, 'File too large (max 95 MB)');
+  }
+
   // ── Auth: verify Supabase JWT ─────────────────────────────────────────
   const authHeader = request.headers.get('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
@@ -34,19 +36,15 @@ export async function onRequestPost(context) {
   }
   const jwt = authHeader.slice(7);
 
-  // Verify against Supabase if secrets are configured
-  if (env.SUPABASE_URL && env.SUPABASE_ANON_KEY) {
-    try {
-      const authRes = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
-        headers: {
-          'Authorization': `Bearer ${jwt}`,
-          'apikey': env.SUPABASE_ANON_KEY,
-        },
-      });
-      if (!authRes.ok) return json({ error: 'Unauthorized' }, 401);
-    } catch {
-      return json({ error: 'Auth verification failed' }, 500);
-    }
+  // FIX 3: Never skip auth — fail closed if env vars are missing
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return errorResponse(500, 'Auth service not configured');
+  }
+  try {
+    const user = await verifyJWT(jwt, env);
+    if (!user) return json({ error: 'Unauthorized' }, 401);
+  } catch {
+    return json({ error: 'Auth verification failed' }, 500);
   }
 
   // ── R2 binding check ──────────────────────────────────────────────────

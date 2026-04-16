@@ -6,11 +6,7 @@
 // Downloads the file from Google Drive and uploads it to R2,
 // then updates the audio_files.r2_link in Supabase.
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
+import { CORS_HEADERS, errorResponse, verifyJWT } from '../_shared/utils.js';
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -44,15 +40,14 @@ export async function onRequestPost(context) {
   }
   const jwt = authHeader.slice(7);
 
-  if (env.SUPABASE_URL && env.SUPABASE_ANON_KEY) {
-    try {
-      const authRes = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
-        headers: { 'Authorization': `Bearer ${jwt}`, 'apikey': env.SUPABASE_ANON_KEY },
-      });
-      if (!authRes.ok) return json({ error: 'Unauthorized' }, 401);
-    } catch {
-      return json({ error: 'Auth verification failed' }, 500);
-    }
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return errorResponse(500, 'Auth service not configured');
+  }
+  try {
+    const user = await verifyJWT(jwt, env);
+    if (!user) return json({ error: 'Unauthorized' }, 401);
+  } catch {
+    return json({ error: 'Auth verification failed' }, 500);
   }
 
   if (!env.R2_BUCKET) {

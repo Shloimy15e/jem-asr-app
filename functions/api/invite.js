@@ -10,11 +10,7 @@
 // password.  If the account already exists (and no password is given),
 // they are simply added to the library (no email sent).
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
+import { CORS_HEADERS, verifyJWT, sbFetch as _sbFetch } from '../_shared/utils.js';
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -23,21 +19,9 @@ function json(body, status = 200) {
   });
 }
 
-/** Supabase REST helper (service-role key). */
-async function sbFetch(env, path, opts = {}) {
-  const headers = {
-    'apikey': env.SUPABASE_SERVICE_KEY,
-    'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-    'Content-Type': 'application/json',
-    ...opts.headers,
-  };
-  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, { ...opts, headers });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Supabase ${path}: ${res.status} ${text.slice(0, 200)}`);
-  }
-  const ct = res.headers.get('content-type') || '';
-  return ct.includes('json') ? res.json() : res.text();
+/** Supabase REST helper (service-role key) — preserves local call signature. */
+function sbFetch(env, path, opts = {}) {
+  return _sbFetch(`${env.SUPABASE_URL}/rest/v1/${path}`, opts, env);
 }
 
 export async function onRequestOptions() {
@@ -56,14 +40,8 @@ export async function onRequestPost(context) {
 
   let caller;
   try {
-    const authRes = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
-      headers: {
-        'Authorization': `Bearer ${jwt}`,
-        'apikey': env.SUPABASE_ANON_KEY,
-      },
-    });
-    if (!authRes.ok) return json({ error: 'Unauthorized' }, 401);
-    caller = await authRes.json();
+    caller = await verifyJWT(jwt, env);
+    if (!caller) return json({ error: 'Unauthorized' }, 401);
   } catch {
     return json({ error: 'Auth verification failed' }, 500);
   }

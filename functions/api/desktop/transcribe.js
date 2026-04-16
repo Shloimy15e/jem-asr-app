@@ -13,11 +13,7 @@
  *   { text: string, credits_remaining: number }
  */
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-};
+import { CORS_HEADERS as CORS, b64url, bytesToB64url } from '../../_shared/utils.js';
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -59,17 +55,6 @@ async function logUsage(env, apiKey, status, provider) {
 
 // ── Transcription (mirrors /api/transcribe) ───────────────────────────
 
-function b64url(str) {
-  const bytes = new TextEncoder().encode(str);
-  let bin = '';
-  bytes.forEach(b => (bin += String.fromCharCode(b)));
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-function bytesToB64url(bytes) {
-  let bin = '';
-  bytes.forEach(b => (bin += String.fromCharCode(b)));
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
 async function getVertexToken(saJson) {
   const sa = typeof saJson === 'string' ? JSON.parse(saJson) : saJson;
   const now = Math.floor(Date.now() / 1000);

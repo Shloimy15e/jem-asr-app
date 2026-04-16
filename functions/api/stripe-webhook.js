@@ -22,22 +22,11 @@
  *   The bot appends ?client_reference_id=PHONE_NUMBER to the link automatically.
  */
 
-async function sbFetch(env, path, opts = {}) {
-  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
-    ...opts,
-    headers: {
-      'apikey': env.SUPABASE_SERVICE_KEY,
-      'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-      'Content-Type': 'application/json',
-      ...opts.headers,
-    },
-  });
-  if (!res.ok) {
-    const t = await res.text().catch(() => '');
-    throw new Error(`Supabase ${path}: ${res.status} ${t.slice(0, 200)}`);
-  }
-  const ct = res.headers.get('content-type') || '';
-  return ct.includes('json') ? res.json() : res.text();
+import { sbFetch as _sbFetch } from '../_shared/utils.js';
+
+// Thin wrapper to preserve the local call signature: sbFetch(env, path, opts)
+function sbFetch(env, path, opts = {}) {
+  return _sbFetch(`${env.SUPABASE_URL}/rest/v1/${path}`, opts, env);
 }
 
 /**

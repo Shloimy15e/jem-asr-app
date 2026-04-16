@@ -2,11 +2,7 @@
 // POST /api/asr -> forwards to endpoint specified in X-ASR-Endpoint header
 // Passes through Authorization header and FormData body unchanged
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-ASR-Endpoint',
-};
+import { CORS_HEADERS } from '../_shared/utils.js';
 
 export async function onRequestPost(context) {
   const endpoint = context.request.headers.get('X-ASR-Endpoint');

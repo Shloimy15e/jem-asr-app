@@ -9,30 +9,9 @@
 // Trimming uses the XING VBR TOC when present for accurate byte seeking on
 // variable-bitrate MP3 files. Falls back to byte-proportional for CBR files.
 
+import { CORS_HEADERS, arrayBufferToBase64, getAllowedDomains } from '../_shared/utils.js';
+
 const ALIGN_ENDPOINT = 'https://align.kohnai.ai/api/align';
-
-function getAllowedDomains(env) {
-  if (env?.ALLOWED_R2_DOMAINS) {
-    return env.ALLOWED_R2_DOMAINS.split(',').map(d => d.trim()).filter(Boolean);
-  }
-  return ['audio.kohnai.ai'];
-}
-
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
-
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const CHUNK = 0x8000;
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
 
 // Parse XING/INFO VBR TOC from the first bytes of an MP3 file.
 // Returns a 100-entry Uint8Array (values 0-255) or null if not found.
