@@ -1334,6 +1334,33 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     const c = getState().cleaning[audioId];
     return c?.originalText || await getCurrentText();
   }
+  async function getManualText() {
+    const m = getState().mappings[audioId];
+    if (!m) return '';
+    const t = getState().transcripts.find(tr => tr.id === m.transcriptId);
+    if (!t) return '';
+    const text = await loadFullText(t);
+    return text || t.firstLine || '';
+  }
+  function buildViewToggle(onEdited, onManual) {
+    const bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;gap:4px;margin-bottom:6px;';
+    const editedBtn = document.createElement('button');
+    const manualBtn = document.createElement('button');
+    editedBtn.textContent = 'Edited';
+    manualBtn.textContent = 'Manual (original)';
+    let mode = 'edited';
+    function refresh() {
+      editedBtn.className = mode === 'edited' ? 'action-btn action-btn-primary' : 'action-btn';
+      manualBtn.className = mode === 'manual' ? 'action-btn action-btn-primary' : 'action-btn';
+    }
+    editedBtn.addEventListener('click', async () => { if (mode === 'edited') return; mode = 'edited'; refresh(); await onEdited(); });
+    manualBtn.addEventListener('click', async () => { if (mode === 'manual') return; mode = 'manual'; refresh(); await onManual(); });
+    refresh();
+    bar.appendChild(editedBtn);
+    bar.appendChild(manualBtn);
+    return { bar, getMode: () => mode };
+  }
 
   // ── Pipeline stepper ──
   const step = getPipelineStep(audioId);
@@ -1624,6 +1651,31 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       preAlignEditor.textContent = text || 'Click "Start Editing" above to load the transcript text, then edit here.';
     });
 
+    // View toggle — Edited (editable) vs Manual (readonly original)
+    let _preEditedCache = null;
+    const preToggle = buildViewToggle(
+      async () => {
+        preAlignEditor.contentEditable = 'true';
+        preAlignEditor.style.opacity = '';
+        if (_preEditedCache != null) {
+          preAlignEditor.textContent = _preEditedCache;
+          _preEditedCache = null;
+        } else {
+          const text = await getCurrentText();
+          preAlignEditor.textContent = text || '';
+        }
+      },
+      async () => {
+        _preEditedCache = preAlignEditor.innerText;
+        preAlignEditor.contentEditable = 'false';
+        preAlignEditor.style.opacity = '0.85';
+        preAlignEditor.textContent = 'Loading original...';
+        const text = await getManualText();
+        preAlignEditor.textContent = text || '(No original transcript available)';
+      }
+    );
+    container.appendChild(preToggle.bar);
+
     // Auto-save — ensure we always save to an 'edited' version (not manual)
     const preSaveStatus = document.createElement('span');
     preSaveStatus.className = 'text-secondary';
@@ -1631,6 +1683,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     let _preTimer = null;
     let _ensuredEdited = false;
     preAlignEditor.addEventListener('input', () => {
+      if (preToggle.getMode() !== 'edited') return;
       preSaveStatus.textContent = 'Unsaved...';
       clearTimeout(_preTimer);
       _preTimer = setTimeout(() => {
@@ -2480,6 +2533,39 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   toolbar.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;';
   if (playPauseBtn) toolbar.appendChild(playPauseBtn);
 
+  // View toggle — Edited (editable, with timestamps) vs Manual (readonly original)
+  let _viewMode = 'edited';
+  const editedToggleBtn = document.createElement('button');
+  const manualToggleBtn = document.createElement('button');
+  editedToggleBtn.textContent = 'Edited';
+  manualToggleBtn.textContent = 'Manual (original)';
+  function refreshToggle() {
+    editedToggleBtn.className = _viewMode === 'edited' ? 'action-btn action-btn-primary' : 'action-btn';
+    manualToggleBtn.className = _viewMode === 'manual' ? 'action-btn action-btn-primary' : 'action-btn';
+  }
+  refreshToggle();
+  editedToggleBtn.addEventListener('click', () => {
+    if (_viewMode === 'edited') return;
+    _viewMode = 'edited';
+    refreshToggle();
+    editorDiv.contentEditable = 'true';
+    editorDiv.style.opacity = '';
+    buildEditorContent();
+  });
+  manualToggleBtn.addEventListener('click', async () => {
+    if (_viewMode === 'manual') return;
+    _viewMode = 'manual';
+    refreshToggle();
+    editorDiv.contentEditable = 'false';
+    editorDiv.style.opacity = '0.85';
+    editorDiv.innerHTML = '';
+    editorDiv.textContent = 'Loading original...';
+    const text = await getManualText();
+    editorDiv.textContent = text || '(No original transcript available)';
+  });
+  toolbar.appendChild(editedToggleBtn);
+  toolbar.appendChild(manualToggleBtn);
+
   const saveStatus = document.createElement('span');
   saveStatus.className = 'text-secondary';
   saveStatus.style.cssText = 'font-size:0.8rem;margin-left:auto;';
@@ -2547,6 +2633,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
   let _ensuredEditedPost = false;
   editorDiv.addEventListener('input', () => {
+    if (_viewMode !== 'edited') return;
     saveStatus.textContent = 'Unsaved...';
     clearTimeout(_editorSaveTimer);
     _editorSaveTimer = setTimeout(() => {
