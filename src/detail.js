@@ -1631,11 +1631,11 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       const fullAlignment = words ? { ...alignment, words } : alignment;
       if (words) updateState('alignments', audioId, fullAlignment);
       placeholder.remove();
-      renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl, activeVersionRef, getCurrentText);
+      renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl, activeVersionRef, getCurrentText, getManualText);
       renderIterationHistory(audioId, container, pageContainer, playerEl);
     });
   } else if (alignment) {
-    renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef, getCurrentText);
+    renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef, getCurrentText, getManualText);
     renderIterationHistory(audioId, container, pageContainer, playerEl);
   } else {
     // No alignment yet — show plain text editor for editing before alignment
@@ -2426,7 +2426,7 @@ player.addEventListener('timeupdate',()=>{
 </html>`;
 }
 
-function renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef, getCurrentText) {
+function renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef, getCurrentText, getManualText) {
   const words = alignment?.words ?? [];
 
   const viewer = document.createElement('div');
