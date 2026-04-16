@@ -230,16 +230,27 @@ export async function doAlignRequest(requestBody, chunkLabel, onProgress) {
       throw new Error(`Alignment network error after ${MAX_RETRIES} attempts: ${err.message}`);
     }
     clearTimeout(timeoutId);
-    // Retry on gateway errors and HTTP/2 stream resets (CF edge returns 400 with
-    // "goaway or rst_stream" HTML — transient, not a real bad request).
-    const isTransient400 = response.status === 400 && response.headers.get('content-type')?.includes('text/html');
-    if (response.status === 502 || response.status === 504 || isTransient400) {
+    if (response.status === 502 || response.status === 504) {
       console.warn(`[Align${chunkLabel}] Got ${response.status} on attempt ${attempt}/${MAX_RETRIES} — retrying in ${RETRY_DELAY_MS / 1000}s...`);
       if (attempt < MAX_RETRIES) {
         if (onProgress) onProgress(attempt, MAX_RETRIES);
         await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
         continue;
       }
+    }
+    // HTTP/2 stream resets: CF edge returns 400 with "goaway or rst_stream" HTML.
+    // Read the body to detect this — it's transient, not a real bad request.
+    if (response.status === 400) {
+      const body400 = await response.text().catch(() => '');
+      if (body400.includes('goaway') || body400.includes('rst_stream')) {
+        console.warn(`[Align${chunkLabel}] HTTP/2 stream reset on attempt ${attempt}/${MAX_RETRIES} — retrying...`);
+        if (attempt < MAX_RETRIES) {
+          if (onProgress) onProgress(attempt, MAX_RETRIES);
+          await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+          continue;
+        }
+      }
+      throw new Error(`Alignment API error 400: ${body400}`);
     }
     break;
   }
