@@ -2578,9 +2578,14 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     editToggleBtn.textContent = editMode ? '✏ Done' : '✏ Edit';
     editToggleBtn.classList.toggle('seg-edit-active', editMode);
     bulkPanel.style.display = editMode ? '' : 'none';
-    renderSegmentChips();
+    // Switch to segment mode when entering edit (editing is per-segment)
+    if (editMode && allWordsMode) {
+      allWordsMode = false;
+      updateAllWordsBtn();
+    }
+    if (allWordsMode) renderAllWords(); else renderSegmentChips();
+    if (editMode) refreshBulkTextarea();
   });
-  segHeader.appendChild(editToggleBtn);
   viewer.appendChild(segHeader);
 
   // Stats bar removed for cleaner karaoke UI
@@ -2641,6 +2646,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
   toolbar.appendChild(allWordsBtn);
   toolbar.appendChild(problemFilterBtn);
+  toolbar.appendChild(editToggleBtn);
   toolbar.appendChild(editStatus);
   leftPanel.appendChild(toolbar);
 
@@ -2949,7 +2955,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
         if (playerEl) {
           span.style.cursor = 'pointer';
-          const seekFn = () => { playerEl.currentTime = w.start; if (playerEl.paused) playerEl.play(); };
+          const seekFn = () => { playerEl.currentTime = w.start; if (playerEl.paused) playerEl.play().catch(() => {}); };
           span._seekHandler = seekFn;
           span.addEventListener('click', seekFn);
         }
@@ -3061,7 +3067,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       if (!editMode && playerEl) {
         span.style.cursor = isDeleted ? 'default' : 'pointer';
         if (!isDeleted) {
-          const seekFn = () => { playerEl.currentTime = w.start; if (playerEl.paused) playerEl.play(); };
+          const seekFn = () => { playerEl.currentTime = w.start; if (playerEl.paused) playerEl.play().catch(() => {}); };
           span._seekHandler = seekFn;
           span.addEventListener('click', seekFn);
         }
