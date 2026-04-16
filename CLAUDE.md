@@ -373,14 +373,16 @@ Editing a name in the table or detail page calls `updateState('audioNames', id, 
 
 **Important:** Always use state key `'audioNames'` (not `'renamedFiles'`). The detail page and table both use this key.
 
-### Manual transcript tab is read-only
-In `detail.js`, versions with `type === 'manual'` render the textarea with `readOnly = true` — no save handlers are attached, and a 🔒 badge is shown. A **"Start Editing"** button appears below the read-only area; clicking it fetches the full text (R2 → Supabase fallback), creates an `edited` version via `addVersion()`, and re-renders the detail page with that version active. This means every mapped file can immediately start editing without running cleaning tools first.
+### Transcript mapping section (no version tabs)
+The mapping section shows a compact info bar: linked transcript name, version type badge (Manual/Edited), clean rate, confidence, save timestamp. No textarea — all text editing happens in the word view text editor below.
+- If only a `manual` version exists, a **"Start Editing"** button appears. Clicking it creates an `edited` version and re-renders.
+- The text editor auto-creates an `edited` version on first edit if one doesn't exist (no need to click "Start Editing" explicitly).
 
 ### Edited versions persist to Supabase
-`edited` type versions are saved to the `transcript_edits` table (`version='edited'`) so they survive across browsers and sessions. Three sync points:
+`edited` type versions are saved to the `transcript_edits` table (`version='edited'`) so they survive across browsers and sessions. Sync points:
 - `addVersion()` in `state.js` calls `syncEdited()` when `versionData.type === 'edited'`
-- `updateVersion()` in `state.js` calls `syncEdited()` when `updates.text` changes on an edited version (covers the 800ms auto-save debounce in the textarea)
-- `mergeSupabaseData()` in `state.js` restores edited versions from Supabase into `transcriptVersions` on startup — if a version already exists it updates its text, otherwise it creates a restored version entry
+- `updateVersion()` in `state.js` calls `syncEdited()` when `updates.text` changes on an edited version (covers the 800ms auto-save debounce in the text editor)
+- `mergeSupabaseData()` in `state.js` restores edited versions from Supabase into `transcriptVersions` on startup
 
 `syncEdited(audioId, text, audioEntry)` in `db.js` upserts to `transcript_edits` with `onConflict: 'audio_id,version'` — so there is always exactly one `edited` row per audio file (the latest edit). `loadFromSupabase()` extracts `version='edited'` rows into an `edited` key alongside `cleaning` and returns them to `mergeSupabaseData()`.
 
@@ -404,13 +406,14 @@ Speed buttons appear in two places, using the `.speed-btn` / `.word-view-speed-b
 
 Both use a shared `renderSpeedBar(playerEl, speeds)` helper in `detail.js`. They set `audioElement.playbackRate` and toggle the `.active` class on the clicked button.
 
-### Word view inline word editing (always-on, auto-save)
-In `detail.js` `renderWordView()`, word chips are **always directly editable** — there is no "Edit Words" toggle or "Save Word Edits" button:
-- Click any chip → opens inline `<input>`; Tab advances to next word; Enter/Escape commits/cancels; Delete on empty input deletes the word
-- After every commit (word edit, delete, or insert), `scheduleAutoSave()` fires a 1.5s debounced `commitEdits()` that persists changes to state + Supabase
-- A bulk RTL textarea below the chips shows all words space-joined; it auto-applies on blur (no button). Same-count edits preserve timestamps; different count redistributes timestamps evenly across the segment time range
-- `commitEdits()` rebuilds the final word array from `editModeWords` + `insertions`, calls `updateState('alignments', ...)`, `setVersionAlignment()`, and `updateVersion(audioId, versionId, { text: newText })`
-- `editMode` starts as `false` (karaoke mode: click-to-seek). An "✏ Edit" toggle button in the seg-header switches to edit mode (click-to-edit chips, plus-buttons for inserts, bulk textarea visible). The button reads "✏ Done" when active and highlights with accent color.
+### Word view: text editor + karaoke sidebar
+`renderWordView()` in `detail.js` renders a two-column layout:
+- **Left (main): Flowing text editor** — a `contenteditable` div with inline timestamp anchors `[M:SS]` at segment boundaries. Text is always directly editable — no edit mode toggle. Click a timestamp anchor to seek audio; double-click to pin it to the current playhead position. Auto-saves to the `edited` version on 800ms debounce via `updateVersion()`.
+- **Right: Karaoke sidebar** — read-only compact word chips with confidence coloring (green/orange/red). Shows alignment quality at a glance ("N words, N problems"). Click any chip to seek audio. Karaoke highlighting follows playback.
+- Both panels stay synced: clicking a timestamp scrolls the sidebar; clicking a sidebar segment scrolls the editor; playback highlights the active timestamp anchor (green) and active word chip simultaneously.
+- Before alignment exists, a plain text editor (no timestamps) is shown instead, reading from `getCurrentText()`.
+- `getCurrentText()` reads the version text from state (the full edited transcript), NOT from the editor div — this prevents alignment from losing words.
+- Cleaning operations have a **Revert** button (undo stack, up to 20 steps) — `pushUndo()` saves the text before each cleaning pass.
 
 ### Pipeline stepper and iterative cleaning workflow
 `renderUnifiedWorkSection()` in `detail.js` renders all pipeline tools unconditionally (no step-gating):
@@ -579,19 +582,9 @@ The "Save Cleaned Text as Edited Version" button has been removed — it is no l
 ### Per-version alignment storage
 Alignment data is stored both in the legacy flat `state.alignments[audioId]` key (for backward compat) AND on the individual version object as `version.alignment`. When the Align button is clicked, the active version's ID is passed to `alignRow()`, which calls `setVersionAlignment(audioId, versionId, alignment)` to attach the alignment to that version. This means each edit-then-realign cycle preserves its own alignment data independently.
 
-`getAlignedVersions(audioId)` returns all versions that have `.alignment.words` attached — used by the Compare Versions UI to know when comparison is possible.
+`getAlignedVersions(audioId)` returns all versions that have `.alignment.words` attached.
 
-### Compare Versions view
-When 2+ versions have alignment data, a **"Compare Versions"** button appears below the word view in the Processing section. Clicking it opens `renderCompareView()` which builds:
-- **Two-column layout** with dropdown selectors to pick any two aligned versions (shows type, avg confidence %, alignment date)
-- **Word chips** on both sides with confidence coloring (green/orange/red) and click-to-seek audio playback
-- **Karaoke highlighting** — both columns independently track the audio playhead via `timeupdate` listeners and highlight the active word with `.active` class
-- **Confidence diff indicators** — `box-shadow: inset 0 -3px 0 0 var(--green)` (`.confidence-improved`) for words with >10% better confidence than the same position in the other column, red (`.confidence-degraded`) for >10% worse
-- **Legend bar** explaining the visual indicators
-- Columns stack vertically on screens ≤768px
-- Old `timeupdate` listeners are cleaned up when columns are rebuilt via selector changes
-
-The intended iterative workflow: clean → align → edit → align again → compare both → repeat until all words are green.
+The intended iterative workflow: clean → align → edit text → align again → repeat until confidence is high.
 
 ### ASR Transcription — dedicated page `/transcribe.html`
 
@@ -645,7 +638,7 @@ Running an ASR provider from the detail page creates (or updates) a version of `
 | Whisper   | `asr` (model: whisper)      | `asr-whisper`      |
 | Mendel    | `asr` (model: mendel)       | `asr-mendel`       |
 
-Each ASR version tab is **editable** (auto-saves to Supabase via `syncAsr`), **alignable** (Align button uses the active tab's text), and **comparable** via Compare Versions. Re-running the same model overwrites only that model's slot.
+Each ASR version is **editable** (auto-saves to Supabase via `syncAsr`) and **alignable** (Align button uses the active version's text). Re-running the same model overwrites only that model's slot.
 
 `loadFromSupabase` collects all `version.startsWith('asr-')` rows and returns them as `asr[audioId] = [{text, model, createdAt}, ...]`. `mergeSupabaseData` restores each one as a separate version entry, matched by `type === 'asr' && model === asrData.model`.
 
@@ -955,6 +948,8 @@ debounce(fn, ms)
 ```
 
 ## Filter Keys
+
+The status filter is a **multi-select checkbox dropdown** (`#filter-status` in `index.html`). `statusFilter` in `table.js` is an **array** (not a string). Multiple statuses use OR logic — rows matching ANY checked status are shown. URL persists as `?status=unmapped,mapped`. Default: `['unmapped']`.
 
 Both formats work: `'fifty'` = `'50hr'`, `'fifty-unmapped'` = `'50hr-unmapped'`, etc.
 
