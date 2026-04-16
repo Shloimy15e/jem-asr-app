@@ -1,7 +1,7 @@
 import { initState, getState, getStatus, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions, getPipelineStep, getIterationCount, setSegmentApprovals, getApprovedSegments, toggleSegmentApproval } from './state.js';
 import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, setActiveLibrary, getActiveLibraryConfig, isLibraryR2Url, getAccessToken } from './auth.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
-import { batchClean, cleanSectionMarkers, cleanMinor, cleanIntroText, findBracketMatches, findParenMatches, applyMatchActions, calculateCleanRate } from './cleaning.js';
+import { batchClean, cleanSectionMarkers, cleanMinor, cleanIntroText, cleanWhitespace, findBracketMatches, findParenMatches, findMinorMatches, applyMatchActions, calculateCleanRate } from './cleaning.js';
 import { alignRow, transcribeAudio } from './alignment.js';
 import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark.js';
 import { buildAsrConfigPanel } from './asr-config.js';
@@ -1026,14 +1026,18 @@ function renderInlineDiff(container, orig, clean) {
 // ── Match preview modal for brackets / parentheses ──────────────────
 // Shows each match individually with Delete / Unwrap / Keep options.
 
-function openMatchPreviewModal(audioId, label, currentText, matches, rawOriginal, pageContainer) {
+function openMatchPreviewModal(audioId, label, currentText, matches, rawOriginal, pageContainer, opts) {
   if (matches.length === 0) {
     alert('No matches found.');
     return;
   }
 
-  // Per-match action state: 'delete' | 'unwrap' | 'keep'
-  const actions = matches.map(() => 'delete');
+  opts = opts || {};
+  const actionSet = opts.actions || [['delete', 'Delete'], ['unwrap', 'Unwrap'], ['keep', 'Keep']];
+  const defaultAction = opts.defaultAction || actionSet[0][0];
+
+  // Per-match action state
+  const actions = matches.map(() => defaultAction);
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -1069,10 +1073,10 @@ function openMatchPreviewModal(audioId, label, currentText, matches, rawOriginal
     });
   }
 
-  for (const [act, lbl] of [['delete', 'Delete All'], ['unwrap', 'Unwrap All'], ['keep', 'Keep All']]) {
+  for (const [act, lbl] of actionSet) {
     const btn = document.createElement('button');
-    btn.className = 'action-btn' + (act === 'delete' ? ' action-btn-danger' : '');
-    btn.textContent = lbl;
+    btn.className = 'action-btn' + (act === actionSet[0][0] ? ' action-btn-danger' : '');
+    btn.textContent = lbl + ' All';
     btn.addEventListener('click', () => setAll(act));
     actionBar.appendChild(btn);
   }
@@ -1085,7 +1089,7 @@ function openMatchPreviewModal(audioId, label, currentText, matches, rawOriginal
 
   matches.forEach((m, i) => {
     const row = document.createElement('div');
-    row.className = 'match-preview-row match-action-delete';
+    row.className = 'match-preview-row match-action-' + defaultAction;
 
     const num = document.createElement('span');
     num.className = 'match-preview-num';
@@ -1121,14 +1125,14 @@ function openMatchPreviewModal(audioId, label, currentText, matches, rawOriginal
     const radios = document.createElement('div');
     radios.className = 'match-preview-radios';
     const name = `match-action-${i}`;
-    for (const [val, lbl] of [['delete', 'Delete'], ['unwrap', 'Unwrap'], ['keep', 'Keep']]) {
+    for (const [val, lbl] of actionSet) {
       const radioLabel = document.createElement('label');
       radioLabel.className = 'match-radio-label';
       const radio = document.createElement('input');
       radio.type = 'radio';
       radio.name = name;
       radio.value = val;
-      radio.checked = val === 'delete';
+      radio.checked = val === defaultAction;
       radio.addEventListener('change', () => {
         actions[i] = val;
         row.className = 'match-preview-row match-action-' + val;
@@ -1161,7 +1165,8 @@ function openMatchPreviewModal(audioId, label, currentText, matches, rawOriginal
   applyBtn.addEventListener('click', () => {
     // Check if all actions are 'keep' — nothing to do
     if (actions.every(a => a === 'keep')) { closeModal(); return; }
-    const finalText = applyMatchActions(currentText, matches, actions);
+    let finalText = applyMatchActions(currentText, matches, actions);
+    if (opts.postProcess) finalText = opts.postProcess(finalText);
     const cleanRate = calculateCleanRate(rawOriginal, finalText);
     const versions = getVersions(audioId);
     const existingEdited = versions.find(v => v.type === 'edited');
@@ -1507,7 +1512,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     });
     btnBar.appendChild(sectionBtn);
 
-    // ── Symbols & whitespace — combined minor passes, line-diff modal ──
+    // ── Symbols & whitespace — match-based preview (like brackets/parens) ──
     const minorBtn = document.createElement('button');
     minorBtn.className = 'action-btn clean-pass-btn';
     minorBtn.textContent = 'Clean symbols & whitespace';
@@ -1517,8 +1522,12 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       try {
         const rawOriginal = await getOriginalText();
         const currentText = await getCurrentText();
-        const previewText = cleanMinor(currentText);
-        openPassPreviewModal(audioId, 'Clean symbols & whitespace', currentText, previewText, rawOriginal, pageContainer);
+        const matches = findMinorMatches(currentText);
+        openMatchPreviewModal(audioId, 'Clean symbols & whitespace', currentText, matches, rawOriginal, pageContainer, {
+          actions: [['unwrap', 'Remove'], ['keep', 'Keep']],
+          defaultAction: 'unwrap',
+          postProcess: cleanWhitespace,
+        });
       } finally {
         minorBtn.textContent = 'Clean symbols & whitespace';
         minorBtn.disabled = false;

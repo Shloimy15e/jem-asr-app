@@ -164,6 +164,73 @@ export function cleanMinor(text) {
   return t;
 }
 
+// Extract individual symbol/punctuation matches for the match-based preview modal.
+// Returns matches compatible with openMatchPreviewModal / applyMatchActions:
+//   { match: string, content: string (replacement), index: number }
+// Whitespace cleanup is excluded — applied automatically as post-processing.
+export function findMinorMatches(text) {
+  const matches = [];
+  let m;
+
+  // Smart double quotes — remove unless between two Hebrew letters
+  const smartDblRe = /[\u201C\u201D]/g;
+  while ((m = smartDblRe.exec(text)) !== null) {
+    const prev = m.index > 0 ? text[m.index - 1] : '';
+    const next = m.index < text.length - 1 ? text[m.index + 1] : '';
+    if (/[\u05D0-\u05EA]/.test(prev) && /[\u05D0-\u05EA]/.test(next)) continue;
+    matches.push({ match: m[0], content: '', index: m.index });
+  }
+
+  // Regular " not between two Hebrew letters (abbreviation marks like בס"ד)
+  const dblQuoteRe = /"/g;
+  while ((m = dblQuoteRe.exec(text)) !== null) {
+    const prev = m.index > 0 ? text[m.index - 1] : '';
+    const next = m.index < text.length - 1 ? text[m.index + 1] : '';
+    if (/[\u05D0-\u05EA]/.test(prev) && /[\u05D0-\u05EA]/.test(next)) continue;
+    matches.push({ match: '"', content: '', index: m.index });
+  }
+
+  // ״ (gershayim) not between two Hebrew letters
+  const gershRe = /\u05F4/g;
+  while ((m = gershRe.exec(text)) !== null) {
+    const prev = m.index > 0 ? text[m.index - 1] : '';
+    const next = m.index < text.length - 1 ? text[m.index + 1] : '';
+    if (/[\u05D0-\u05EA]/.test(prev) && /[\u05D0-\u05EA]/.test(next)) continue;
+    matches.push({ match: '\u05F4', content: '', index: m.index });
+  }
+
+  // Dashes / hyphens → space
+  const dashRe = /[-\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g;
+  while ((m = dashRe.exec(text)) !== null) {
+    matches.push({ match: m[0], content: ' ', index: m.index });
+  }
+
+  // Multiple question marks → single
+  const multiQRe = /\?{2,}/g;
+  while ((m = multiQRe.exec(text)) !== null) {
+    matches.push({ match: m[0], content: '?', index: m.index });
+  }
+
+  // Ellipsis (2+ dots or Unicode …)
+  const ellipsisRe = /\.{2,}|\u2026/g;
+  while ((m = ellipsisRe.exec(text)) !== null) {
+    matches.push({ match: m[0], content: '', index: m.index });
+  }
+
+  // Sort by position, remove overlaps
+  matches.sort((a, b) => a.index - b.index);
+  const filtered = [];
+  let lastEnd = -1;
+  for (const match of matches) {
+    if (match.index >= lastEnd) {
+      filtered.push(match);
+      lastEnd = match.index + match.match.length;
+    }
+  }
+
+  return filtered;
+}
+
 export function cleanText(rawText) {
   if (!rawText) return '';
   let text = rawText;
