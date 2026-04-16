@@ -49,12 +49,17 @@ export function initState(data) {
     audioDays: saved.audioDays || {},
     audioTypes: saved.audioTypes || {},
   };
+  // Build Map indexes for O(1) lookups
+  state._transcriptMap = new Map(state.transcripts.map(t => [t.id, t]));
+  state._audioMap = new Map(state.audio.map(a => [a.id, a]));
   // Migrate old format into transcriptVersions
   migrateToVersions();
   return state;
 }
 
 function migrateToVersions() {
+  if (state._migrationDone) return;
+  state._migrationDone = true;
   for (const [audioId, mapping] of Object.entries(state.mappings)) {
     if (!state.transcriptVersions[audioId]) {
       state.transcriptVersions[audioId] = [];
@@ -215,11 +220,15 @@ export function mergeSupabaseData(remote) {
   // Re-run migration so transcriptVersions reflects the merged data
   migrateToVersions();
 
+  // Rebuild Map indexes after merge (audio/transcripts may have been updated)
+  state._transcriptMap = new Map(state.transcripts.map(t => [t.id, t]));
+  state._audioMap = new Map(state.audio.map(a => [a.id, a]));
+
   saveToStorage();
 }
 
 export function updateState(key, audioId, value) {
-  if (!state) return;
+  if (!state) { console.warn('[State] updateState called before init'); return; }
   if (!state[key]) state[key] = {};
   if (audioId === null) {
     state[key] = value;
@@ -228,7 +237,7 @@ export function updateState(key, audioId, value) {
   }
   // Keep state.audio in sync for direct-field overrides
   if (audioId !== null) {
-    const audioEntry = state.audio?.find(a => a.id === audioId);
+    const audioEntry = state._audioMap?.get(audioId);
     if (audioEntry) {
       if (key === 'audioNames') audioEntry.name = value;
       if (key === 'audioComments') audioEntry.comments = value;
@@ -241,7 +250,7 @@ export function updateState(key, audioId, value) {
   saveToStorage();
   // Sync to Supabase (fire and forget)
   if (audioId !== null) {
-    const audioEntry = state.audio?.find(a => a.id === audioId);
+    const audioEntry = state._audioMap?.get(audioId);
     syncStateKey(key, audioId, value, audioEntry);
   }
 }
@@ -252,7 +261,7 @@ export function getStatus(audioId) {
   // A mapping only counts if the transcript it points to actually exists
   const mapping = state.mappings[audioId];
   const hasValidTranscript = mapping
-    && (state.transcripts || []).some(t => t.id === mapping.transcriptId);
+    && state._transcriptMap?.has(mapping.transcriptId);
 
   // Also check if a manual version exists with a valid sourceTranscriptId —
   // this covers cases where the mapping was lost during Supabase sync but
@@ -260,7 +269,7 @@ export function getStatus(audioId) {
   const versions = state.transcriptVersions[audioId];
   const hasVersionMapping = !hasValidTranscript && versions && versions.length > 0
     && versions.some(v => v.type === 'manual' && v.sourceTranscriptId
-      && (state.transcripts || []).some(t => t.id === v.sourceTranscriptId));
+      && state._transcriptMap?.has(v.sourceTranscriptId));
 
   if (!hasValidTranscript && !hasVersionMapping) return 'unmapped';
 
@@ -292,9 +301,9 @@ export function getCompletedStages(audioId) {
   // Check mapping (same logic as getStatus)
   const mapping = state.mappings[audioId];
   const versions = state.transcriptVersions[audioId];
-  const hasMapping = (mapping && (state.transcripts || []).some(t => t.id === mapping.transcriptId))
+  const hasMapping = (mapping && state._transcriptMap?.has(mapping.transcriptId))
     || (versions && versions.some(v => v.type === 'manual' && v.sourceTranscriptId
-        && (state.transcripts || []).some(t => t.id === v.sourceTranscriptId)));
+        && state._transcriptMap?.has(v.sourceTranscriptId)));
   if (!hasMapping) return result; // unmapped — nothing is done
 
   result.mapped = true;
@@ -366,11 +375,11 @@ export function addVersion(audioId, versionData) {
   saveToStorage();
   // Persist edited/asr versions to Supabase so they survive across browsers/sessions
   if (versionData.type === 'edited' && versionData.text != null) {
-    const audioEntry = state.audio?.find(a => a.id === audioId);
+    const audioEntry = state._audioMap?.get(audioId);
     syncEdited(audioId, versionData.text, audioEntry).catch(console.warn);
   }
   if (versionData.type === 'asr' && versionData.text != null) {
-    const audioEntry = state.audio?.find(a => a.id === audioId);
+    const audioEntry = state._audioMap?.get(audioId);
     syncAsr(audioId, versionData.text, versionData.model, audioEntry).catch(console.warn);
   }
   return version;
@@ -387,11 +396,11 @@ export function updateVersion(audioId, versionId, updates) {
     saveToStorage();
     // Sync text changes for edited/asr versions to Supabase
     if (v.type === 'edited' && updates.text != null) {
-      const audioEntry = state.audio?.find(a => a.id === audioId);
+      const audioEntry = state._audioMap?.get(audioId);
       syncEdited(audioId, v.text, audioEntry).catch(console.warn);
     }
     if (v.type === 'asr' && updates.text != null) {
-      const audioEntry = state.audio?.find(a => a.id === audioId);
+      const audioEntry = state._audioMap?.get(audioId);
       syncAsr(audioId, v.text, v.model, audioEntry).catch(console.warn);
     }
   }
@@ -499,71 +508,80 @@ export function getAudiosByTranscriptId(transcriptId) {
 export function addTranscript(transcript) {
   if (!state) return;
   state.transcripts.push(transcript);
+  state._transcriptMap?.set(transcript.id, transcript);
 }
 
 export function getFilteredRows(filter, searchTerm, sortCol, sortDir, yearFilter, monthFilter, typeFilter) {
   if (!state) return [];
   const { audio } = state;
 
-  // Support compound keys (fifty-unmapped, not-fifty-mapped, etc.)
-  let fiftyMode = '';  // '' = all, 'yes' = 50hr only, 'no' = not in 50hr
-  let statusFilter = '';
-  if (typeof filter === 'string') {
+  // Accept structured filter object { fifty, statuses } or legacy string
+  let fiftyMode = '';
+  let statuses = [];
+  if (filter && typeof filter === 'object') {
+    fiftyMode = filter.fifty || '';
+    statuses = filter.statuses || [];
+  } else if (typeof filter === 'string') {
+    // Legacy string support
     const f = filter.replace('50hr', 'fifty');
     if (f === 'not-fifty' || f.startsWith('not-fifty-')) {
       fiftyMode = 'no';
-      statusFilter = f === 'not-fifty' ? '' : f.replace('not-fifty-', '');
+      const s = f === 'not-fifty' ? '' : f.replace('not-fifty-', '');
+      if (s) statuses = [s];
     } else if (f === 'fifty' || f.startsWith('fifty-')) {
       fiftyMode = 'yes';
-      statusFilter = f === 'fifty' ? '' : f.replace('fifty-', '');
-    } else if (['unmapped', 'mapped', 'cleaned', 'aligned', 'approved', 'rejected', 'benchmark'].includes(f)) {
-      statusFilter = f;
-    } else if (f === 'needs-review' || f === 'needsReview') {
-      statusFilter = 'aligned';
-    } else if (f === 'perfect-match') {
-      statusFilter = 'perfect-match';
-    } else if (f === 'strong-match') {
-      statusFilter = 'strong-match';
+      const s = f === 'fifty' ? '' : f.replace('fifty-', '');
+      if (s) statuses = [s];
+    } else if (f !== 'all' && f) {
+      statuses = [f];
     }
-    // 'all' or default → no status filter
   }
 
-  let rows = audio;
-
-  // 50hr filter
-  if (fiftyMode === 'yes') rows = rows.filter(a => a.isSelected50hr);
-  if (fiftyMode === 'no') rows = rows.filter(a => !a.isSelected50hr);
-
-  // Status filter
-  if (statusFilter === 'benchmark') {
-    rows = rows.filter(a => a.isBenchmark);
-  } else if (statusFilter === 'perfect-match') {
-    rows = rows.filter(a => { const m = state.mappings[a.id]; return m && m.confidence === 1; });
-  } else if (statusFilter === 'strong-match') {
-    rows = rows.filter(a => { const m = state.mappings[a.id]; return m && m.confidence >= 0.5; });
-  } else if (statusFilter) {
-    rows = rows.filter(a => matchesStatusFilter(a.id, statusFilter));
+  // Build transcript name lookup (audioId -> transcript name) once before filtering
+  // to avoid repeated O(n) scans inside the search predicate.
+  const hasBenchmark = statuses.includes('benchmark');
+  const needsSearch = Boolean(searchTerm);
+  let transcriptNameMap = null;
+  if (needsSearch) {
+    transcriptNameMap = new Map();
+    for (const [audioId, mapping] of Object.entries(state.mappings)) {
+      const transcript = state._transcriptMap?.get(mapping.transcriptId);
+      if (transcript) transcriptNameMap.set(audioId, transcript.name || '');
+    }
   }
 
-  // Year/month/type filters
-  if (yearFilter) rows = rows.filter(a => a.year === yearFilter);
-  if (monthFilter) rows = rows.filter(a => a.month === monthFilter);
-  if (typeFilter) rows = rows.filter(a => a.type === typeFilter);
+  const term = needsSearch ? searchTerm.toLowerCase() : '';
 
-  // Search
-  if (searchTerm) {
-    const term = searchTerm.toLowerCase();
-    rows = rows.filter(a => {
+  // Single-pass filter combining all conditions
+  const rows = audio.filter(a => {
+    // 50hr filter
+    if (fiftyMode === 'yes' && !a.isSelected50hr) return false;
+    if (fiftyMode === 'no' && a.isSelected50hr) return false;
+
+    // Status filter — supports multiple statuses (OR logic)
+    if (statuses.length > 0) {
+      if (!(hasBenchmark && a.isBenchmark) && !statuses.some(s => matchesStatusFilter(a.id, s))) return false;
+    }
+
+    // Year/month/type filters
+    if (yearFilter && a.year !== yearFilter) return false;
+    if (monthFilter && a.month !== monthFilter) return false;
+    if (typeFilter && a.type !== typeFilter) return false;
+
+    // Search
+    if (needsSearch) {
       const name = (a.name || '').toLowerCase();
-      const transcript = getTranscriptNameForAudio(a.id).toLowerCase();
-      return name.includes(term) || transcript.includes(term);
-    });
-  }
+      const transcriptName = (transcriptNameMap.get(a.id) || '').toLowerCase();
+      if (!name.includes(term) && !transcriptName.includes(term)) return false;
+    }
+
+    return true;
+  });
 
   // Sort
   if (sortCol) {
     const dir = sortDir === 'desc' ? -1 : 1;
-    rows = [...rows].sort((a, b) => {
+    return [...rows].sort((a, b) => {
       let va = a[sortCol] || '';
       let vb = b[sortCol] || '';
       if (typeof va === 'string') {
@@ -583,7 +601,7 @@ export function getFilteredRows(filter, searchTerm, sortCol, sortDir, yearFilter
 function getTranscriptNameForAudio(audioId) {
   if (!state || !state.mappings || !state.mappings[audioId]) return '';
   const mapping = state.mappings[audioId];
-  const transcript = (state.transcripts || []).find(t => t.id === mapping.transcriptId);
+  const transcript = state._transcriptMap?.get(mapping.transcriptId);
   return transcript ? transcript.name : '';
 }
 
@@ -741,6 +759,7 @@ export function saveToStorage() {
     localStorage.setItem(getStorageKey(), JSON.stringify(persist));
   } catch (e) {
     console.warn('Failed to save state to localStorage:', e);
+    window.dispatchEvent(new CustomEvent('storage-quota-exceeded', { detail: { error: e } }));
   }
 }
 
