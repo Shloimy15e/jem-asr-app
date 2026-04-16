@@ -2914,7 +2914,10 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
       const audioResult = await fetchAudioForAlignment(url, audioStart, trimEnd, audioDuration);
       const requestBody = buildRequestBody(audioResult, remainingText);
-      const data = await doAlignRequest(requestBody, ' re-align');
+      const onProgress = (attempt, max) => {
+        if (btn) btn.textContent = `Retrying ${attempt}/${max}…`;
+      };
+      const data = await doAlignRequest(requestBody, ' re-align', onProgress);
 
       let rawWords = data.timestamps || [];
       if (rawWords.length === 0 && data.segments) {
