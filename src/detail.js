@@ -1315,19 +1315,6 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
 
   // ── Shared text helpers ──
   async function getCurrentText() {
-    // If a text editor is live on the page, read directly from it (captures unsaved edits)
-    const liveEditor = document.querySelector('.text-editor-view');
-    if (liveEditor) {
-      const clone = liveEditor.cloneNode(true);
-      clone.querySelectorAll('.timestamp-anchor').forEach(a => a.remove());
-      const liveText = clone.innerText.replace(/\n{3,}/g, '\n\n').trim();
-      if (liveText) {
-        // Also flush save to state so version stays in sync
-        const versionId = activeVersionRef?.id;
-        if (versionId) updateVersion(audioId, versionId, { text: liveText, updatedAt: new Date().toISOString() });
-        return liveText;
-      }
-    }
     const selectedId = activeVersionRef?.id;
     if (selectedId) {
       const versions = getVersions(audioId);
@@ -1637,18 +1624,30 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       preAlignEditor.textContent = text || 'Click "Start Editing" above to load the transcript text, then edit here.';
     });
 
-    // Auto-save
+    // Auto-save — ensure we always save to an 'edited' version (not manual)
     const preSaveStatus = document.createElement('span');
     preSaveStatus.className = 'text-secondary';
     preSaveStatus.style.fontSize = '0.8rem';
     let _preTimer = null;
+    let _ensuredEdited = false;
     preAlignEditor.addEventListener('input', () => {
       preSaveStatus.textContent = 'Unsaved...';
       clearTimeout(_preTimer);
       _preTimer = setTimeout(() => {
         const text = preAlignEditor.innerText.trim();
-        const versionId = activeVersionRef?.id;
-        if (versionId && text) {
+        if (!text) return;
+        // If current version is manual, auto-create an edited version on first edit
+        const versions = getVersions(audioId);
+        let editedVersion = versions.find(v => v.type === 'edited');
+        if (!editedVersion && !_ensuredEdited) {
+          _ensuredEdited = true;
+          const mapping = getState().mappings[audioId];
+          addVersion(audioId, { type: 'edited', sourceTranscriptId: mapping?.transcriptId, text, createdBy: getCurrentUser() });
+          editedVersion = getVersions(audioId).find(v => v.type === 'edited');
+          if (activeVersionRef && editedVersion) activeVersionRef.id = editedVersion.id;
+        }
+        const versionId = editedVersion?.id || activeVersionRef?.id;
+        if (versionId) {
           updateVersion(audioId, versionId, { text, updatedAt: new Date().toISOString() });
           const now = new Date();
           preSaveStatus.textContent = `Saved ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -2494,19 +2493,18 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   editorDiv.dir = 'rtl';
   editorDiv.spellcheck = false;
 
-  // Build editor content: flowing text with timestamp anchors at segment boundaries
+  // Build editor content from alignment words with timestamp anchors at segment boundaries.
+  // Always shows the current alignment state. Edits save to the version text for the next alignment.
   function buildEditorContent() {
     editorDiv.innerHTML = '';
     segments.forEach((seg, segIdx) => {
-      // Timestamp anchor at segment start
       const anchor = document.createElement('span');
       anchor.className = 'timestamp-anchor';
       anchor.contentEditable = 'false';
       anchor.dataset.time = String(seg[0]?.start || 0);
       anchor.textContent = `[${fmtSec(seg[0]?.start)}]`;
-      anchor.title = 'Click to seek • Drag to adjust timestamp';
+      anchor.title = 'Click to seek • Double-click to pin to playhead';
       anchor.dataset.segIdx = String(segIdx);
-      // Click = seek audio to this timestamp
       anchor.addEventListener('click', (e) => {
         e.preventDefault();
         if (playerEl) {
@@ -2516,7 +2514,6 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
         const sidebarSeg = sidebar.querySelector(`[data-seg-idx="${segIdx}"]`);
         if (sidebarSeg) sidebarSeg.scrollIntoView({ block: 'center', behavior: 'smooth' });
       });
-      // Double-click = pin this anchor to current playhead position
       anchor.addEventListener('dblclick', (e) => {
         e.preventDefault();
         if (!playerEl) return;
@@ -2524,15 +2521,13 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
         anchor.dataset.time = String(newTime);
         anchor.textContent = `[${fmtSec(newTime)}]`;
         anchor.classList.add('timestamp-adjusted');
-        anchor.title = `📌 Adjusted to ${fmtSec(newTime)} — will be used as boundary on next Re-Align`;
+        anchor.title = `📌 Adjusted to ${fmtSec(newTime)}`;
       });
       editorDiv.appendChild(anchor);
 
-      // Segment text
       const text = seg.map(w => w.word || w.text || '').join(' ');
       editorDiv.appendChild(document.createTextNode(' ' + text + ' '));
 
-      // Line break between segments for visual clarity
       if (segIdx < segments.length - 1) {
         editorDiv.appendChild(document.createElement('br'));
       }
@@ -2550,12 +2545,24 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     return clone.innerText.replace(/\n{3,}/g, '\n\n').trim();
   }
 
+  let _ensuredEditedPost = false;
   editorDiv.addEventListener('input', () => {
     saveStatus.textContent = 'Unsaved...';
     clearTimeout(_editorSaveTimer);
     _editorSaveTimer = setTimeout(() => {
       const text = getEditorPlainText();
-      const versionId = activeVersionRef?.id;
+      if (!text) return;
+      // Ensure we save to an edited version, not manual
+      const versions = getVersions(audioId);
+      let editedVersion = versions.find(v => v.type === 'edited');
+      if (!editedVersion && !_ensuredEditedPost) {
+        _ensuredEditedPost = true;
+        const mapping = getState().mappings[audioId];
+        addVersion(audioId, { type: 'edited', sourceTranscriptId: mapping?.transcriptId, text, createdBy: getCurrentUser() });
+        editedVersion = getVersions(audioId).find(v => v.type === 'edited');
+        if (activeVersionRef && editedVersion) activeVersionRef.id = editedVersion.id;
+      }
+      const versionId = editedVersion?.id || activeVersionRef?.id;
       if (versionId && text) {
         updateVersion(audioId, versionId, { text, updatedAt: new Date().toISOString() });
         const now = new Date();

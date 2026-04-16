@@ -58,13 +58,17 @@ function audioBufferToWavBlob(buffer) {
 // The CF Worker applies byte-level trimming when trimStart/trimEnd are provided.
 // Only non-R2 URLs (e.g. Google Drive) fall back to browser-side fetch + base64.
 export async function fetchAudioForAlignment(url, trimStart, trimEnd, audioDuration) {
-  const hasTrim = (trimStart > 0) || (trimEnd > 0);
-
-  // For all R2 audio (trimmed or not), pass the URL to the CF Worker.
-  // The Worker fetches from R2 with no inbound size limit and handles trimming server-side.
+  // For all R2 audio, always pass trim params to the CF Worker so it uses range-fetch
+  // instead of loading the entire file into memory (which exceeds Worker resource limits).
   if (isLibraryR2Url(url)) {
-    return { audioUrl: url, trimStart: hasTrim ? trimStart : undefined, trimEnd: hasTrim ? trimEnd : undefined, audioDuration: hasTrim ? audioDuration : undefined };
+    return {
+      audioUrl: url,
+      trimStart: trimStart || 0,
+      trimEnd: trimEnd || undefined,
+      audioDuration: audioDuration || undefined,
+    };
   }
+  const hasTrim = (trimStart > 0) || (trimEnd > 0);
 
   let res;
   try {
@@ -182,13 +186,13 @@ async function sliceToWavBase64(audioBuffer, startSec, endSec) {
   return blobToBase64(wavBlob);
 }
 
-// Split text into chunks of at most CHUNK_LIMIT chars, splitting at word boundaries.
-function splitTextIntoChunks(text) {
-  if (text.length <= CHUNK_LIMIT) return [text];
+// Split text into chunks of at most `limit` chars, splitting at word boundaries.
+function splitTextIntoChunks(text, limit = CHUNK_LIMIT) {
+  if (text.length <= limit) return [text];
   const chunks = [];
   let pos = 0;
   while (pos < text.length) {
-    const end = pos + CHUNK_LIMIT;
+    const end = pos + limit;
     if (end >= text.length) {
       chunks.push(text.slice(pos));
       break;
@@ -268,8 +272,8 @@ export function buildRequestBody(audioResult, chunkText) {
       ? {
           mode: 'align',
           audio_url: audioResult.audioUrl,
-          ...(audioResult.trimStart > 0 ? { trim_start: audioResult.trimStart } : {}),
-          ...(audioResult.trimEnd > 0 ? { trim_end: audioResult.trimEnd } : {}),
+          ...(audioResult.trimStart != null ? { trim_start: audioResult.trimStart } : {}),
+          ...(audioResult.trimEnd != null && audioResult.trimEnd > 0 ? { trim_end: audioResult.trimEnd } : {}),
           ...(audioResult.audioDuration ? { audio_duration: audioResult.audioDuration } : {}),
           text: chunkText,
           language: 'yi',
@@ -297,7 +301,11 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const audioEntry = state.audio.find(a => a.id === audioId);
   const audioDuration = (audioEntry?.estMinutes || 0) * 60;
 
-  const chunks = splitTextIntoChunks(alignText);
+  // Force smaller chunks for long audio to stay within CF Worker memory limits.
+  // Each chunk's audio slice gets fetched and base64-encoded by the Worker —
+  // ~15 min of 128kbps MP3 ≈ 14MB base64, safely under the ~25MB Worker limit.
+  const maxChunkChars = audioDuration > 900 ? 8000 : CHUNK_LIMIT;
+  const chunks = splitTextIntoChunks(alignText, maxChunkChars);
 
   if (chunks.length > 1) {
     console.log(`[Align] Text too long (${alignText.length} chars) — splitting into ${chunks.length} chunks (audio ~${Math.round(audioDuration)}s)`);
