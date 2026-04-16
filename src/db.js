@@ -645,3 +645,6 @@ export async function loadFromSupabase(libraryId = null) {
     return null;
   }
 }
+
+// Alias for detail page — loads full dataset for now
+export const loadForDetailPage = loadFromSupabase;

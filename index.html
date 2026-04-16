@@ -36,16 +36,18 @@
         <option value="yes">50hr only</option>
         <option value="no">Not in 50hr</option>
       </select>
-      <select id="filter-status" class="filter-select">
-        <option value="">All Statuses</option>
-        <option value="unmapped">Unmapped</option>
-        <option value="mapped">Mapped</option>
-        <option value="cleaned">Cleaned</option>
-        <option value="aligned">Aligned</option>
-        <option value="approved">Approved</option>
-        <option value="rejected">Rejected</option>
-        <option value="benchmark">Benchmark</option>
-      </select>
+      <div class="multi-select" id="filter-status">
+        <button class="multi-select-btn filter-select" type="button">All Statuses</button>
+        <div class="multi-select-dropdown">
+          <label><input type="checkbox" value="unmapped"> Unmapped</label>
+          <label><input type="checkbox" value="mapped"> Mapped</label>
+          <label><input type="checkbox" value="cleaned"> Cleaned</label>
+          <label><input type="checkbox" value="aligned"> Aligned</label>
+          <label><input type="checkbox" value="approved"> Approved</label>
+          <label><input type="checkbox" value="rejected"> Rejected</label>
+          <label><input type="checkbox" value="benchmark"> Benchmark</label>
+        </div>
+      </div>
       <select id="filter-confidence" class="filter-select">
         <option value="">All Confidence</option>
         <option value="perfect">Perfect Match (100%)</option>

@@ -1168,12 +1168,9 @@ function renderTable(container, options = {}) {
     updateMultiSelectLabel(statusBtn, statusFilter, 'All Statuses');
 
     // Toggle dropdown open/close
-    statusBtn.addEventListener('click', (e) => {
+    statusBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
       e.stopPropagation();
-      // Close other multi-selects
-      document.querySelectorAll('.multi-select.open').forEach(ms => {
-        if (ms !== statusContainer) ms.classList.remove('open');
-      });
       statusContainer.classList.toggle('open');
     });
 
@@ -1189,13 +1186,11 @@ function renderTable(container, options = {}) {
       });
     });
 
-    // Prevent dropdown from closing when clicking inside
-    statusContainer.querySelector('.multi-select-dropdown')
-      .addEventListener('click', (e) => e.stopPropagation());
-
     // Close on click outside
-    document.addEventListener('click', () => {
-      statusContainer.classList.remove('open');
+    document.addEventListener('mousedown', (e) => {
+      if (!statusContainer.contains(e.target)) {
+        statusContainer.classList.remove('open');
+      }
     });
   }
 
