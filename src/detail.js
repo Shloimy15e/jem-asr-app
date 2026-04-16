@@ -1671,7 +1671,8 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       const info = document.createElement('span');
       info.className = 'text-secondary';
       info.style.fontSize = '0.82rem';
-      info.textContent = `Avg: ${formatConfidence(alignment.avgConfidence)} | Low: ${alignment.lowConfidenceCount} words`;
+      const alignedDate = alignment.alignedAt ? ` | Aligned ${new Date(alignment.alignedAt).toLocaleDateString()}` : '';
+      info.textContent = `Avg: ${formatConfidence(alignment.avgConfidence)} | Low: ${alignment.lowConfidenceCount} words${alignedDate}`;
       alignBar.appendChild(info);
     }
     targetEl.appendChild(alignBar);
@@ -3195,14 +3196,16 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       }
       prevActiveChip = found;
 
-      // Pause at the end of the current segment — only when word view is visible
-      // (avoids interfering with the top audio player when user is scrolled up)
-      const segWords = segments[currentSegIdx];
-      if (segWords?.length && !playerEl.paused) {
-        const wvRect = container.getBoundingClientRect();
-        if (wvRect.top < window.innerHeight && wvRect.bottom > 0) {
-          const segEnd = segWords[segWords.length - 1].end;
-          if (t >= segEnd) playerEl.pause();
+      // Pause at the end of the current segment — only in segment-by-segment mode
+      // (in all-words mode there's no "current segment" to pause at)
+      if (!allWordsMode) {
+        const segWords = segments[currentSegIdx];
+        if (segWords?.length && !playerEl.paused) {
+          const wvRect = container.getBoundingClientRect();
+          if (wvRect.top < window.innerHeight && wvRect.bottom > 0) {
+            const segEnd = segWords[segWords.length - 1].end;
+            if (t >= segEnd) playerEl.pause();
+          }
         }
       }
     };
