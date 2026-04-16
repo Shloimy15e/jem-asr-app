@@ -329,10 +329,9 @@ The startup sort in `db.js` originally used `parseInt(a.id.slice(2))` which assu
 `/api/transcript?name=` originally extracted just the filename from `r2TranscriptLink` and prepended `audio.kohnai.ai/transcripts-txt/`. For new libraries whose transcripts live at custom paths (e.g. `hoshana-5710/transcripts/transcript.txt`), this produces a wrong URL. Fixed: `loadFullText` in `detail.js` now passes `?name=<full-path>&domain=<host>` to the proxy. The proxy (`functions/api/transcript.js`) treats `name` as the full path when `domain` is explicitly provided, constructing `https://<domain>/<name>` directly.
 
 ### Audio player must route through /api/audio proxy — never set src directly
-**Three places** set an audio element's `src` — all must proxy R2 URLs:
+**Two places** set an audio element's `src` — both must proxy R2 URLs:
 1. `detail.js` — main detail page player (`playerEl.src`)
-2. `app.js` — inline expanded panel player (unmapped rows)
-3. `table.js` `toggleInlinePlay()` — `new Audio(url)` inline play button
+2. `table.js` `toggleInlinePlay()` — `new Audio(url)` inline play button
 
 For JEM files on `audio.kohnai.ai` this accidentally worked because the browser could reach the URL, but for `r2.dev` URLs it fails with CORS errors. The src must always be `/api/audio?url=<encoded>` for any R2 URL. All three locations use `isLibraryR2Url(audioUrl)` to detect R2 URLs and proxy them.
 
@@ -532,15 +531,12 @@ The `timeupdate` handler pauses at the end of the current segment **only when th
 ### Mobile card view opens detail page
 At ≤480px the table switches to card view (`buildCardView` in `table.js`). Each card has an **"Open"** button and the card itself is clickable — both open `detail.html?id=<audioId>` **in a new tab** so the main table stays visible.
 
-### Row click and keyboard behavior by status
-Clicking a table row calls `onRowExpand(audioId, e)` in `app.js`, which dispatches based on status:
-- `unmapped` → expands inline to show mapping suggestions + Search Transcripts button
-- `mapped` / `cleaned` / `aligned` / `approved` → opens `detail.html?id=` **in a new tab** (table stays visible)
-- `benchmark` → expands inline to show benchmark tools
+### Row click and keyboard behavior
+Clicking any table row opens `detail.html?id=` in a new tab regardless of status. There is no inline expanded panel — all detail work happens on the detail page.
 
-**Arrow keys** (`↑`/`↓`) only highlight/select rows — they do NOT trigger expansion or navigation. Only `Enter` or a click expands/navigates.
+**Arrow keys** (`↑`/`↓`) highlight rows. `Enter` opens the highlighted row's detail page in a new tab.
 
-The inline mapping bar (Linked to / Unlink / Change Transcript / Split Transcript) has been removed from all expanded panels — those controls are on the detail page. However, two quick-action buttons are available directly in the table Actions column:
+Two quick-action buttons are available directly in the table Actions column:
 - **Unlink** — shown for mapped rows. Runs the same cleanup as the detail page unlink (clears mapping, versions, cleaning, alignments, reviews) and refreshes the table.
 - **50hr toggle** — shown for all rows. Displays "50hr" (blue, active) when the file is in the 50hr set, or "+50hr" (muted) when it's not. Toggles `isSelected50hr` and syncs to Supabase via `syncAudioField`.
 
@@ -748,13 +744,16 @@ Direct writes via `updateState()` still work. Legacy keys exist for simpler read
 
 ### getStatus state machine
 
+First checks that `mappings[audioId]` points to a transcript that exists in `state.transcripts`. If the mapping is missing or points to a nonexistent transcript, returns `'unmapped'` immediately.
+
 ```javascript
-versions.some(v => v.review?.status === 'approved')  → 'approved'
-versions.some(v => v.review?.status === 'rejected')  → 'rejected'
+!hasValidTranscript                                   → 'unmapped'
+versions.some(v => v.review?.status === 'approved')   → 'approved'
+versions.some(v => v.review?.status === 'rejected')   → 'rejected'
 versions.some(v => v.alignment)                       → 'aligned'
 versions.some(v => v.type === 'cleaned')              → 'cleaned'
 versions.length > 0                                   → 'mapped'
-else                                                  → 'unmapped'
+else (has valid transcript but no versions)            → 'mapped'
 ```
 
 Falls back to legacy keys if `transcriptVersions` is empty.
@@ -822,7 +821,7 @@ A tab bar (Audio | Transcripts) sits above the filter bar. The Audio tab is the 
 
 ### table.js
 ```javascript
-renderTable(container, options)    // options: { onRowExpand, onFilterChange }
+renderTable(container, options)    // options: { filter, onFilterChange }
 updateTable()                      // rebuilds table DOM; calls stopInlinePlayer() first
 getSelectedRows()                  // → array of selected audioIds
 ```

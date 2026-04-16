@@ -217,6 +217,14 @@ export function updateState(key, audioId, value) {
 
 export function getStatus(audioId) {
   if (!state) return 'unmapped';
+
+  // A mapping only counts if the transcript it points to actually exists
+  const mapping = state.mappings[audioId];
+  const hasValidTranscript = mapping
+    && (state.transcripts || []).some(t => t.id === mapping.transcriptId);
+
+  if (!hasValidTranscript) return 'unmapped';
+
   const versions = state.transcriptVersions[audioId];
   if (versions && versions.length > 0) {
     if (versions.some(v => v.review?.status === 'approved')) return 'approved';
@@ -230,8 +238,7 @@ export function getStatus(audioId) {
   if (state.reviews[audioId]?.status === 'rejected') return 'rejected';
   if (state.alignments[audioId]) return 'aligned';
   if (state.cleaning[audioId]) return 'cleaned';
-  if (state.mappings[audioId]) return 'mapped';
-  return 'unmapped';
+  return 'mapped';
 }
 
 // ── Transcript version helpers ──────────────────────────────────────

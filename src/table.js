@@ -109,8 +109,8 @@ const COLUMNS = [
   { key: 'type',          label: 'Type',              sortable: true,  showWhen: () => true },
   { key: 'sichaNum',      label: 'No.',               sortable: true,  showWhen: () => true },
   { key: 'estMinutes',    label: 'Duration',          sortable: true,  showWhen: () => true },
-  { key: 'firstLine',     label: 'First 15 Words',    sortable: false, showWhen: (f) => !filterMatchesStatus(f, ['unmapped']) },
-  { key: 'transcript',    label: 'Transcript Name',   sortable: true,  showWhen: (f) => !filterMatchesStatus(f, ['unmapped']) },
+  { key: 'firstLine',     label: 'First 15 Words',    sortable: false, showWhen: () => true },
+  { key: 'transcript',    label: 'Transcript Name',   sortable: true,  showWhen: () => true },
   { key: 'comments',      label: 'Comments',          sortable: false, showWhen: () => true },
   { key: 'status',        label: 'Status',            sortable: true,  showWhen: () => true },
   { key: 'actions',       label: 'Actions',           sortable: false, showWhen: () => true },
@@ -853,6 +853,7 @@ function buildTable(rows) {
 
     tr.addEventListener('click', (e) => {
       if (_onRowExpand) _onRowExpand(row.id, e);
+      else window.open(`/detail.html?id=${encodeURIComponent(row.id)}`, '_blank');
     });
 
     tbody.appendChild(tr);

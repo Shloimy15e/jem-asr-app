@@ -1,12 +1,11 @@
 import { initState, getState, getStatus, mergeSupabaseData } from './state.js';
-import { checkAuth, signOut, getUserLibraries, getActiveLibrary, setActiveLibrary, isLibraryR2Url } from './auth.js';
+import { checkAuth, signOut, getUserLibraries, getActiveLibrary, setActiveLibrary } from './auth.js';
 import { loadFromSupabase } from './db.js';
 import { renderTable, updateTable } from './table.js';
 import { renderTranscriptTable, updateTranscriptTable, setTranscriptFilters } from './transcript-table.js';
-import { renderSuggestedMatches, linkMatch, renderSearchModal, renderGlobalTranscriptSearch } from './mapping.js';
+import { renderGlobalTranscriptSearch } from './mapping.js';
 
 
-import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark.js';
 import { buildAsrConfigPanel } from './asr-config.js';
 import { exportCSV } from './utils.js';
 
@@ -94,184 +93,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e.target === modalOverlay) closeModal();
   });
 
-  // ── Row expand handler ──────────────────────────────────────────
-
-  let expandedRow = null;
-
-  function onRowExpand(audioId, e) {
-    const state = getState();
-    const audio = state.audio.find(a => a.id === audioId);
-    if (!audio) return;
-
-    // Remove any existing expanded panel (and its wrapper <tr> if present)
-    const existingRow = document.querySelector('.expanded-panel-row');
-    const existing = existingRow || document.querySelector('.expanded-panel');
-    if (existing) {
-      if (expandedRow === audioId) {
-        existing.remove();
-        expandedRow = null;
-        return;
-      }
-      existing.remove();
-    }
-    expandedRow = audioId;
-
-    const status = getStatus(audioId);
-
-    // Navigate to detail page for all non-unmapped, non-benchmark rows
-    if (status === 'mapped' || status === 'cleaned' || status === 'aligned' || status === 'approved') {
-      expandedRow = null;
-      window.open(`/detail.html?id=${encodeURIComponent(audioId)}`, '_blank');
-      return;
-    }
-
-    const panel = document.createElement('div');
-    panel.className = 'expanded-panel';
-
-    // ── Always show audio player + transcript ──
-    const playerSection = document.createElement('div');
-    playerSection.className = 'player-section';
-
-    // Audio player
-    const audioUrl = audio.r2Link || audio.driveLink;
-    if (audioUrl) {
-      const playerEl = document.createElement('audio');
-      playerEl.controls = true;
-      playerEl.preload = 'none';
-      playerEl.src = isLibraryR2Url(audioUrl) ? `/api/audio?url=${encodeURIComponent(audioUrl)}` : audioUrl;
-      playerEl.className = 'audio-player';
-      playerSection.appendChild(playerEl);
-    } else {
-      const noAudio = document.createElement('div');
-      noAudio.className = 'no-audio';
-      noAudio.textContent = 'No audio URL available';
-      playerSection.appendChild(noAudio);
-    }
-
-    // Transcript display
-    const mapping = state.mappings[audioId];
-    if (mapping) {
-      const transcript = state.transcripts.find(t => t.id === mapping.transcriptId);
-      if (transcript) {
-        const transcriptDiv = document.createElement('div');
-        transcriptDiv.className = 'transcript-section';
-
-        const tHeader = document.createElement('div');
-        tHeader.className = 'transcript-header';
-        tHeader.innerHTML = `<strong>Transcript:</strong> ${transcript.name}`;
-        if (transcript.driveLink) {
-          const viewLink = document.createElement('a');
-          viewLink.href = transcript.driveLink;
-          viewLink.target = '_blank';
-          viewLink.className = 'transcript-link';
-          viewLink.textContent = ' Open in Drive ↗';
-          tHeader.appendChild(viewLink);
-        }
-        transcriptDiv.appendChild(tHeader);
-
-        // Show first line / cleaned text
-        const textContent = state.cleaning[audioId]?.cleanedText
-          || transcript.firstLine
-          || '';
-        if (textContent) {
-          const textDiv = document.createElement('div');
-          textDiv.className = 'transcript-text';
-          textDiv.dir = 'rtl';
-          textDiv.textContent = textContent;
-          transcriptDiv.appendChild(textDiv);
-        }
-        playerSection.appendChild(transcriptDiv);
-      }
-    }
-
-    panel.appendChild(playerSection);
-
-    // ── Status-specific content below player ──
-    if (audio.isBenchmark) {
-      // Benchmark row: show benchmark results + config
-      const configBtn = document.createElement('button');
-      configBtn.className = 'bulk-btn';
-      configBtn.textContent = 'Configure ASR Models';
-      configBtn.addEventListener('click', () => {
-        modalContent.innerHTML = '';
-        renderAsrConfig(modalContent, getState());
-        openModal();
-      });
-      panel.appendChild(configBtn);
-
-      const runBtn = document.createElement('button');
-      runBtn.className = 'bulk-btn';
-      runBtn.textContent = 'Run Benchmark';
-      runBtn.addEventListener('click', async () => {
-        const benchmarkIds = state.audio.filter(a => a.isBenchmark).map(a => a.id);
-        const progress = document.createElement('div');
-        progress.className = 'progress-bar';
-        progress.textContent = 'Starting benchmark...';
-        panel.appendChild(progress);
-        try {
-          await runBenchmark(benchmarkIds, getState(), (done, total) => {
-            progress.textContent = `Benchmarking ${done} / ${total}...`;
-          });
-          progress.textContent = 'Benchmark complete.';
-        } catch (err) {
-          progress.textContent = 'Error: ' + err.message;
-        }
-        renderBenchmarkTable(resultsDiv, getState());
-      });
-      panel.appendChild(runBtn);
-
-      const resultsDiv = document.createElement('div');
-      resultsDiv.className = 'benchmark-results';
-      renderBenchmarkTable(resultsDiv, getState());
-      panel.appendChild(resultsDiv);
-
-      // CRITICAL: No approve button for benchmark rows
-    } else if (status === 'unmapped') {
-      // Show mapping suggestions
-      const suggestionsDiv = document.createElement('div');
-      suggestionsDiv.className = 'suggestions-container';
-      renderSuggestedMatches(suggestionsDiv, audioId, state, (aId, tId) => {
-        linkMatch(aId, tId, 0.8, 'user selected');
-        updateTable();
-        onRowExpand(aId); // Re-render expanded panel
-      });
-
-      const searchBtn = document.createElement('button');
-      searchBtn.className = 'bulk-btn';
-      searchBtn.textContent = 'Search Transcripts';
-      searchBtn.addEventListener('click', () => {
-        renderSearchModal(document.body, getState(), (transcriptId) => {
-          linkMatch(audioId, transcriptId, 1.0, 'manual search');
-          updateTable();
-        });
-      });
-
-      panel.appendChild(suggestionsDiv);
-      panel.appendChild(searchBtn);
-    }
-
-
-    // Insert panel after the clicked row, wrapped in a <tr><td> for valid HTML
-    const targetRow = tableContainer.querySelector(`tr[data-audio-id="${audioId}"]`);
-    if (targetRow) {
-      const wrapperTr = document.createElement('tr');
-      wrapperTr.className = 'expanded-panel-row';
-      const wrapperTd = document.createElement('td');
-      const colCount = targetRow.children.length;
-      wrapperTd.colSpan = colCount;
-      wrapperTd.style.padding = '0';
-      wrapperTd.appendChild(panel);
-      wrapperTr.appendChild(wrapperTd);
-      targetRow.after(wrapperTr);
-    } else {
-      tableContainer.appendChild(panel);
-    }
-  }
-
   // ── Render table ────────────────────────────────────────────────
 
   renderTable(tableContainer, {
-    onRowExpand,
     filter: 'unmapped',
   });
 
@@ -294,7 +118,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Clear and re-render
       tableContainer.innerHTML = '';
       if (tab === 'audio') {
-        renderTable(tableContainer, { onRowExpand, filter: 'unmapped' });
+        renderTable(tableContainer, { filter: 'unmapped' });
       } else {
         renderTranscriptTable(tableContainer);
       }
@@ -450,17 +274,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.getElementById('search-input')?.focus();
     } else if (e.key === 'Escape') {
       closeModal();
-      const panelRow = document.querySelector('.expanded-panel-row');
-      if (panelRow) {
-        panelRow.remove();
-        expandedRow = null;
-      } else {
-        const panel = document.querySelector('.expanded-panel');
-        if (panel) {
-          panel.remove();
-          expandedRow = null;
-        }
-      }
     } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       // Select all visible rows — trigger select-all checkbox
@@ -473,79 +286,27 @@ document.addEventListener('DOMContentLoaded', async () => {
       e.preventDefault();
       document.getElementById('btn-export-csv')?.click();
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-      // Navigate rows — only highlight/select, don't expand
+      // Navigate rows — highlight/select
       e.preventDefault();
       const rows = tableContainer.querySelectorAll('tr.table-row');
       if (rows.length === 0) return;
-      const currentIdx = expandedRow
-        ? [...rows].findIndex(r => r.getAttribute('data-audio-id') === expandedRow)
-        : -1;
+      const highlighted = tableContainer.querySelector('tr.table-row.highlighted');
+      const currentIdx = highlighted ? [...rows].indexOf(highlighted) : -1;
       let nextIdx;
       if (e.key === 'ArrowDown') {
         nextIdx = currentIdx < rows.length - 1 ? currentIdx + 1 : 0;
       } else {
         nextIdx = currentIdx > 0 ? currentIdx - 1 : rows.length - 1;
       }
-      const nextAudioId = rows[nextIdx].getAttribute('data-audio-id');
-      if (nextAudioId) {
-        // Remove highlight from previous row
-        const prevHighlighted = tableContainer.querySelector('tr.table-row.highlighted');
-        if (prevHighlighted) prevHighlighted.classList.remove('highlighted');
-        // Highlight the new row and track it
-        rows[nextIdx].classList.add('highlighted');
-        expandedRow = nextAudioId;
-        rows[nextIdx].scrollIntoView({ block: 'nearest' });
-      }
+      if (highlighted) highlighted.classList.remove('highlighted');
+      rows[nextIdx].classList.add('highlighted');
+      rows[nextIdx].scrollIntoView({ block: 'nearest' });
     } else if (e.key === 'Enter') {
-      // If a row is highlighted, expand it; otherwise approve current expanded panel
-      if (expandedRow) {
-        const existingPanel = document.querySelector('.expanded-panel-row');
-        if (!existingPanel || existingPanel.previousElementSibling?.getAttribute('data-audio-id') !== expandedRow) {
-          // No panel open for this row — expand it
-          onRowExpand(expandedRow);
-        } else {
-          // Panel is already open — try to approve
-          const approveBtn = document.querySelector('.expanded-panel .review-approve-btn');
-          if (approveBtn) approveBtn.click();
-        }
-      }
-    } else if (e.key === 's' && !e.ctrlKey && !e.metaKey) {
-      // Skip current expanded row
-      if (expandedRow) {
-        const skipBtn = document.querySelector('.expanded-panel .review-skip-btn');
-        if (skipBtn) skipBtn.click();
-      }
-    } else if (e.key === 'r' && !e.ctrlKey && !e.metaKey) {
-      // Reject current expanded row
-      if (expandedRow) {
-        const rejectBtn = document.querySelector('.expanded-panel .review-reject-btn');
-        if (rejectBtn) rejectBtn.click();
-      }
-    } else if (e.key === 'e' && !e.ctrlKey && !e.metaKey) {
-      // Toggle edit mode in review panel
-      if (expandedRow) {
-        const editBtn = document.querySelector('.expanded-panel .review-edit-btn');
-        if (editBtn) editBtn.click();
-      }
-    } else if (e.key === ' ') {
-      // Space = play/pause audio
-      e.preventDefault();
-      const audioEl = document.querySelector('.expanded-panel audio');
-      if (audioEl) {
-        if (audioEl.paused) audioEl.play();
-        else audioEl.pause();
-      }
-    } else if (e.key === 'ArrowLeft') {
-      // Seek -5s
-      const audioEl = document.querySelector('.expanded-panel audio');
-      if (audioEl) {
-        audioEl.currentTime = Math.max(0, audioEl.currentTime - 5);
-      }
-    } else if (e.key === 'ArrowRight') {
-      // Seek +5s
-      const audioEl = document.querySelector('.expanded-panel audio');
-      if (audioEl) {
-        audioEl.currentTime = Math.min(audioEl.duration || 0, audioEl.currentTime + 5);
+      // Open highlighted row in detail page
+      const highlighted = tableContainer.querySelector('tr.table-row.highlighted');
+      if (highlighted) {
+        const audioId = highlighted.getAttribute('data-audio-id');
+        if (audioId) window.open(`/detail.html?id=${encodeURIComponent(audioId)}`, '_blank');
       }
     }
   });
