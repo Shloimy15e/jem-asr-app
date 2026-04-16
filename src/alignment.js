@@ -3,8 +3,10 @@ import { isLibraryR2Url } from './auth.js';
 
 const ALIGN_ENDPOINT = '/api/align';
 
-// Old limit was 15K (empirical guess). Testing if stable_whisper handles longer text natively.
-const CHUNK_LIMIT = 100000;
+// Keep chunks short so the model recovers from confusion zones naturally.
+// WAV slicing (fetchAndDecodeFullAudio + sliceToWavBase64) ensures no
+// frame-boundary drift between chunks.
+const CHUNK_LIMIT = 15000;
 
 function getAudioUrl(audioId, state) {
   const entry = state.audio.find(a => a.id === audioId);
