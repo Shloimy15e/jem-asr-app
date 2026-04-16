@@ -1,7 +1,7 @@
 import { getState, updateState, saveToStorage } from './state.js';
 import { deleteMapping, deleteAllWorkData, searchTranscriptText } from './db.js';
 import { getCurrentUser } from './auth.js';
-import { truncateWords, formatConfidence, debounce } from './utils.js';
+import { truncateWords, formatConfidence, debounce, escapeHtml } from './utils.js';
 
 const CONTENT_TYPES = ['sicha', 'maamar', 'farbrengen'];
 
@@ -129,6 +129,12 @@ export function renderSuggestedMatches(container, audioId, state, onLink) {
 }
 
 export function linkMatch(audioId, transcriptId, score, reason) {
+  const state = getState();
+  const transcriptExists = state.transcripts?.some(t => t.id === transcriptId) || state._transcriptMap?.has(transcriptId);
+  if (!transcriptExists) {
+    console.warn('[Mapping] transcriptId not found:', transcriptId);
+    return;
+  }
   updateState('mappings', audioId, {
     transcriptId,
     confidence: score,
@@ -271,17 +277,25 @@ export function renderSearchModal(container, state, onSelect) {
         if (t.text) {
           expanded.textContent = t.text;
         } else if (t.r2TranscriptLink) {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10000);
           try {
             const filename = t.r2TranscriptLink.split('/').pop();
-            const resp = await fetch('/api/transcript?name=' + encodeURIComponent(filename));
+            const resp = await fetch('/api/transcript?name=' + encodeURIComponent(filename), { signal: controller.signal });
             if (resp.ok) {
               t.text = await resp.text();
               expanded.textContent = t.text;
             } else {
               expanded.textContent = t.firstLine || 'Could not load transcript';
             }
-          } catch {
-            expanded.textContent = t.firstLine || 'Could not load transcript';
+          } catch (e) {
+            if (e.name === 'AbortError') {
+              expanded.textContent = 'Timed out loading transcript preview';
+            } else {
+              expanded.textContent = t.firstLine || 'Could not load transcript';
+            }
+          } finally {
+            clearTimeout(timeoutId);
           }
         } else {
           expanded.textContent = t.firstLine || 'No content available';
@@ -497,10 +511,6 @@ function getHighlightedSnippet(text, term, contextChars = 60) {
   result += `${before}<mark>${match}</mark>${after}`;
   if (end < text.length) result += '…';
   return result;
-}
-
-function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function createSelect(name, placeholder, options) {

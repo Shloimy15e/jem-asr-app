@@ -1,15 +1,17 @@
 import { getVersions, addVersion, updateVersion, updateState, getNextIteration } from './state.js';
-import { loadTranscriptText } from './db.js';
+import { loadTranscriptTextWithFallback } from './db.js';
 
 // Individual cleaning passes
 
 export function cleanBrackets(text) {
-  return text.replace(/\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]/g, '');
+  // Single-level only — nested patterns removed to prevent catastrophic backtracking
+  return text.replace(/\[[^\[\]]*\]/g, '');
 }
 
 export function cleanParentheses(text) {
   // Remove parenthetical editorial notes entirely (including content)
-  return text.replace(/\([^()]*(?:\([^()]*\)[^()]*)*\)/g, '');
+  // Single-level only — nested patterns removed to prevent catastrophic backtracking
+  return text.replace(/\([^()]*\)/g, '');
 }
 
 export function cleanSectionMarkers(text) {
@@ -115,7 +117,8 @@ export function cleanSafe(text) {
 // ── Match extraction for interactive bracket/paren cleaning ─────────
 
 export function findBracketMatches(text) {
-  const re = /\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]/g;
+  // Single-level only — nested patterns removed to prevent catastrophic backtracking
+  const re = /\[[^\[\]]*\]/g;
   const matches = [];
   let m;
   while ((m = re.exec(text)) !== null) {
@@ -125,7 +128,8 @@ export function findBracketMatches(text) {
 }
 
 export function findParenMatches(text) {
-  const re = /\([^()]*(?:\([^()]*\)[^()]*)*\)/g;
+  // Single-level only — nested patterns removed to prevent catastrophic backtracking
+  const re = /\([^()]*\)/g;
   const matches = [];
   let m;
   while ((m = re.exec(text)) !== null) {
@@ -248,26 +252,9 @@ export function calculateCleanRate(rawText, cleanedText) {
   return Math.round((cleanedWords.length / rawWords.length) * 100);
 }
 
-// TODO: This duplicates transcript-fetching logic found in detail.js and db.js.
-// Should eventually be replaced with a shared helper (e.g., loadTranscriptText in db.js).
 async function fetchTranscriptText(transcript) {
-  if (transcript.text) return transcript.text;
-  let text = null;
-  if (transcript.r2TranscriptLink) {
-    try {
-      const filename = transcript.r2TranscriptLink.split('/').pop();
-      const resp = await fetch('/api/transcript?name=' + encodeURIComponent(filename));
-      if (resp.ok) text = await resp.text();
-    } catch { /* network error */ }
-  }
-  if (!text && transcript.id) {
-    text = await loadTranscriptText(transcript.id);
-  }
-  if (text?.trim()) {
-    transcript.text = text; // cache for session
-    return text;
-  }
-  return transcript.firstLine || '';
+  const text = await loadTranscriptTextWithFallback(transcript);
+  return text?.trim() ? text : (transcript.firstLine || '');
 }
 
 export async function batchClean(audioIds, state, onProgress, cleanFn = cleanText) {

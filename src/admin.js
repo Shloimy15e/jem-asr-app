@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { checkAuth, signOut, getUserLibraries, getActiveLibrary } from './auth.js';
 import { logActivity } from './db.js';
+import { escapeHtml } from './utils.js';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -124,7 +125,7 @@ function renderMembersPanel(container, adminLibs) {
     memberArea.innerHTML = '<div class="text-secondary" style="padding:1rem">Loading members…</div>';
     const { data, error } = await supabase.rpc('get_library_members', { p_library_id: libraryId });
     if (error) {
-      memberArea.innerHTML = `<div class="admin-error">${esc(error.message)}</div>`;
+      memberArea.innerHTML = `<div class="admin-error">${escapeHtml(error.message)}</div>`;
       return;
     }
     renderMemberList(memberArea, libraryId, data || []);
@@ -526,8 +527,8 @@ function renderUploadPanel(container, adminLibs) {
       statusEl.style.color = 'var(--green)';
       statusEl.innerHTML = `Uploaded successfully!<br>
         <span class="text-secondary" style="font-size:0.8rem">
-          ID: <code>${esc(recId)}</code> &bull;
-          <a href="${esc(url)}" target="_blank" rel="noopener">View in R2</a>
+          ID: <code>${escapeHtml(recId)}</code> &bull;
+          <a href="${escapeHtml(url)}" target="_blank" rel="noopener">View in R2</a>
         </span>`;
 
       // Reset form for next upload
@@ -662,7 +663,7 @@ function renderActivityPanel(container, adminLibs) {
 
     const { data, error, count } = await query;
     if (error) {
-      resultsArea.innerHTML = `<div class="admin-error">${esc(error.message)}</div>`;
+      resultsArea.innerHTML = `<div class="admin-error">${escapeHtml(error.message)}</div>`;
       return;
     }
 
@@ -812,8 +813,3 @@ function formatTime(iso) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
 }
 
-// ── Utils ─────────────────────────────────────────────────────────────────
-
-function esc(str) {
-  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}

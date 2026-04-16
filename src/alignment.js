@@ -3,9 +3,16 @@ import { isLibraryR2Url } from './auth.js';
 
 const ALIGN_ENDPOINT = '/api/align';
 
+// Whisper/RunPod models are trained on 16 kHz mono audio; resampling to this
+// rate before sending reduces payload size and matches model expectations exactly.
+const TARGET_SR = 16000;
+
 // Keep chunks short so the model recovers from confusion zones naturally.
 // WAV slicing (fetchAndDecodeFullAudio + sliceToWavBase64) ensures no
 // frame-boundary drift between chunks.
+// 15 000 chars ≈ 10–12 minutes of dense Yiddish speech — large enough to
+// avoid excessive chunk overhead, small enough that a single confusing passage
+// doesn't derail the whole file.
 const CHUNK_LIMIT = 15000;
 
 function getAudioUrl(audioId, state) {
@@ -98,7 +105,6 @@ export async function fetchAudioForAlignment(url, trimStart, trimEnd, audioDurat
   const endSample = trimEnd > 0 ? Math.floor(trimEnd * sr) : decoded.length;
   const trimLength = Math.max(1, endSample - startSample);
 
-  const TARGET_SR = 16000;
   const targetLength = Math.ceil(trimLength / sr * TARGET_SR);
   const offCtx = new OfflineAudioContext(1, targetLength, TARGET_SR);
   const tmpBuf = new AudioBuffer({ length: trimLength, numberOfChannels: decoded.numberOfChannels, sampleRate: sr });
@@ -158,7 +164,6 @@ async function sliceToWavBase64(audioBuffer, startSec, endSec) {
     : audioBuffer.length;
   const sliceLen = Math.max(1, endSample - startSample);
 
-  const TARGET_SR = 16000;
   const targetLen = Math.ceil(sliceLen / sr * TARGET_SR);
   const offCtx = new OfflineAudioContext(1, targetLen, TARGET_SR);
   const tmpBuf = new AudioBuffer({
@@ -205,9 +210,9 @@ function splitTextIntoChunks(text) {
 // Send one alignment request to the CF Worker with retry logic.
 // Returns the parsed response data object.
 export async function doAlignRequest(requestBody, chunkLabel, onProgress) {
-  const MAX_RETRIES = 15; // GPU cold start can take ~2.5 min; 15×10s = 150s covers it
-  const RETRY_DELAY_MS = 10000;
-  const FETCH_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+  const MAX_RETRIES = 15; // 15 retries × 10 s = 150 s; covers RunPod GPU cold-start time of ~90 s with margin
+  const RETRY_DELAY_MS = 10000; // 10 s between retries — short enough to feel responsive, long enough not to hammer the endpoint during cold-start
+  const FETCH_TIMEOUT_MS = 5 * 60 * 1000; // 5 min hard cap per chunk; RunPod alignment of a 10-min clip rarely exceeds 2–3 min
   let response;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const controller = new AbortController();
@@ -409,6 +414,9 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
         ? sorted[mid]
         : (sorted[mid - 1] + sorted[mid]) / 2;
 
+      // 400 s is a sanity ceiling: real byte-seeking drift between consecutive
+      // 10–12-minute chunks is typically < 60 s; anything larger means the anchor
+      // words matched to the wrong region and calibration would corrupt timestamps.
       if (Math.abs(calibration) < 400) {
         console.log(`[Align${chunkLabel}] Calibration: ${calibration.toFixed(2)}s`);
         const calibrated = chunkWords.map(w => ({

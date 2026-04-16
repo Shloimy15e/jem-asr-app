@@ -6,6 +6,13 @@ const supabase = createClient(
   import.meta.env.VITE_SUPABASE_ANON_KEY,
 );
 
+// ── Sync error dispatcher ────────────────────────────────────────────
+// Logs and broadcasts write errors so the UI can surface them if needed.
+function handleSyncError(context, error) {
+  console.warn('[DB]', context, error?.message);
+  window.dispatchEvent(new CustomEvent('db-sync-error', { detail: { context, error } }));
+}
+
 // ── Audio file FK guard ──────────────────────────────────────────────
 // Many tables have audio_id FK → audio_files.id, so we upsert the file
 // before writing related rows.
@@ -37,7 +44,13 @@ async function ensureAudioFile(audio) {
     toAudioRow(audio),
     { onConflict: 'id', ignoreDuplicates: true },
   );
-  if (error) console.warn('[DB] ensureAudioFile:', error.message);
+  if (error) {
+    // Suppress unique-constraint violations (row already exists — that's fine).
+    // Log and dispatch all other errors so they're not silently swallowed.
+    if (error.code !== '23505') {
+      handleSyncError('ensureAudioFile', error);
+    }
+  }
 }
 
 // ── Activity logging ────────────────────────────────────────────────
@@ -233,40 +246,40 @@ async function syncAudioTrim(audioId, trim) {
 export function syncStateKey(key, audioId, value, audioEntry) {
   switch (key) {
     case 'audioNames':
-      syncAudioName(audioId, value).catch(console.warn);
+      syncAudioName(audioId, value).catch(err => handleSyncError('syncAudioName', err));
       break;
     case 'audioComments':
-      syncAudioComment(audioId, value).catch(console.warn);
+      syncAudioComment(audioId, value).catch(err => handleSyncError('syncAudioComment', err));
       break;
     case 'audioYears':
-      syncAudioField(audioId, 'year', value || null).catch(console.warn);
+      syncAudioField(audioId, 'year', value || null).catch(err => handleSyncError('syncAudioField/year', err));
       break;
     case 'audioMonths':
-      syncAudioField(audioId, 'month', value || null).catch(console.warn);
+      syncAudioField(audioId, 'month', value || null).catch(err => handleSyncError('syncAudioField/month', err));
       break;
     case 'audioDays':
-      syncAudioField(audioId, 'day', value ? parseInt(value, 10) : null).catch(console.warn);
+      syncAudioField(audioId, 'day', value ? parseInt(value, 10) : null).catch(err => handleSyncError('syncAudioField/day', err));
       break;
     case 'audioTypes':
-      syncAudioField(audioId, 'type', value || null).catch(console.warn);
+      syncAudioField(audioId, 'type', value || null).catch(err => handleSyncError('syncAudioField/type', err));
       break;
     case 'trims':
-      syncAudioTrim(audioId, value).catch(console.warn);
+      syncAudioTrim(audioId, value).catch(err => handleSyncError('syncAudioTrim', err));
       break;
     case 'mappings':
-      syncMapping(audioId, value, audioEntry).catch(console.warn);
+      syncMapping(audioId, value, audioEntry).catch(err => handleSyncError('syncMapping', err));
       break;
     case 'cleaning':
-      syncCleaning(audioId, value, audioEntry).catch(console.warn);
+      syncCleaning(audioId, value, audioEntry).catch(err => handleSyncError('syncCleaning', err));
       break;
     case 'edited':
-      syncEdited(audioId, value, audioEntry).catch(console.warn);
+      syncEdited(audioId, value, audioEntry).catch(err => handleSyncError('syncEdited', err));
       break;
     case 'alignments':
-      syncAlignment(audioId, value, audioEntry).catch(console.warn);
+      syncAlignment(audioId, value, audioEntry).catch(err => handleSyncError('syncAlignment', err));
       break;
     case 'reviews':
-      syncReview(audioId, value, audioEntry).catch(console.warn);
+      syncReview(audioId, value, audioEntry).catch(err => handleSyncError('syncReview', err));
       break;
     default:
       break;
@@ -351,6 +364,29 @@ export async function loadTranscriptText(transcriptId) {
     .single();
   if (error || !data) return null;
   return data.text || null;
+}
+
+// Consolidated transcript text fetcher: tries the R2 text URL first (if present),
+// then falls back to Supabase. Caches the result on the transcript object for the session.
+// transcript must have { id } and optionally { r2TranscriptLink, text }.
+export async function loadTranscriptTextWithFallback(transcript) {
+  if (!transcript) return null;
+  if (transcript.text) return transcript.text;
+  let text = null;
+  if (transcript.r2TranscriptLink) {
+    try {
+      const parsed = new URL(transcript.r2TranscriptLink);
+      const path = parsed.pathname.replace(/^\//, ''); // strip leading slash
+      const params = new URLSearchParams({ name: path, domain: parsed.hostname });
+      const res = await fetch('/api/transcript?' + params).catch(() => null);
+      if (res?.ok) text = await res.text().catch(() => null);
+    } catch { /* fall through to Supabase fallback */ }
+  }
+  if (!text && transcript.id) {
+    text = await loadTranscriptText(transcript.id);
+  }
+  if (text) transcript.text = text; // cache for session
+  return text || null;
 }
 
 export async function loadSegmentApprovals(audioId) {

@@ -7,7 +7,7 @@ import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark
 import { buildAsrConfigPanel } from './asr-config.js';
 
 import { formatConfidence, getConfidenceLevel, generateSRT, generateVTT, downloadFile } from './utils.js';
-import { loadAlignmentWords, loadTranscriptText, loadForDetailPage, syncAudioDuration, syncAudioField, loadSegmentApprovals, syncSegmentApproval } from './db.js';
+import { loadAlignmentWords, loadTranscriptTextWithFallback, loadForDetailPage, syncAudioDuration, syncAudioField, loadSegmentApprovals, syncSegmentApproval } from './db.js';
 
 // ── Pipeline indicator for detail page ──────────────────────────────
 
@@ -55,24 +55,9 @@ function renderDetailPipeline(audioId) {
 }
 
 // Loads full transcript text using R2 first, then Supabase fallback.
-// Caches on the transcript object for the session.
+// Delegates to the consolidated helper in db.js (caches on transcript for session).
 async function loadFullText(transcript) {
-  if (transcript.text) return transcript.text;
-  let text = null;
-  if (transcript.r2TranscriptLink) {
-    try {
-      const parsed = new URL(transcript.r2TranscriptLink);
-      const path = parsed.pathname.replace(/^\//, ''); // strip leading slash
-      const params = new URLSearchParams({ name: path, domain: parsed.hostname });
-      const res = await fetch('/api/transcript?' + params).catch(() => null);
-      if (res?.ok) text = await res.text().catch(() => null);
-    } catch { /* fall through to db fallback */ }
-  }
-  if (!text && transcript.id) {
-    text = await loadTranscriptText(transcript.id);
-  }
-  if (text) transcript.text = text;
-  return text;
+  return loadTranscriptTextWithFallback(transcript);
 }
 
 // Renders a speed-control bar for an audio player element.
