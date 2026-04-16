@@ -45,7 +45,8 @@ ZERO_DURATION_FAILURE_RATIO = 0.2
 MAX_SKIP_ATTEMPTS = 20
 
 
-def align_with_recovery(model, audio_path, text, language="yi"):
+def align_with_recovery(model, audio_path, text, language="yi",
+                        trim_start=None, trim_end=None):
     """Align text to audio with confusion-zone detection and recovery.
 
     Args:
@@ -53,6 +54,8 @@ def align_with_recovery(model, audio_path, text, language="yi"):
         audio_path: Path to the audio file.
         text: Raw transcript text to align.
         language: Language code (default "yi" for Yiddish).
+        trim_start: Optional start time in seconds (trim audio).
+        trim_end: Optional end time in seconds (trim audio).
 
     Returns:
         List of word dicts: [{ word, start, end, confidence }]
@@ -64,7 +67,10 @@ def align_with_recovery(model, audio_path, text, language="yi"):
     if not text.strip():
         return []
 
-    slice_start = 0.0
+    # Apply trim bounds
+    slice_start = float(trim_start) if trim_start else 0.0
+    if trim_end and float(trim_end) > 0:
+        audio_duration = min(audio_duration, float(trim_end))
     to_align_next = text
     aligned_pieces = []
     skip_attempts = 0

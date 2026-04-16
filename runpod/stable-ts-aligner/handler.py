@@ -1,17 +1,22 @@
 """
 RunPod serverless handler for stable-ts alignment.
 
-Accepts the same request format as the existing Whisper alignment endpoint:
+Accepts EITHER:
+  { mode: "align", audio_url: "https://...", text: "...", language: "yi" }
   { mode: "align", audio_base64: "...", audio_format: ".mp3", text: "...", language: "yi" }
 
+audio_url is preferred — the handler fetches the audio directly from R2/CDN,
+avoiding Cloudflare Worker memory limits entirely.
+
 Returns:
-  { timestamps: [{ word: "...", start: 0.5, end: 0.8, confidence: 0.95 }] }
+  { timestamps: [{ word, start, end, confidence }] }
 """
 
 import base64
 import os
 import tempfile
 import traceback
+import urllib.request
 
 import runpod
 import stable_whisper
@@ -36,6 +41,38 @@ def get_model():
     return _model
 
 
+def _resolve_audio(inp):
+    """Resolve audio input to a temp file path. Accepts audio_url or audio_base64."""
+    audio_url = inp.get("audio_url", "")
+    audio_b64 = inp.get("audio_base64", "")
+    audio_fmt = inp.get("audio_format", ".mp3")
+    trim_start = inp.get("trim_start")
+    trim_end = inp.get("trim_end")
+
+    if not audio_url and not audio_b64:
+        raise ValueError("Provide 'audio_url' or 'audio_base64'")
+
+    suffix = audio_fmt if audio_fmt.startswith(".") else f".{audio_fmt}"
+
+    if audio_url:
+        # Detect format from URL
+        url_path = audio_url.rsplit("?", 1)[0]
+        if "." in url_path.split("/")[-1]:
+            suffix = "." + url_path.split(".")[-1]
+
+        print(f"[handler] Fetching audio from URL ({suffix})...")
+        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        urllib.request.urlretrieve(audio_url, tmp.name)
+        tmp.close()
+        print(f"[handler] Downloaded {os.path.getsize(tmp.name) / 1024 / 1024:.1f} MB")
+    else:
+        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        tmp.write(base64.b64decode(audio_b64))
+        tmp.close()
+
+    return tmp.name, trim_start, trim_end
+
+
 # ── Handler ──────────────────────────────────────────────────────────────────
 
 def handler(job):
@@ -44,43 +81,36 @@ def handler(job):
     mode = inp.get("mode", "align")
     language = inp.get("language", "yi")
     text = inp.get("text", "")
-    audio_b64 = inp.get("audio_base64", "")
-    audio_fmt = inp.get("audio_format", ".mp3")
 
-    if not audio_b64:
-        return {"error": "Missing audio_base64"}
-
-    # Write audio to a temp file
-    suffix = audio_fmt if audio_fmt.startswith(".") else f".{audio_fmt}"
-    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    audio_path = None
     try:
-        tmp.write(base64.b64decode(audio_b64))
-        tmp.close()
-        audio_path = tmp.name
-
+        audio_path, trim_start, trim_end = _resolve_audio(inp)
         model = get_model()
 
         if mode == "transcribe":
             return _handle_transcribe(model, audio_path, language)
         else:
-            return _handle_align(model, audio_path, text, language)
+            return _handle_align(model, audio_path, text, language,
+                                 trim_start=trim_start, trim_end=trim_end)
 
     except Exception as e:
         traceback.print_exc()
         return {"error": str(e)}
     finally:
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
+        if audio_path:
+            try:
+                os.unlink(audio_path)
+            except OSError:
+                pass
 
 
-def _handle_align(model, audio_path, text, language):
+def _handle_align(model, audio_path, text, language, trim_start=None, trim_end=None):
     """Forced alignment: align provided text to audio."""
     if not text.strip():
         return {"error": "Missing text for alignment"}
 
-    words = align_with_recovery(model, audio_path, text, language)
+    words = align_with_recovery(model, audio_path, text, language,
+                                trim_start=trim_start, trim_end=trim_end)
 
     timestamps = [
         {

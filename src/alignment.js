@@ -301,10 +301,16 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const audioEntry = state.audio.find(a => a.id === audioId);
   const audioDuration = (audioEntry?.estMinutes || 0) * 60;
 
-  // Force smaller chunks for long audio to stay within CF Worker memory limits.
-  // Each chunk's audio slice gets fetched and base64-encoded by the Worker —
-  // ~15 min of 128kbps MP3 ≈ 14MB base64, safely under the ~25MB Worker limit.
-  const maxChunkChars = audioDuration > 900 ? 8000 : CHUNK_LIMIT;
+  // Force multi-chunk for long audio to keep each CF Worker request under 128MB.
+  // Each chunk's audio slice is fetched and base64-encoded by the Worker —
+  // cap at ~15 min per chunk ≈ 14MB MP3 base64, safely under the limit.
+  const effectiveDurationSec = ((trimEnd > 0 ? trimEnd : audioDuration) - (trimStart || 0)) || audioDuration;
+  const maxAudioMinPerChunk = 15;
+  const minChunksByDuration = Math.max(1, Math.ceil(effectiveDurationSec / 60 / maxAudioMinPerChunk));
+  const maxChunkChars = Math.min(
+    audioDuration > 900 ? 8000 : CHUNK_LIMIT,
+    Math.max(500, Math.floor(alignText.length / minChunksByDuration)),
+  );
   const chunks = splitTextIntoChunks(alignText, maxChunkChars);
 
   if (chunks.length > 1) {
