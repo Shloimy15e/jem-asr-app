@@ -3296,23 +3296,23 @@ details[open] > .pipeline-tools-summary::before {
 }
 
 .seg-sidebar {
-  width: 172px;
+  width: 200px;
   flex-shrink: 0;
 }
 
 .seg-sidebar-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  max-height: 340px;
+  gap: 3px;
+  max-height: 70vh;
   overflow-y: auto;
 }
 
 .seg-sidebar-item {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 6px;
+  gap: 8px;
+  padding: 8px 10px;
   border-radius: var(--radius);
   cursor: pointer;
   border: 1px solid transparent;
@@ -3345,15 +3345,15 @@ details[open] > .pipeline-tools-summary::before {
 
 .seg-sidebar-num {
   font-weight: 700;
-  font-size: 0.78rem;
-  min-width: 18px;
+  font-size: 0.95rem;
+  min-width: 22px;
   text-align: center;
 }
 
 .seg-sidebar-info {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
   font-size: 0.7rem;
   color: var(--text-secondary);
   flex: 1;

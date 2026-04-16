@@ -2908,11 +2908,8 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     if (editMode) refreshBulkTextarea();
   }
 
-  const SIDEBAR_LIMIT = 8;
-
   function renderSidebar() {
     sidebar.innerHTML = '';
-    let showAll = segments.length <= SIDEBAR_LIMIT;
 
     const title = document.createElement('div');
     title.style.cssText = 'font-size:0.72rem;font-weight:600;color:var(--text-secondary);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;';
@@ -2925,8 +2922,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
     function renderList() {
       listEl.innerHTML = '';
-      const count = showAll ? segments.length : Math.min(SIDEBAR_LIMIT, segments.length);
-      for (let i = 0; i < count; i++) {
+      for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
         const isProb = isProblemSegment(i);
         const isApproved = approvedHashes.has(segHash(i));
@@ -2970,19 +2966,6 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
     renderList();
     sidebar._renderList = renderList;
-
-    if (segments.length > SIDEBAR_LIMIT) {
-      const toggleBtn = document.createElement('button');
-      toggleBtn.className = 'btn btn-secondary';
-      toggleBtn.style.cssText = 'font-size:0.72rem;padding:3px 8px;margin-top:4px;width:100%;';
-      toggleBtn.textContent = `Show all ${segments.length}…`;
-      sidebar.appendChild(toggleBtn);
-      toggleBtn.addEventListener('click', () => {
-        showAll = !showAll;
-        toggleBtn.textContent = showAll ? 'Show less' : `Show all ${segments.length}…`;
-        renderList();
-      });
-    }
   }
 
   function goToSegment(idx) {
