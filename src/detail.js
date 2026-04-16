@@ -2656,7 +2656,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   const bulkHint = document.createElement('div');
   bulkHint.className = 'text-secondary';
   bulkHint.style.cssText = 'font-size:0.75rem;margin-bottom:4px;';
-  bulkHint.textContent = 'Edit segment text below — blur to apply. Same word count keeps timestamps; different count redistributes evenly.';
+  bulkHint.textContent = 'Edit segment text below. Same word count keeps timestamps; different count redistributes evenly.';
   bulkPanel.appendChild(bulkHint);
   const bulkTextarea = document.createElement('textarea');
   bulkTextarea.className = 'transcript-editor';
@@ -2664,7 +2664,26 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   bulkTextarea.rows = 4;
   bulkTextarea.style.cssText = 'width:100%;box-sizing:border-box;font-size:0.85rem;';
   const bulkBtnRow = document.createElement('div');
-  bulkBtnRow.style.cssText = 'margin-top:4px;';
+  bulkBtnRow.style.cssText = 'margin-top:6px;display:flex;gap:8px;align-items:center;';
+  const saveContBtn = document.createElement('button');
+  saveContBtn.className = 'action-btn action-btn-primary';
+  saveContBtn.style.cssText = 'font-size:0.85rem;padding:6px 16px;';
+  saveContBtn.textContent = 'Save & Continue';
+  saveContBtn.addEventListener('click', () => {
+    applyBulkText();
+    commitEdits();
+    // Advance to next segment
+    if (currentSegIdx < segments.length - 1) {
+      currentSegIdx++;
+    }
+    renderSegmentChips();
+    refreshBulkTextarea();
+    updateSegHeader();
+    updateStats();
+    if (sidebar._renderList) sidebar._renderList();
+    bulkTextarea.focus();
+  });
+  bulkBtnRow.appendChild(saveContBtn);
   const bulkStatus = document.createElement('span');
   bulkStatus.className = 'text-secondary';
   bulkStatus.style.fontSize = '0.78rem';
@@ -3028,43 +3047,18 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     };
 
     segWords.forEach((w, posInSeg) => {
-      // Insertions before this position
-      if (editMode) {
-        getSegInsertions(currentSegIdx, posInSeg).forEach(ins => {
-          const iSpan = document.createElement('span');
-          iSpan.className = 'word-chip confidence-high word-inserted';
-          iSpan.textContent = ins.word;
-          iSpan.title = `Inserted: ${fmtSec(ins.start)}–${fmtSec(ins.end)}`;
-          wordGrid.appendChild(iSpan);
-        });
-        addPlusBtn(posInSeg);
-      }
-
       const globalIdx = words.indexOf(w);
       const isDeleted = globalIdx >= 0 && editModeWords[globalIdx]?._deleted;
       const conf = typeof w.confidence === 'number' ? w.confidence : 1;
       const span = document.createElement('span');
       span.className = `word-chip confidence-${getConfidenceLevel(conf)}${isDeleted ? ' word-deleted' : ''}`;
       const wordText = (globalIdx >= 0 ? editModeWords[globalIdx]?.word : null) || w.word || w.text || '';
-      span.title = isDeleted ? `Deleted — click to restore` : `${(conf * 100).toFixed(0)}% | ${fmtSec(w.start)}–${fmtSec(w.end)}`;
+      span.title = isDeleted ? `Deleted` : `${(conf * 100).toFixed(0)}% | ${fmtSec(w.start)}–${fmtSec(w.end)}`;
       span.textContent = wordText;
       span.dataset.globalIdx = String(globalIdx);
 
-      if (isDeleted && editMode) {
-        span.style.cursor = 'pointer';
-        span.addEventListener('click', () => {
-          editModeWords[globalIdx] = { ...editModeWords[globalIdx], _deleted: false };
-          span.classList.remove('word-deleted');
-          span.title = `${(conf * 100).toFixed(0)}% | ${fmtSec(w.start)}–${fmtSec(w.end)}`;
-          span.style.cursor = 'text';
-          span.onclick = null;
-          span.addEventListener('click', () => startChipEdit(span, globalIdx));
-          refreshBulkTextarea();
-        });
-      } else if (editMode && globalIdx >= 0) {
-        span.style.cursor = 'text';
-        span.addEventListener('click', () => startChipEdit(span, globalIdx));
-      } else if (playerEl) {
+      // In edit mode chips are read-only reference; in karaoke mode they seek audio
+      if (!editMode && playerEl) {
         span.style.cursor = isDeleted ? 'default' : 'pointer';
         if (!isDeleted) {
           const seekFn = () => { playerEl.currentTime = w.start; if (playerEl.paused) playerEl.play(); };
@@ -3076,18 +3070,6 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       wordGrid.appendChild(span);
       if (!isDeleted) chipEls.push(span);
     });
-
-    // Insertions and final + button after last word
-    if (editMode) {
-      getSegInsertions(currentSegIdx, segWords.length).forEach(ins => {
-        const iSpan = document.createElement('span');
-        iSpan.className = 'word-chip confidence-high word-inserted';
-        iSpan.textContent = ins.word;
-        iSpan.title = `Inserted: ${fmtSec(ins.start)}–${fmtSec(ins.end)}`;
-        wordGrid.appendChild(iSpan);
-      });
-      addPlusBtn(segWords.length);
-    }
 
     if (editMode) refreshBulkTextarea();
   }
