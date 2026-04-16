@@ -333,7 +333,7 @@ The startup sort in `db.js` originally used `parseInt(a.id.slice(2))` which assu
 1. `detail.js` — main detail page player (`playerEl.src`)
 2. `table.js` `toggleInlinePlay()` — `new Audio(url)` inline play button
 
-For JEM files on `audio.kohnai.ai` this accidentally worked because the browser could reach the URL, but for `r2.dev` URLs it fails with CORS errors. The src must always be `/api/audio?url=<encoded>` for any R2 URL. All three locations use `isLibraryR2Url(audioUrl)` to detect R2 URLs and proxy them.
+For JEM files on `audio.kohnai.ai` this accidentally worked because the browser could reach the URL, but for `r2.dev` URLs it fails with CORS errors. The src must always be `/api/audio?url=<encoded>` for any R2 URL. Both locations use `isLibraryR2Url(audioUrl)` to detect R2 URLs and proxy them.
 
 `isLibraryR2Url()` in `auth.js` matches the library's configured `r2Domain` **and** any `*.r2.dev` hostname — both must be included since new library files use the public `r2.dev` URL.
 
