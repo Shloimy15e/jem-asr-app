@@ -322,13 +322,13 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const ANCHOR_PRE_BUFFER = 20;    // seconds of audio before first anchor word
   const BOUNDARY_GAP_THRESHOLD = 5; // seconds — inter-word gap larger than this = inflation artifact
 
-  // For multi-chunk alignment, decode the full audio once in the browser to produce
-  // frame-accurate WAV slices. Byte-level MP3 slicing (the CF Worker path) breaks
-  // frame boundaries and strips the VBR header, causing RunPod's decoder to drift —
-  // that drift compounds across chunks and throws off alignment.
+  // For multi-chunk alignment with non-R2 audio, decode the full audio once in the
+  // browser to produce frame-accurate WAV slices. For R2 audio, use the URL-based
+  // path (CF Worker fetches server-side) — WAV slices are too large for the CF proxy
+  // body limit (~25MB), and the anchor-word calibration handles byte-seeking drift.
   let fullAudioBuffer = null;
-  if (chunks.length > 1) {
-    console.log(`[Align] Multi-chunk: decoding full audio in browser for frame-accurate slicing…`);
+  if (chunks.length > 1 && !isLibraryR2Url(url)) {
+    console.log(`[Align] Multi-chunk (non-R2): decoding full audio in browser for frame-accurate slicing…`);
     fullAudioBuffer = await fetchAndDecodeFullAudio(url);
   }
 
