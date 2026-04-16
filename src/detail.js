@@ -2457,6 +2457,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   let currentSegIdx = 0;
   let problemFilterActive = false;
   let editMode = false; // false = karaoke mode (click-to-seek), true = edit mode (click-to-edit)
+  let allWordsMode = true; // true = show all words in one scrollable grid
   let chipEls = [];
 
   // Compute a stable hash for a segment based on its word text
@@ -2569,6 +2570,24 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   editStatus.className = 'text-secondary';
   editStatus.style.cssText = 'font-size:0.8rem;min-width:60px;';
 
+  const allWordsBtn = document.createElement('button');
+  allWordsBtn.className = 'btn btn-secondary';
+  allWordsBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
+  allWordsBtn.title = 'Toggle between all-words view and segment-by-segment view';
+  function updateAllWordsBtn() {
+    allWordsBtn.textContent = allWordsMode ? 'Segments' : 'All Words';
+    allWordsBtn.classList.toggle('seg-filter-active', allWordsMode);
+    segHeader.style.display = allWordsMode ? 'none' : '';
+    bulkPanel.style.display = allWordsMode ? 'none' : (editMode ? '' : 'none');
+  }
+  allWordsBtn.addEventListener('click', () => {
+    allWordsMode = !allWordsMode;
+    updateAllWordsBtn();
+    if (allWordsMode) renderAllWords(); else renderSegmentChips();
+    if (sidebar._renderList) sidebar._renderList();
+  });
+
+  toolbar.appendChild(allWordsBtn);
   toolbar.appendChild(problemFilterBtn);
   toolbar.appendChild(editStatus);
   leftPanel.appendChild(toolbar);
@@ -2821,6 +2840,116 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     });
   }
 
+  function renderAllWords() {
+    wordGrid.innerHTML = '';
+    wordGrid.classList.add('all-words-scroll');
+    chipEls = [];
+
+    segments.forEach((seg, segIdx) => {
+      // Segment divider
+      if (segIdx > 0) {
+        const divider = document.createElement('div');
+        divider.className = 'seg-divider';
+        divider.id = `seg-divider-${segIdx}`;
+
+        const label = document.createElement('span');
+        label.className = 'seg-divider-label';
+        label.textContent = `— ${segIdx + 1} · ${fmtSec(seg[0]?.start)} —`;
+
+        const realignBtn = document.createElement('button');
+        realignBtn.className = 'btn btn-secondary seg-realign-btn';
+        realignBtn.textContent = 'Re-align from here';
+        realignBtn.addEventListener('click', () => realignFromSegment(segIdx));
+
+        divider.appendChild(label);
+        divider.appendChild(realignBtn);
+        wordGrid.appendChild(divider);
+      }
+
+      // Render all words in this segment
+      seg.forEach(w => {
+        const globalIdx = words.indexOf(w);
+        const conf = typeof w.confidence === 'number' ? w.confidence : 1;
+        const span = document.createElement('span');
+        span.className = `word-chip confidence-${getConfidenceLevel(conf)}`;
+        span.textContent = w.word || w.text || '';
+        span.title = `${(conf * 100).toFixed(0)}% | ${fmtSec(w.start)}–${fmtSec(w.end)}`;
+        span.dataset.globalIdx = String(globalIdx);
+
+        if (playerEl) {
+          span.style.cursor = 'pointer';
+          const seekFn = () => { playerEl.currentTime = w.start; if (playerEl.paused) playerEl.play(); };
+          span._seekHandler = seekFn;
+          span.addEventListener('click', seekFn);
+        }
+
+        wordGrid.appendChild(span);
+        chipEls.push(span);
+      });
+    });
+  }
+
+  async function realignFromSegment(segIdx) {
+    const segStartWordIdx = segments.slice(0, segIdx).reduce((sum, s) => sum + s.length, 0);
+    const keepWords = words.slice(0, segStartWordIdx);
+    const remainingText = words.slice(segStartWordIdx).map(w => w.word || w.text || '').join(' ');
+    const audioStart = segments[segIdx][0]?.start || 0;
+
+    if (!remainingText.trim()) return;
+
+    const state = getState();
+    const audioEntry = state.audio?.find(a => a.id === audioId);
+    const url = audioEntry?.r2Link || audioEntry?.driveLink;
+    if (!url) { alert('No audio URL found'); return; }
+
+    // Show progress
+    const btn = wordGrid.querySelector(`#seg-divider-${segIdx} .seg-realign-btn`);
+    if (btn) { btn.textContent = 'Aligning…'; btn.disabled = true; }
+
+    try {
+      const { fetchAudioForAlignment, buildRequestBody, doAlignRequest } = await import('./alignment.js');
+      const audioDuration = (audioEntry?.estMinutes || 0) * 60;
+      const trim = state.trims?.[audioId] || {};
+      const trimEnd = trim.end || 0;
+
+      const audioResult = await fetchAudioForAlignment(url, audioStart, trimEnd, audioDuration);
+      const requestBody = buildRequestBody(audioResult, remainingText);
+      const data = await doAlignRequest(requestBody, ' re-align');
+
+      let rawWords = data.timestamps || [];
+      if (rawWords.length === 0 && data.segments) {
+        rawWords = data.segments.flatMap(s => s.words || []);
+      }
+
+      const newWords = rawWords.map(t => ({
+        word: t.word || t.text || '',
+        start: (t.start || 0) + audioStart,
+        end: (t.end || 0) + audioStart,
+        confidence: t.confidence ?? t.probability ?? t.score ?? 0,
+      }));
+
+      const merged = [...keepWords, ...newWords];
+      const totalConf = merged.reduce((sum, w) => sum + (w.confidence || 0), 0);
+      const alignment = {
+        words: merged,
+        avgConfidence: merged.length > 0 ? totalConf / merged.length : 0,
+        lowConfidenceCount: merged.filter(w => (w.confidence || 0) < 0.4).length,
+        alignedAt: new Date().toISOString(),
+      };
+
+      const { updateState } = await import('./state.js');
+      updateState('alignments', audioId, alignment);
+
+      // Re-render the entire detail page
+      const s = getState();
+      renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
+    } catch (err) {
+      console.error('Re-align failed:', err);
+      alert('Re-align failed: ' + err.message);
+      if (btn) { btn.textContent = 'Re-align from here'; btn.disabled = false; }
+    }
+  }
+
   function renderSegmentChips() {
     wordGrid.innerHTML = '';
     chipEls = [];
@@ -2959,7 +3088,14 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
         item.appendChild(numEl);
         item.appendChild(infoEl);
-        item.addEventListener('click', () => goToSegment(i));
+        item.addEventListener('click', () => {
+          if (allWordsMode) {
+            const divider = wordGrid.querySelector(`#seg-divider-${i}`);
+            if (divider) divider.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          } else {
+            goToSegment(i);
+          }
+        });
         listEl.appendChild(item);
       }
     }
@@ -3152,7 +3288,12 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   // Review button handlers removed for cleaner karaoke UI
 
   // Initial render
-  renderSegmentChips();
+  if (allWordsMode) {
+    renderAllWords();
+  } else {
+    renderSegmentChips();
+  }
+  updateAllWordsBtn();
   updateSegHeader();
   updateStats();
   renderSidebar();

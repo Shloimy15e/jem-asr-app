@@ -57,7 +57,7 @@ function audioBufferToWavBlob(buffer) {
 // avoids base64-encoding large files through the Cloudflare proxy (413 limit).
 // The CF Worker applies byte-level trimming when trimStart/trimEnd are provided.
 // Only non-R2 URLs (e.g. Google Drive) fall back to browser-side fetch + base64.
-async function fetchAudioForAlignment(url, trimStart, trimEnd, audioDuration) {
+export async function fetchAudioForAlignment(url, trimStart, trimEnd, audioDuration) {
   const hasTrim = (trimStart > 0) || (trimEnd > 0);
 
   // For all R2 audio (trimmed or not), pass the URL to the CF Worker.
@@ -204,7 +204,7 @@ function splitTextIntoChunks(text) {
 
 // Send one alignment request to the CF Worker with retry logic.
 // Returns the parsed response data object.
-async function doAlignRequest(requestBody, chunkLabel, onProgress) {
+export async function doAlignRequest(requestBody, chunkLabel, onProgress) {
   const MAX_RETRIES = 15; // GPU cold start can take ~2.5 min; 15×10s = 150s covers it
   const RETRY_DELAY_MS = 10000;
   const FETCH_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -248,7 +248,7 @@ async function doAlignRequest(requestBody, chunkLabel, onProgress) {
 }
 
 // Build the JSON request body for one alignment chunk.
-function buildRequestBody(audioResult, chunkText) {
+export function buildRequestBody(audioResult, chunkText) {
   return JSON.stringify(
     audioResult.audioUrl
       ? {
