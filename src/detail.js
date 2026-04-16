@@ -2611,6 +2611,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
         chip.textContent = w.word || w.text || '';
         chip.title = `${(conf * 100).toFixed(0)}% | ${fmtSec(w.start)}`;
         chip.dataset.start = String(w.start);
+        chip.dataset.end = String(w.end);
         chip.addEventListener('click', () => {
           if (playerEl) { playerEl.currentTime = w.start; playerEl.play().catch(() => {}); }
         });
@@ -2633,7 +2634,8 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       const chips = sidebar.querySelectorAll('.word-chip');
       for (const chip of chips) {
         const start = parseFloat(chip.dataset.start);
-        if (!isNaN(start) && t >= start && t < start + 0.5) {
+        const end = parseFloat(chip.dataset.end);
+        if (!isNaN(start) && t >= start && t < (isNaN(end) ? start + 0.5 : end)) {
           chip.classList.add('active');
           const rect = sidebar.getBoundingClientRect();
           if (rect.top < window.innerHeight && rect.bottom > 0) {

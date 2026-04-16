@@ -24,14 +24,52 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const CHUNK = 0x8000;
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+// Stream base64-encoded audio into a JSON body without buffering the full
+// base64 string — keeps Worker memory at ~1x audio size instead of ~4.7x
+// (the old approach held audioBuffer + binaryString + base64 + JSON copy).
+function createStreamingJsonBody(payload, audioBytes) {
+  const enc = new TextEncoder();
+  const json = JSON.stringify(payload);
+  const prefix = json.slice(0, -1) +
+    (Object.keys(payload).length ? ',' : '') +
+    '"audio_base64":"';
+  const CHUNK = 3 * 8192; // 24 576 bytes — must be multiple of 3
+  let off = 0;
+  let sentPrefix = false;
+
+  return new ReadableStream({
+    pull(controller) {
+      if (!sentPrefix) {
+        controller.enqueue(enc.encode(prefix));
+        sentPrefix = true;
+        return;
+      }
+      if (off < audioBytes.length) {
+        const end = Math.min(off + CHUNK, audioBytes.length);
+        const last = end === audioBytes.length;
+        const chars = [];
+        for (let i = off; i < end; i += 3) {
+          const rem = end - i;
+          const a = audioBytes[i];
+          const b = rem > 1 ? audioBytes[i + 1] : 0;
+          const c = rem > 2 ? audioBytes[i + 2] : 0;
+          chars.push(
+            B64[a >> 2],
+            B64[((a & 3) << 4) | (b >> 4)],
+            rem > 1 ? B64[((b & 0xF) << 2) | (c >> 6)] : (last ? '=' : ''),
+            rem > 2 ? B64[c & 0x3F] : (last ? '=' : ''),
+          );
+        }
+        controller.enqueue(enc.encode(chars.join('')));
+        off = end;
+        return;
+      }
+      controller.enqueue(enc.encode('"}'));
+      controller.close();
+    },
+  });
 }
 
 // Parse XING/INFO VBR TOC from the first bytes of an MP3 file.
@@ -195,21 +233,38 @@ export async function onRequestPost(context) {
         audioBuffer = await audioResp.arrayBuffer();
       }
 
-      delete payload.trim_start;
-      delete payload.trim_end;
-      delete payload.audio_duration;
-
-      const base64 = arrayBufferToBase64(audioBuffer);
-
       // Detect format from URL extension, default to .mp3
       const urlPath = new URL(payload.audio_url).pathname;
       const ext = urlPath.match(/(\.\w+)$/)?.[1] || '.mp3';
 
+      // Clean up fields the GPU server doesn't understand
       delete payload.audio_url;
-      payload.audio_base64 = base64;
+      delete payload.trim_start;
+      delete payload.trim_end;
+      delete payload.audio_duration;
       payload.audio_format = ext;
+
+      // Stream base64 into the outgoing JSON body so the Worker never
+      // holds audioBuffer + base64String + jsonString simultaneously.
+      const body = createStreamingJsonBody(payload, new Uint8Array(audioBuffer));
+
+      const resp = await fetch(ALIGN_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        cf: { cacheTtl: 0 },
+      });
+
+      return new Response(resp.body, {
+        status: resp.status,
+        headers: {
+          'Content-Type': resp.headers.get('Content-Type') || 'application/json',
+          ...CORS_HEADERS,
+        },
+      });
     }
 
+    // Direct audio_base64 path — client already encoded the audio
     const resp = await fetch(ALIGN_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -217,7 +272,6 @@ export async function onRequestPost(context) {
       cf: { cacheTtl: 0 },
     });
 
-    // Stream the response body directly — don't buffer with resp.text()
     return new Response(resp.body, {
       status: resp.status,
       headers: {
