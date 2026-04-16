@@ -234,8 +234,6 @@ export function findMinorMatches(text) {
 export function cleanText(rawText) {
   if (!rawText) return '';
   let text = rawText;
-  text = cleanBrackets(text);
-  text = cleanParentheses(text);
   text = cleanSectionMarkers(text);
   text = cleanSymbols(text);
   text = cleanWhitespace(text);
