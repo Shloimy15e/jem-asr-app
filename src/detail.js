@@ -7,7 +7,7 @@ import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark
 import { buildAsrConfigPanel } from './asr-config.js';
 
 import { formatConfidence, getConfidenceLevel, generateSRT, generateVTT, downloadFile } from './utils.js';
-import { loadAlignmentWords, loadTranscriptText, loadFromSupabase, syncAudioDuration, syncAudioField, loadSegmentApprovals, syncSegmentApproval } from './db.js';
+import { loadAlignmentWords, loadTranscriptText, loadForDetailPage, syncAudioDuration, syncAudioField, loadSegmentApprovals, syncSegmentApproval } from './db.js';
 
 // ── Pipeline indicator for detail page ──────────────────────────────
 
@@ -146,7 +146,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   page.innerHTML = '<div class="loading-state">Loading…</div>';
   let remote;
   try {
-    remote = await loadFromSupabase(activeLib);
+    remote = await loadForDetailPage(audioId, activeLib);
   } catch (err) {
     page.innerHTML = `<div class="empty-state"><div class="empty-state-title">Failed to load data: ${err.message}</div></div>`;
     return;
@@ -3196,16 +3196,16 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       }
       prevActiveChip = found;
 
-      // Pause at the end of the current segment — only in segment-by-segment mode
-      // (in all-words mode there's no "current segment" to pause at)
-      if (!allWordsMode) {
-        const segWords = segments[currentSegIdx];
-        if (segWords?.length && !playerEl.paused) {
-          const wvRect = container.getBoundingClientRect();
-          if (wvRect.top < window.innerHeight && wvRect.bottom > 0) {
-            const segEnd = segWords[segWords.length - 1].end;
-            if (t >= segEnd) playerEl.pause();
-          }
+      // Pause at the end of the segment containing the current playback time
+      // In segment mode use currentSegIdx; in all-words mode find the right segment
+      const activeSeg = allWordsMode
+        ? segments.find(seg => seg.length && t >= seg[0].start && t <= seg[seg.length - 1].end)
+        : segments[currentSegIdx];
+      if (activeSeg?.length && !playerEl.paused) {
+        const wvRect = container.getBoundingClientRect();
+        if (wvRect.top < window.innerHeight && wvRect.bottom > 0) {
+          const segEnd = activeSeg[activeSeg.length - 1].end;
+          if (t >= segEnd) playerEl.pause();
         }
       }
     };
