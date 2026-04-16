@@ -411,7 +411,7 @@ In `detail.js` `renderWordView()`, word chips are **always directly editable** �
 - After every commit (word edit, delete, or insert), `scheduleAutoSave()` fires a 1.5s debounced `commitEdits()` that persists changes to state + Supabase
 - A bulk RTL textarea below the chips shows all words space-joined; it auto-applies on blur (no button). Same-count edits preserve timestamps; different count redistributes timestamps evenly across the segment time range
 - `commitEdits()` rebuilds the final word array from `editModeWords` + `insertions`, calls `updateState('alignments', ...)`, `setVersionAlignment()`, and `updateVersion(audioId, versionId, { text: newText })`
-- `editMode` is a `const = true` — all chip rendering always uses edit affordances; do not add a mode toggle back
+- `editMode` starts as `false` (karaoke mode: click-to-seek). An "✏ Edit" toggle button in the seg-header switches to edit mode (click-to-edit chips, plus-buttons for inserts, bulk textarea visible). The button reads "✏ Done" when active and highlights with accent color.
 
 ### Pipeline stepper and iterative cleaning workflow
 `renderUnifiedWorkSection()` in `detail.js` renders all pipeline tools unconditionally (no step-gating):
@@ -428,16 +428,8 @@ In `detail.js` `renderWordView()`, word chips are **always directly editable** �
 ### User attribution
 `src/auth.js` exports `getCurrentUser()` which returns the logged-in user's email (cached from `checkAuth()`). All user-initiated version creates use `createdBy: getCurrentUser()` instead of hardcoded `'user'`. Mapping uses `confirmedBy: getCurrentUser()`. The approve bar stores `approvedBy: getCurrentUser()` and displays "email on date".
 
-### Word view export buttons (SRT / VTT / Karaoke HTML)
-Three export buttons appear in the word view toolbar: **SRT**, **VTT**, and **🎤 Karaoke**.
-- All three use the live word array: if "Edit Words" mode is active they export the in-progress edits (including deletions); otherwise they use the saved alignment words
-- **SRT / VTT** call `generateSRT()` / `generateVTT()` from `utils.js` and `downloadFile()` — segments grouped on gap >0.5s or every ~10 words
-- **🎤 Karaoke** calls `generateKaraokeHTML(words, audioSrc, title)` in `detail.js`, which produces a self-contained HTML file with:
-  - Audio loaded from `https://jem-asr-app.pages.dev/api/audio?url=<encoded-r2-url>` (the open CF proxy — no auth required)
-  - All word timestamps embedded as JSON
-  - Dark-theme karaoke player: highlights the active word in blue, dims past words, click any word to seek
-  - RTL layout for Yiddish text
-- Downloaded as `<audio-name>-karaoke.html` — works offline in any browser
+### Word view export buttons (removed from toolbar)
+The SRT, VTT, Karaoke HTML, and Export Video buttons were removed from the word view toolbar to simplify the karaoke UI. The underlying functions (`generateSRT`, `generateVTT`, `generateKaraokeHTML`, `startKaraokeVideoExport`) still exist in the code and can be re-exposed if needed.
 
 ### Authentication — all pages require login
 The app uses Supabase Auth (email + password). `src/auth.js` exports `checkAuth()`, `signIn()`, `signOut()`. Both `app.js` and `detail.js` call `await checkAuth()` at the very top of their `DOMContentLoaded` handler — this redirects to `/login.html` if there is no active session. `login.html` + `src/login.js` handle the login form. Supabase RLS on all tables requires the `authenticated` role (migration `20260324000000_require_auth.sql`); the anon key alone cannot read any data.
@@ -510,11 +502,9 @@ Without `SUPABASE_URL`/`SUPABASE_ANON_KEY`, the JWT check is skipped (endpoint i
 The `timeupdate` handler in `renderWordView` calls `scrollIntoView` on the active word chip **only if** the word view container is currently in the viewport (`container.getBoundingClientRect()`). This prevents the top audio player from dragging the page down to the word chips while the user is viewing the player section.
 
 ### Segment auto-advance is disabled
-The word view does NOT auto-advance to the next segment when the audio playhead passes the end of the current segment. The user must click **Approve Segment** (or use `‹`/`›`) to navigate. Do not re-add auto-advance — it was intentionally removed because users listen at 3x speed and the segment would jump before they finished.
+The word view does NOT auto-advance to the next segment when the audio playhead passes the end of the current segment. The user must use `‹`/`›` to navigate. Do not re-add auto-advance — it was intentionally removed because users listen at 3x speed and the segment would jump before they finished.
 
-Two places in `detail.js` were cleaned up to achieve this:
-1. **`timeupdate` listener** — removed the block that called `goToSegment(next)` when `currentTime > segment.end`.
-2. **Approve Segment button handler** — does NOT call `goToSegment(next)`. Only calls `updateStats()`, `updateSegHeader()`, re-renders sidebar, and syncs approval to DB.
+The `timeupdate` listener no longer calls `goToSegment(next)` when `currentTime > segment.end`. The "Approve Segment" button and "Next Unreviewed" button were removed from the word view UI for a cleaner karaoke experience. Segment approvals still persist in the DB via the underlying functions.
 
 ### Persistent segment approvals
 The **"Approve Segment"** button (formerly "Mark Reviewed") persists to the `segment_approvals` Supabase table. Key details:
@@ -525,7 +515,7 @@ The **"Approve Segment"** button (formerly "Mark Reviewed") persists to the `seg
 - **Loaded on page open** via `loadSegmentApprovals(audioId)` → `setSegmentApprovals(audioId, hashes)` in state
 - **State store:** `state.segmentApprovals[audioId]` = `Set<string>` (runtime only, not in localStorage)
 - **Toggle:** `toggleSegmentApproval(audioId, hash)` → returns new boolean → caller fires `syncSegmentApproval()` fire-and-forget
-- Stats bar shows: Approved / Remaining / Progress / Problems (unapproved problem segments only)
+- Stats bar (Approved / Remaining / Progress / Problems) was removed from the word view UI for a cleaner karaoke experience. The underlying approval data is still tracked in Supabase.
 
 ### Problem segment filter
 The **"⚠ Problems (N)"** button in the word view toolbar:

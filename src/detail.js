@@ -2447,7 +2447,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   const approvedHashes = getApprovedSegments(audioId); // persistent, DB-backed Set
   let currentSegIdx = 0;
   let problemFilterActive = false;
-  const editMode = true; // always on — chips are always directly editable
+  let editMode = false; // false = karaoke mode (click-to-seek), true = edit mode (click-to-edit)
   let chipEls = [];
 
   // Compute a stable hash for a segment based on its word text
@@ -2486,11 +2486,6 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   nextBtn.textContent = '›';
   nextBtn.title = 'Next segment';
 
-  const nextUnreviewedBtn = document.createElement('button');
-  nextUnreviewedBtn.className = 'btn btn-secondary';
-  nextUnreviewedBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;margin-left:auto;';
-  nextUnreviewedBtn.textContent = 'Next Unreviewed';
-
   segHeader.appendChild(prevBtn);
   segHeader.appendChild(segInfo);
   segHeader.appendChild(nextBtn);
@@ -2498,7 +2493,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   if (playerEl) {
     const playPauseBtn = document.createElement('button');
     playPauseBtn.className = 'btn btn-secondary seg-nav-btn';
-    playPauseBtn.style.cssText = 'font-size:1rem;min-width:38px;';
+    playPauseBtn.style.cssText = 'font-size:1.3rem;min-width:48px;';
     const updatePlayBtn = () => {
       playPauseBtn.textContent = playerEl.paused ? '▶' : '⏸';
       playPauseBtn.setAttribute('aria-label', playerEl.paused ? 'Play audio' : 'Pause audio');
@@ -2510,13 +2505,23 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     segHeader.appendChild(playPauseBtn);
   }
 
-  segHeader.appendChild(nextUnreviewedBtn);
+  // Edit toggle button
+  const editToggleBtn = document.createElement('button');
+  editToggleBtn.className = 'btn btn-secondary seg-edit-toggle';
+  editToggleBtn.style.cssText = 'margin-left:auto;font-size:0.85rem;padding:5px 14px;';
+  editToggleBtn.textContent = '✏ Edit';
+  editToggleBtn.title = 'Toggle inline word editing';
+  editToggleBtn.addEventListener('click', () => {
+    editMode = !editMode;
+    editToggleBtn.textContent = editMode ? '✏ Done' : '✏ Edit';
+    editToggleBtn.classList.toggle('seg-edit-active', editMode);
+    bulkPanel.style.display = editMode ? '' : 'none';
+    renderSegmentChips();
+  });
+  segHeader.appendChild(editToggleBtn);
   viewer.appendChild(segHeader);
 
-  // ── Stats bar ──
-  const statsBar = document.createElement('div');
-  statsBar.className = 'seg-stats';
-  viewer.appendChild(statsBar);
+  // Stats bar removed for cleaner karaoke UI
 
   // ── Two-column layout ──
   const mainLayout = document.createElement('div');
@@ -2555,42 +2560,8 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   editStatus.className = 'text-secondary';
   editStatus.style.cssText = 'font-size:0.8rem;min-width:60px;';
 
-  // Export buttons
-  const exportSrtBtn = document.createElement('button');
-  exportSrtBtn.className = 'btn btn-secondary';
-  exportSrtBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
-  exportSrtBtn.textContent = 'SRT';
-  exportSrtBtn.title = 'Download subtitle file (.srt)';
-
-  const exportVttBtn = document.createElement('button');
-  exportVttBtn.className = 'btn btn-secondary';
-  exportVttBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
-  exportVttBtn.textContent = 'VTT';
-  exportVttBtn.title = 'Download subtitle file (.vtt)';
-
-  const exportKaraokeBtn = document.createElement('button');
-  exportKaraokeBtn.className = 'btn btn-secondary';
-  exportKaraokeBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
-  exportKaraokeBtn.textContent = '🎤 Karaoke';
-  exportKaraokeBtn.title = 'Download self-contained karaoke HTML player';
-
-  const exportVideoBtn = document.createElement('button');
-  exportVideoBtn.className = 'btn btn-secondary';
-  exportVideoBtn.style.cssText = 'font-size:0.8rem;padding:4px 10px;';
-  exportVideoBtn.textContent = '🎬 Export Video';
-  exportVideoBtn.title = 'Record karaoke video file (runs in real-time)';
-
-  const videoStatus = document.createElement('span');
-  videoStatus.className = 'text-secondary';
-  videoStatus.style.cssText = 'font-size:0.78rem;';
-
   toolbar.appendChild(problemFilterBtn);
   toolbar.appendChild(editStatus);
-  toolbar.appendChild(exportSrtBtn);
-  toolbar.appendChild(exportVttBtn);
-  toolbar.appendChild(exportKaraokeBtn);
-  toolbar.appendChild(exportVideoBtn);
-  toolbar.appendChild(videoStatus);
   leftPanel.appendChild(toolbar);
 
   // Word grid
@@ -2620,12 +2591,8 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   bulkBtnRow.appendChild(bulkStatus);
   bulkPanel.appendChild(bulkTextarea);
   bulkPanel.appendChild(bulkBtnRow);
+  bulkPanel.style.display = 'none'; // hidden until edit mode is toggled on
   leftPanel.appendChild(bulkPanel);
-
-  // Mark reviewed button
-  const markReviewedBtn = document.createElement('button');
-  markReviewedBtn.className = 'btn btn-primary seg-mark-reviewed-btn';
-  leftPanel.appendChild(markReviewedBtn);
 
   // ── Sidebar ──
   const sidebar = document.createElement('div');
@@ -2671,29 +2638,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   }
 
   function updateStats() {
-    const approvedCount = segments.filter((_, i) => approvedHashes.has(segHash(i))).length;
-    const total = segments.length;
-    const unapprovedProblems = segments.filter((_, i) => isProblemSegment(i) && !approvedHashes.has(segHash(i))).length;
-    statsBar.innerHTML = '';
-    [
-      ['Approved', approvedCount, 'var(--green)'],
-      ['Remaining', total - approvedCount, 'var(--orange)'],
-      ['Progress', Math.round(approvedCount / total * 100) + '%', 'var(--accent)'],
-      ['Problems', unapprovedProblems, 'var(--red)'],
-    ].forEach(([label, val, color]) => {
-      const item = document.createElement('span');
-      item.className = 'seg-stat-item';
-      const lbl = document.createElement('span');
-      lbl.className = 'seg-stat-label';
-      lbl.textContent = label;
-      const valEl = document.createElement('span');
-      valEl.className = 'seg-stat-val';
-      valEl.style.color = color;
-      valEl.textContent = val;
-      item.appendChild(lbl);
-      item.appendChild(valEl);
-      statsBar.appendChild(item);
-    });
+    // stats bar removed — no-op
   }
 
   function updateSegHeader() {
@@ -2721,13 +2666,6 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
     prevBtn.disabled = currentSegIdx === 0;
     nextBtn.disabled = currentSegIdx === segments.length - 1;
-    nextUnreviewedBtn.disabled = findNextUnreviewed() === -1;
-
-    const isApproved = approvedHashes.has(segHash(currentSegIdx));
-    markReviewedBtn.textContent = isApproved ? '✓ Approved' : 'Approve Segment';
-    markReviewedBtn.className = isApproved
-      ? 'btn btn-secondary seg-mark-reviewed-btn seg-approved-btn'
-      : 'btn btn-primary seg-mark-reviewed-btn';
   }
 
   function getSegInsertions(segIdx, posInSeg) {
@@ -3166,74 +3104,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     return (audio?.name || audioId).replace(/\.[^.]+$/, '');
   }
 
-  exportSrtBtn.addEventListener('click', () => {
-    const srt = generateSRT(getCurrentWords());
-    if (!srt) { alert('No aligned words to export.'); return; }
-    downloadFile(srt, `${getExportBaseName()}.srt`, 'text/plain');
-  });
-
-  exportVttBtn.addEventListener('click', () => {
-    const vtt = generateVTT(getCurrentWords());
-    if (!vtt) { alert('No aligned words to export.'); return; }
-    downloadFile(vtt, `${getExportBaseName()}.vtt`, 'text/vtt');
-  });
-
-  exportKaraokeBtn.addEventListener('click', () => {
-    const exportWords = getCurrentWords();
-    if (!exportWords.length) { alert('No aligned words to export.'); return; }
-    const state = getState();
-    const audio = state.audio?.find(a => a.id === audioId);
-    const r2Link = audio?.r2Link;
-    const audioSrc = r2Link
-      ? `https://jem-asr-app.pages.dev/api/audio?url=${encodeURIComponent(r2Link)}`
-      : (playerEl?.src || '');
-    const baseName = getExportBaseName();
-    const html = generateKaraokeHTML(exportWords, audioSrc, baseName);
-    downloadFile(html, `${baseName}-karaoke.html`, 'text/html');
-  });
-
-  let cancelVideoExport = null;
-  exportVideoBtn.addEventListener('click', async () => {
-    if (cancelVideoExport) {
-      cancelVideoExport();
-      cancelVideoExport = null;
-      exportVideoBtn.textContent = '🎬 Export Video';
-      videoStatus.textContent = '';
-      return;
-    }
-    if (!playerEl) { alert('No audio player found.'); return; }
-    const exportWords = getCurrentWords();
-    if (!exportWords.length) { alert('No aligned words to export.'); return; }
-
-    // Normalize to {w, s, e} for the renderer
-    const normWords = exportWords.map(w => ({
-      w: w.word || w.text || '',
-      s: w.start ?? 0,
-      e: w.end ?? 0,
-    }));
-
-    exportVideoBtn.textContent = '⏹ Cancel Recording';
-    videoStatus.textContent = 'Starting...';
-
-    try {
-      cancelVideoExport = startKaraokeVideoExport(
-        normWords,
-        playerEl,
-        getExportBaseName(),
-        text => { videoStatus.textContent = text; },
-        msg => {
-          cancelVideoExport = null;
-          exportVideoBtn.textContent = '🎬 Export Video';
-          videoStatus.textContent = msg;
-          setTimeout(() => { videoStatus.textContent = ''; }, 5000);
-        }
-      );
-    } catch (err) {
-      cancelVideoExport = null;
-      exportVideoBtn.textContent = '🎬 Export Video';
-      videoStatus.textContent = `Error: ${err?.message || String(err) || 'unknown'}`;
-    }
-  });
+  // Export button handlers removed for cleaner karaoke UI
 
   // Bulk textarea auto-applies on blur (no button needed)
   function applyBulkText() {
@@ -3286,17 +3157,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       goToSegment(currentSegIdx + 1);
     }
   });
-  nextUnreviewedBtn.addEventListener('click', () => { const idx = findNextUnreviewed(); if (idx >= 0) goToSegment(idx); });
-
-  markReviewedBtn.addEventListener('click', () => {
-    const hash = segHash(currentSegIdx);
-    const audioEntry = getState().audio?.find(a => a.id === audioId);
-    const isNowApproved = toggleSegmentApproval(audioId, hash);
-    syncSegmentApproval(audioId, hash, isNowApproved, getCurrentUser(), audioEntry).catch(console.warn);
-    updateStats();
-    updateSegHeader();
-    if (sidebar._renderList) sidebar._renderList();
-  });
+  // Review button handlers removed for cleaner karaoke UI
 
   // Initial render
   renderSegmentChips();
