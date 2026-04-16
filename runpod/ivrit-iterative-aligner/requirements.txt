@@ -1,0 +1,5 @@
+runpod>=1.7.0
+stable-ts>=2.16.0
+faster-whisper>=1.0.0
+numpy
+requests>=2.31.0
