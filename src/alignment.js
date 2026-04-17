@@ -305,6 +305,76 @@ export function buildRequestBody(audioResult, chunkText, aligner = 'stable-ts') 
   );
 }
 
+// Normalize a word for comparison: strip punctuation/symbols/whitespace, lowercase.
+// Works across Latin, Hebrew, and Yiddish scripts.
+function normWord(s) {
+  if (!s) return '';
+  return s.replace(/[\p{P}\p{S}\s]/gu, '').toLowerCase();
+}
+
+// Reconcile the aligner's output against the original input text so that every
+// input word is preserved — even ones the aligner couldn't match to audio.
+// Missing words get inserted as zero-confidence placeholders with neighbor
+// timestamps so they remain in the editor text and in future realign inputs.
+function reconcileAlignedWithInput(alignText, alignedWords) {
+  const inputTokens = alignText.trim().split(/\s+/).filter(t => t.length > 0);
+  if (inputTokens.length === 0) return alignedWords;
+  if (!alignedWords || alignedWords.length === 0) {
+    return inputTokens.map(w => ({
+      word: w, start: 0, end: 0, confidence: 0, unaligned: true,
+    }));
+  }
+
+  const LOOKAHEAD = 8;
+  const result = [];
+  let ai = 0;
+
+  for (let ii = 0; ii < inputTokens.length; ii++) {
+    const inp = inputTokens[ii];
+    const inpNorm = normWord(inp);
+
+    // Direct match: aligner word at current position equals input word.
+    if (ai < alignedWords.length && normWord(alignedWords[ai].word) === inpNorm) {
+      result.push(alignedWords[ai]);
+      ai++;
+      continue;
+    }
+
+    // Look ahead: maybe aligner emitted extra words (e.g. anchor residue) before
+    // the next real match. Walk up to LOOKAHEAD words forward.
+    let foundAt = -1;
+    for (let la = ai + 1; la < Math.min(ai + 1 + LOOKAHEAD, alignedWords.length); la++) {
+      if (normWord(alignedWords[la].word) === inpNorm) { foundAt = la; break; }
+    }
+
+    if (foundAt !== -1) {
+      for (let la = ai; la <= foundAt; la++) result.push(alignedWords[la]);
+      ai = foundAt + 1;
+    } else {
+      // Input word absent from aligner output — insert a placeholder so it
+      // survives to the editor text and future realigns.
+      const prevEnd = result.length > 0 ? (result[result.length - 1].end || 0) : 0;
+      const nextStart = ai < alignedWords.length ? (alignedWords[ai].start || prevEnd) : prevEnd;
+      const t = prevEnd || nextStart || 0;
+      result.push({
+        word: inp,
+        start: t,
+        end: Math.max(t, nextStart || t),
+        confidence: 0,
+        unaligned: true,
+      });
+    }
+  }
+
+  // Flush any trailing aligner words (defensive — should be rare).
+  while (ai < alignedWords.length) {
+    result.push(alignedWords[ai]);
+    ai++;
+  }
+
+  return result;
+}
+
 export async function alignRow(audioId, state, textOverride = null, versionId = null, onProgress = null) {
   const url = getAudioUrl(audioId, state);
   if (!url) throw new Error(`No audio URL for ${audioId}`);
@@ -369,6 +439,7 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const ANCHOR_COUNT = 20;         // words to borrow from previous chunk
   const ANCHOR_PRE_BUFFER = 20;    // seconds of audio before first anchor word
   const BOUNDARY_GAP_THRESHOLD = 5; // seconds — inter-word gap larger than this = inflation artifact
+  const BOUNDARY_MAX_POPS = 3;     // cap pops at a boundary so real pauses don't eat legit words
 
   // For multi-chunk alignment with non-R2 audio, decode the full audio once in the
   // browser to produce frame-accurate WAV slices. For R2 audio, use the URL-based
@@ -476,24 +547,28 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
         allWords = allWords.concat(calibrated.slice(0, anchorCount));
         wordsToAdd = calibrated.slice(anchorCount);
       } else {
-        console.warn(`[Align${chunkLabel}] Calibration out of range (${calibration.toFixed(2)}s) — trimming inflation`);
+        console.warn(`[Align${chunkLabel}] Calibration out of range (${calibration.toFixed(2)}s) — keeping anchor words uncalibrated to avoid loss`);
+        // Drop the inflated tail of the previous chunk (those timestamps are wrong),
+        // but KEEP the current chunk's re-aligned anchor words — they may be off by
+        // the uncalibrated drift, but the words themselves must not be lost.
         allWords = allWords.slice(0, allWords.length - anchorCount);
-        // Trim residual inflation using gap detection
-        while (allWords.length >= 2) {
+        let popped = 0;
+        while (allWords.length >= 2 && popped < BOUNDARY_MAX_POPS) {
           const last = allWords[allWords.length - 1];
           const prev = allWords[allWords.length - 2];
-          if (last.start - prev.start > BOUNDARY_GAP_THRESHOLD) allWords.pop();
+          if (last.start - prev.start > BOUNDARY_GAP_THRESHOLD) { allWords.pop(); popped++; }
           else break;
         }
-        wordsToAdd = chunkWords.slice(anchorCount);
+        wordsToAdd = chunkWords;
       }
     } else {
       // No anchors: trim inflated boundary words using gap detection before merging.
       if (i > 0 && allWords.length >= 2) {
-        while (allWords.length >= 2) {
+        let popped = 0;
+        while (allWords.length >= 2 && popped < BOUNDARY_MAX_POPS) {
           const last = allWords[allWords.length - 1];
           const prev = allWords[allWords.length - 2];
-          if (last.start - prev.start > BOUNDARY_GAP_THRESHOLD) allWords.pop();
+          if (last.start - prev.start > BOUNDARY_GAP_THRESHOLD) { allWords.pop(); popped++; }
           else break;
         }
       }
@@ -508,6 +583,16 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
     } else {
       chunkAudioStart = chunkAudioEnd || effectiveEnd;
     }
+  }
+
+  // Reconcile aligner output against the original input text. Any input word
+  // the aligner dropped gets re-inserted as a zero-confidence placeholder so
+  // it stays in the editor's plain text and survives future realigns.
+  const reconciledBefore = allWords.length;
+  allWords = reconcileAlignedWithInput(alignText, allWords);
+  const unalignedCount = allWords.filter(w => w.unaligned).length;
+  if (unalignedCount > 0) {
+    console.warn(`[Align] Reconciled ${unalignedCount} input word(s) the aligner did not match (aligner returned ${reconciledBefore}, input had ${allWords.length})`);
   }
 
   const totalConf = allWords.reduce((sum, w) => sum + (w.confidence || 0), 0);
