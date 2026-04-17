@@ -1520,6 +1520,13 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
   const splitState = { anchor: null, refresh: () => {} };
 
   function buildAlignButton(targetEl) {
+    // Local mm:ss formatter — renderWordView has its own fmtSec but it's out of
+    // scope here, so the Split bar (which lives in this scope) needs its own.
+    const fmtSec = (s) => {
+      if (s == null || isNaN(s)) return '?';
+      return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+    };
+
     const alignBar = document.createElement('div');
     alignBar.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;';
     const alignBtn = document.createElement('button');
