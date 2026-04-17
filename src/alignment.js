@@ -375,7 +375,7 @@ function reconcileAlignedWithInput(alignText, alignedWords) {
   return result;
 }
 
-export async function alignRow(audioId, state, textOverride = null, versionId = null, onProgress = null) {
+export async function alignRow(audioId, state, textOverride = null, versionId = null, onProgress = null, opts = {}) {
   const url = getAudioUrl(audioId, state);
   if (!url) throw new Error(`No audio URL for ${audioId}`);
 
@@ -390,8 +390,10 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const aligner = getAlignerChoice();
 
   const trim = state.trims?.[audioId] || {};
-  const trimStart = trim.start || 0;
-  const trimEnd = trim.end || 0;
+  // opts.trimStartOverride / opts.trimEndOverride let callers (e.g. alignFromWord)
+  // pin the alignment to a sub-range without mutating the saved user trim.
+  const trimStart = opts.trimStartOverride ?? (trim.start || 0);
+  const trimEnd   = opts.trimEndOverride   ?? (trim.end   || 0);
 
   const audioEntry = state.audio.find(a => a.id === audioId);
   const audioDuration = (audioEntry?.estMinutes || 0) * 60;
@@ -595,18 +597,33 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
     console.warn(`[Align] Reconciled ${unalignedCount} input word(s) the aligner did not match (aligner returned ${reconciledBefore}, input had ${allWords.length})`);
   }
 
-  const totalConf = allWords.reduce((sum, w) => sum + (w.confidence || 0), 0);
-  const avgConfidence = allWords.length > 0 ? totalConf / allWords.length : 0;
-  const lowConfidenceCount = allWords.filter(w => (w.confidence || 0) < 0.4).length;
+  // Partial re-align: keep existing words[0..mergeFromIndex-1] and append the
+  // freshly-aligned tail. Used by alignFromWord to fix a problematic mid-audio
+  // region without re-aligning the whole file.
+  let finalWords = allWords;
+  if (opts.mergeFromIndex != null) {
+    const existing = state.alignments?.[audioId];
+    const prior = (existing && Array.isArray(existing.words)) ? existing.words : [];
+    const kept = prior.slice(0, opts.mergeFromIndex);
+    finalWords = kept.concat(allWords);
+  }
 
+  const totalConf = finalWords.reduce((sum, w) => sum + (w.confidence || 0), 0);
+  const avgConfidence = finalWords.length > 0 ? totalConf / finalWords.length : 0;
+  const lowConfidenceCount = finalWords.filter(w => (w.confidence || 0) < 0.4).length;
+
+  const priorAlignment = state.alignments?.[audioId];
   const alignment = {
-    words: allWords,
+    words: finalWords,
     avgConfidence,
     lowConfidenceCount,
     alignedAt: new Date().toISOString(),
-    trimStart: trimStart || undefined,
-    trimEnd: trimEnd || undefined,
-    aligner, // which pod produced this alignment
+    // On a partial merge preserve the original saved trim; the override only
+    // affected this one request.
+    trimStart: (opts.mergeFromIndex != null ? priorAlignment?.trimStart : (trimStart || undefined)),
+    trimEnd:   (opts.mergeFromIndex != null ? priorAlignment?.trimEnd   : (trimEnd   || undefined)),
+    aligner, // which pod produced this alignment (of the tail, for partial merges)
+    ...(opts.mergeFromIndex != null ? { lastPartialFromIndex: opts.mergeFromIndex } : {}),
   };
 
   updateState('alignments', audioId, alignment);
@@ -614,6 +631,47 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
     setVersionAlignment(audioId, versionId, alignment);
   }
   return alignment;
+}
+
+// Partial re-align from a specific word to the end of the audio. Keeps words
+// 0..wordIndex-1 as-is, re-aligns the rest starting from the anchor's timestamp.
+export async function alignFromWord(audioId, state, wordIndex, versionId = null, onProgress = null) {
+  const existing = state.alignments?.[audioId];
+  if (!existing || !Array.isArray(existing.words) || !existing.words[wordIndex]) {
+    throw new Error('No alignment word at that index to re-align from');
+  }
+  const anchor = existing.words[wordIndex];
+  if (!(anchor.start >= 0)) {
+    throw new Error('Anchor word has no valid start timestamp');
+  }
+
+  const fullText = (state.cleaning[audioId]?.cleanedText || '').replace(/[�-�]/gu, '');
+  if (!fullText.trim()) throw new Error('No cleaned text available for re-alignment');
+
+  // Input tokens are 1:1 with alignment.words (reconcileAlignedWithInput preserves mapping).
+  const tokens = fullText.trim().split(/\s+/).filter(t => t.length > 0);
+  if (wordIndex >= tokens.length) {
+    throw new Error(`Anchor index ${wordIndex} out of range (text has ${tokens.length} tokens)`);
+  }
+  const partialText = tokens.slice(wordIndex).join(' ');
+
+  // Run alignment with trim_start pinned just slightly before the anchor so the
+  // first word isn't clipped. 1 s pre-buffer is enough for phoneme onset.
+  const PRE_BUFFER = 1.0;
+  const trimStartOverride = Math.max(0, anchor.start - PRE_BUFFER);
+
+  return alignRow(
+    audioId,
+    state,
+    partialText,
+    versionId,
+    onProgress,
+    {
+      trimStartOverride,
+      trimEndOverride: 0,          // go to end of audio
+      mergeFromIndex: wordIndex,   // keep words[0..wordIndex-1] intact
+    },
+  );
 }
 
 export async function batchAlign(audioIds, state, onProgress) {

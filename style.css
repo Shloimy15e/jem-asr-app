@@ -639,6 +639,12 @@ input {
   transform: scale(1.08);
 }
 
+.word-chip.split-anchor {
+  outline: 2px dashed var(--accent, #3b82f6);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px var(--bg, #fff) inset;
+}
+
 .karaoke-word.active {
   background: var(--accent) !important;
   color: var(--bg) !important;
