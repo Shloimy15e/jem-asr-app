@@ -3,6 +3,7 @@ import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary,
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanSectionMarkers, cleanMinor, cleanIntroText, cleanWhitespace, findBracketMatches, findParenMatches, findMinorMatches, applyMatchActions, calculateCleanRate } from './cleaning.js';
 import { alignRow, transcribeAudio, ALIGNER_OPTIONS, getAlignerChoice, setAlignerChoice } from './alignment.js';
+import { createSplitFromAudio } from './split.js';
 import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark.js';
 import { buildAsrConfigPanel } from './asr-config.js';
 
@@ -1511,6 +1512,13 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     targetEl.appendChild(btnBar);
   }
 
+  // ── Split anchor state (per-render) ──
+  // Shared object so the karaoke sidebar (renderWordView, a top-level fn that
+  // does NOT close over this scope) and the Split-here bar below the Align
+  // button can read/write the same anchor. `refresh` is overwritten by
+  // buildAlignButton once the DOM bar exists.
+  const splitState = { anchor: null, refresh: () => {} };
+
   function buildAlignButton(targetEl) {
     const alignBar = document.createElement('div');
     alignBar.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;';
@@ -1576,12 +1584,77 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       const info = document.createElement('span');
       info.className = 'text-secondary';
       info.style.fontSize = '0.82rem';
-      const alignedDate = alignment.alignedAt ? ` | Aligned ${new Date(alignment.alignedAt).toLocaleDateString()}` : '';
+      const alignedDate = alignment.alignedAt
+        ? (() => {
+            const d = new Date(alignment.alignedAt);
+            return ` | Aligned ${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+          })()
+        : '';
       const alignerTag = alignment.aligner ? ` | ${alignment.aligner}` : '';
       info.textContent = `Avg: ${formatConfidence(alignment.avgConfidence)} | Low: ${alignment.lowConfidenceCount} words${alignedDate}${alignerTag}`;
       alignBar.appendChild(info);
     }
     targetEl.appendChild(alignBar);
+
+    // ── Split-from-here row (hidden until a chip is shift-clicked) ──
+    // Shown below the Align bar. State lives in the shared `splitState` object
+    // so the karaoke sidebar (renderWordView) can mutate it via shift-click.
+    const splitBar = document.createElement('div');
+    splitBar.style.cssText = 'display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;padding:6px 10px;background:var(--surface-2,#f5f5f7);border:1px dashed var(--border,#ccc);border-radius:6px;font-size:0.82rem;';
+    splitBar.setAttribute('data-role', 'split-bar');
+
+    const splitLabel = document.createElement('span');
+    splitLabel.setAttribute('data-role', 'split-label');
+    splitLabel.style.cssText = 'color:var(--text-secondary,#666);';
+    splitBar.appendChild(splitLabel);
+
+    const splitBtn = document.createElement('button');
+    splitBtn.className = 'action-btn action-btn-primary';
+    splitBtn.textContent = 'Split here → new Part';
+    splitBar.appendChild(splitBtn);
+
+    const splitClear = document.createElement('button');
+    splitClear.className = 'action-btn';
+    splitClear.textContent = 'Clear';
+    splitBar.appendChild(splitClear);
+
+    splitClear.addEventListener('click', () => {
+      splitState.anchor = null;
+      splitState.refresh();
+    });
+
+    splitBtn.addEventListener('click', async () => {
+      const a = splitState.anchor;
+      if (!a) return;
+      const parent = state.audio.find(x => x.id === audioId);
+      if (!parent) return;
+      const confirmMsg = `Create a new Part from "${a.word}" at ${fmtSec(a.time)}?\n\n` +
+        `The new record will share the same audio file but start at ${fmtSec(a.time)} with the remaining ${a.tailLen} words as its cleaned text. The current record is unchanged.`;
+      if (!confirm(confirmMsg)) return;
+      splitBtn.disabled = true;
+      splitBtn.textContent = 'Creating…';
+      try {
+        const res = await createSplitFromAudio(parent, getState(), a.wordIndex);
+        window.location.href = `/detail?id=${encodeURIComponent(res.id)}`;
+      } catch (err) {
+        console.error('[Split] Failed:', err);
+        alert(`Split failed: ${err.message || err}`);
+        splitBtn.disabled = false;
+        splitBtn.textContent = 'Split here → new Part';
+      }
+    });
+
+    targetEl.appendChild(splitBar);
+    splitState.refresh = () => {
+      const a = splitState.anchor;
+      if (!a) {
+        splitBar.style.display = 'none';
+        return;
+      }
+      splitBar.style.display = 'flex';
+      splitLabel.textContent = `Split from "${a.word}" @ ${fmtSec(a.time)} (${a.tailLen} words to the end)`;
+    };
+    splitState.refresh();
   }
 
   // ASR provider buttons are now inline in the Transcript Mapping section
@@ -1651,11 +1724,11 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       const fullAlignment = words ? { ...alignment, words } : alignment;
       if (words) updateState('alignments', audioId, fullAlignment);
       placeholder.remove();
-      renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl, activeVersionRef, getCurrentText, getManualText);
+      renderWordView(audioId, cleaning, fullAlignment, container, pageContainer, playerEl, activeVersionRef, getCurrentText, getManualText, splitState);
       renderIterationHistory(audioId, container, pageContainer, playerEl);
     });
   } else if (alignment) {
-    renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef, getCurrentText, getManualText);
+    renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef, getCurrentText, getManualText, splitState);
     renderIterationHistory(audioId, container, pageContainer, playerEl);
   } else {
     // No alignment yet — show plain text editor for editing before alignment
@@ -2446,7 +2519,7 @@ player.addEventListener('timeupdate',()=>{
 </html>`;
 }
 
-function renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef, getCurrentText, getManualText) {
+function renderWordView(audioId, cleaning, alignment, container, pageContainer, playerEl, activeVersionRef, getCurrentText, getManualText, splitState = { anchor: null, refresh: () => {} }) {
   const words = alignment?.words ?? [];
 
   const viewer = document.createElement('div');
@@ -2693,6 +2766,10 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     sidebarLabel.textContent = `Alignment Quality • ${words.length} words • ${problemCount} problems`;
     sidebar.appendChild(sidebarLabel);
 
+    // Track the absolute word index across segments so shift-click can pass
+    // the correct index into createSplitFromAudio.
+    let cumulativeIdx = 0;
+
     segments.forEach((seg, segIdx) => {
       // Segment header
       const segHeader = document.createElement('div');
@@ -2711,15 +2788,30 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       const chipRow = document.createElement('div');
       chipRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:2px;direction:rtl;';
       seg.forEach(w => {
+        const myIdx = cumulativeIdx++;
         const conf = typeof w.confidence === 'number' ? w.confidence : 1;
         const chip = document.createElement('span');
         chip.className = `word-chip confidence-${getConfidenceLevel(conf)}`;
         chip.style.cssText = 'font-size:0.75rem;padding:1px 4px;cursor:pointer;';
         chip.textContent = w.word || w.text || '';
-        chip.title = `${(conf * 100).toFixed(0)}% | ${fmtSec(w.start)}`;
+        chip.title = `${(conf * 100).toFixed(0)}% | ${fmtSec(w.start)}\nClick: seek • Shift+click: set split point`;
         chip.dataset.start = String(w.start);
         chip.dataset.end = String(w.end);
-        chip.addEventListener('click', () => {
+        chip.dataset.wordIdx = String(myIdx);
+        if (splitState.anchor && splitState.anchor.wordIndex === myIdx) chip.classList.add('split-anchor');
+        chip.addEventListener('click', (e) => {
+          if (e.shiftKey) {
+            sidebar.querySelectorAll('.word-chip.split-anchor').forEach(c => c.classList.remove('split-anchor'));
+            chip.classList.add('split-anchor');
+            splitState.anchor = {
+              wordIndex: myIdx,
+              word: w.word || w.text || '',
+              time: w.start,
+              tailLen: words.length - myIdx,
+            };
+            splitState.refresh();
+            return;
+          }
           if (playerEl) { playerEl.currentTime = w.start; playerEl.play().catch(() => {}); }
         });
         chipRow.appendChild(chip);
