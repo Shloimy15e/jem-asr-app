@@ -2,7 +2,7 @@ import { initState, getState, getStatus, getCompletedStages, PIPELINE_STAGES, ge
 import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, setActiveLibrary, getActiveLibraryConfig, isLibraryR2Url, getAccessToken } from './auth.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanSectionMarkers, cleanMinor, cleanIntroText, cleanWhitespace, findBracketMatches, findParenMatches, findMinorMatches, applyMatchActions, calculateCleanRate } from './cleaning.js';
-import { alignRow, transcribeAudio } from './alignment.js';
+import { alignRow, transcribeAudio, ALIGNER_OPTIONS, getAlignerChoice, setAlignerChoice } from './alignment.js';
 import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark.js';
 import { buildAsrConfigPanel } from './asr-config.js';
 
@@ -1553,12 +1553,32 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
     });
     alignBar.appendChild(alignBtn);
+
+    // ── Aligner chooser ──
+    const alignerWrap = document.createElement('label');
+    alignerWrap.style.cssText = 'display:inline-flex;align-items:center;gap:6px;font-size:0.82rem;color:var(--text-secondary,#666);';
+    alignerWrap.textContent = 'Aligner:';
+    const alignerSelect = document.createElement('select');
+    alignerSelect.style.cssText = 'padding:4px 8px;border-radius:6px;border:1px solid var(--border,#ccc);font-size:0.82rem;';
+    alignerSelect.setAttribute('aria-label', 'Choose aligner pod');
+    for (const opt of ALIGNER_OPTIONS) {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label;
+      alignerSelect.appendChild(o);
+    }
+    alignerSelect.value = getAlignerChoice();
+    alignerSelect.addEventListener('change', (e) => setAlignerChoice(e.target.value));
+    alignerWrap.appendChild(alignerSelect);
+    alignBar.appendChild(alignerWrap);
+
     if (alignment) {
       const info = document.createElement('span');
       info.className = 'text-secondary';
       info.style.fontSize = '0.82rem';
       const alignedDate = alignment.alignedAt ? ` | Aligned ${new Date(alignment.alignedAt).toLocaleDateString()}` : '';
-      info.textContent = `Avg: ${formatConfidence(alignment.avgConfidence)} | Low: ${alignment.lowConfidenceCount} words${alignedDate}`;
+      const alignerTag = alignment.aligner ? ` | ${alignment.aligner}` : '';
+      info.textContent = `Avg: ${formatConfidence(alignment.avgConfidence)} | Low: ${alignment.lowConfidenceCount} words${alignedDate}${alignerTag}`;
       alignBar.appendChild(info);
     }
     targetEl.appendChild(alignBar);

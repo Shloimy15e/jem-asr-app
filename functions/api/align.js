@@ -11,11 +11,83 @@
 
 const ALIGN_ENDPOINT = 'https://align.kohnai.ai/api/align';
 
+// Poll limit for the ivrit-iterative RunPod /run path. 5s intervals × 60 = 5 min total.
+// Browser alignment.js retries on 502/504 so terminal long-audio jobs still land.
+const IVRIT_POLL_MAX = 60;
+const IVRIT_POLL_INTERVAL_MS = 5000;
+
 function getAllowedDomains(env) {
   if (env?.ALLOWED_R2_DOMAINS) {
     return env.ALLOWED_R2_DOMAINS.split(',').map(d => d.trim()).filter(Boolean);
   }
   return ['audio.kohnai.ai'];
+}
+
+// Forward an already-validated audio_url request to the ivrit-iterative RunPod endpoint.
+// The pod downloads the audio itself, so we never touch bytes in the Worker.
+async function forwardToIvritPod(payload, env, corsHeaders) {
+  const endpointId = env?.IVRIT_ENDPOINT_ID;
+  const apiKey = env?.RUNPOD_API_KEY;
+  if (!endpointId || !apiKey) {
+    return new Response(
+      JSON.stringify({ error: 'ivrit-iterative not configured: set IVRIT_ENDPOINT_ID and RUNPOD_API_KEY in Pages env' }),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
+    );
+  }
+
+  const input = {
+    mode: payload.mode || 'align',
+    audio_url: payload.audio_url,
+    text: payload.text,
+    language: payload.language || 'yi',
+  };
+  if (payload.trim_start != null) input.trim_start = payload.trim_start;
+  if (payload.trim_end != null && payload.trim_end > 0) input.trim_end = payload.trim_end;
+
+  const runResp = await fetch(`https://api.runpod.ai/v2/${endpointId}/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ input }),
+  });
+  if (!runResp.ok) {
+    const body = await runResp.text().catch(() => '');
+    return new Response(
+      JSON.stringify({ error: `RunPod /run failed: ${runResp.status}`, detail: body }),
+      { status: 502, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
+    );
+  }
+  const runData = await runResp.json();
+  if (!runData.id) {
+    return new Response(
+      JSON.stringify({ error: 'RunPod /run did not return job id', detail: runData }),
+      { status: 502, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
+    );
+  }
+
+  for (let i = 0; i < IVRIT_POLL_MAX; i++) {
+    await new Promise((r) => setTimeout(r, IVRIT_POLL_INTERVAL_MS));
+    const statusResp = await fetch(`https://api.runpod.ai/v2/${endpointId}/status/${runData.id}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!statusResp.ok) continue;
+    const status = await statusResp.json();
+    if (status.status === 'COMPLETED') {
+      return new Response(JSON.stringify(status.output || {}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+    if (status.status === 'FAILED' || status.status === 'CANCELLED') {
+      return new Response(
+        JSON.stringify({ error: `RunPod job ${status.status}`, detail: status.error || status }),
+        { status: 502, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
+      );
+    }
+  }
+  return new Response(
+    JSON.stringify({ error: 'ivrit-iterative job still running after 5 min — retry to resume polling', jobId: runData.id }),
+    { status: 504, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
+  );
 }
 
 const CORS_HEADERS = {
@@ -174,6 +246,13 @@ export async function onRequestPost(context) {
           JSON.stringify({ error: 'audio_url must use https' }),
           { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
         );
+      }
+
+      // ── ivrit-iterative path ─────────────────────────────────────────
+      // The new pod downloads the audio itself on its VM, so we skip the
+      // base64 rewrite entirely and forward audio_url straight to RunPod.
+      if (payload.aligner === 'ivrit-iterative') {
+        return forwardToIvritPod(payload, context.env, CORS_HEADERS);
       }
 
       let audioBuffer;

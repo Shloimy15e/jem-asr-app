@@ -8,6 +8,28 @@ const ALIGN_ENDPOINT = '/api/align';
 // frame-boundary drift between chunks.
 const CHUNK_LIMIT = 15000;
 
+// ── Aligner selection ────────────────────────────────────────────────────
+// 'stable-ts'        → legacy align.kohnai.ai pod. Browser chunks + anchor calibration.
+// 'ivrit-iterative'  → new RunPod pod (chevreman/ivrit-iterative-aligner). Pod downloads
+//                      audio itself and runs iterative alignment with confusion recovery.
+//                      No browser-side chunking — the pod handles long audio internally.
+
+export const ALIGNER_OPTIONS = [
+  { value: 'stable-ts',       label: 'stable-ts (legacy, chunked)' },
+  { value: 'ivrit-iterative', label: 'ivrit-iterative (long audio)' },
+];
+const ALIGNER_STORAGE_KEY = 'jem-aligner-choice';
+
+export function getAlignerChoice() {
+  const v = typeof localStorage !== 'undefined' ? localStorage.getItem(ALIGNER_STORAGE_KEY) : null;
+  return v === 'ivrit-iterative' ? 'ivrit-iterative' : 'stable-ts';
+}
+
+export function setAlignerChoice(value) {
+  if (value !== 'stable-ts' && value !== 'ivrit-iterative') return;
+  localStorage.setItem(ALIGNER_STORAGE_KEY, value);
+}
+
 function getAudioUrl(audioId, state) {
   const entry = state.audio.find(a => a.id === audioId);
   if (!entry) return null;
@@ -266,11 +288,12 @@ export async function doAlignRequest(requestBody, chunkLabel, onProgress) {
 }
 
 // Build the JSON request body for one alignment chunk.
-export function buildRequestBody(audioResult, chunkText) {
+export function buildRequestBody(audioResult, chunkText, aligner = 'stable-ts') {
   return JSON.stringify(
     audioResult.audioUrl
       ? {
           mode: 'align',
+          aligner,
           audio_url: audioResult.audioUrl,
           ...(audioResult.trimStart != null ? { trim_start: audioResult.trimStart } : {}),
           ...(audioResult.trimEnd != null && audioResult.trimEnd > 0 ? { trim_end: audioResult.trimEnd } : {}),
@@ -278,7 +301,7 @@ export function buildRequestBody(audioResult, chunkText) {
           text: chunkText,
           language: 'yi',
         }
-      : { mode: 'align', audio_base64: audioResult.base64, audio_format: audioResult.format, text: chunkText, language: 'yi' }
+      : { mode: 'align', aligner, audio_base64: audioResult.base64, audio_format: audioResult.format, text: chunkText, language: 'yi' }
   );
 }
 
@@ -294,6 +317,8 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   // JSON.stringify with "The string did not match the expected pattern." in Safari.
   const alignText = rawAlignText.replace(/[�-�]/gu, "");
 
+  const aligner = getAlignerChoice();
+
   const trim = state.trims?.[audioId] || {};
   const trimStart = trim.start || 0;
   const trimEnd = trim.end || 0;
@@ -301,20 +326,29 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const audioEntry = state.audio.find(a => a.id === audioId);
   const audioDuration = (audioEntry?.estMinutes || 0) * 60;
 
-  // Force multi-chunk for long audio to keep each CF Worker request under 128MB.
-  // Each chunk's audio slice is fetched and base64-encoded by the Worker —
-  // cap at ~15 min per chunk ≈ 14MB MP3 base64, safely under the limit.
-  const effectiveDurationSec = ((trimEnd > 0 ? trimEnd : audioDuration) - (trimStart || 0)) || audioDuration;
-  const maxAudioMinPerChunk = 15;
-  const minChunksByDuration = Math.max(1, Math.ceil(effectiveDurationSec / 60 / maxAudioMinPerChunk));
-  const maxChunkChars = Math.min(
-    audioDuration > 900 ? 8000 : CHUNK_LIMIT,
-    Math.max(500, Math.floor(alignText.length / minChunksByDuration)),
-  );
-  const chunks = splitTextIntoChunks(alignText, maxChunkChars);
+  // ivrit-iterative pod downloads the audio on the VM and runs iterative alignment
+  // with confusion-zone recovery server-side, so we skip browser-side chunking and
+  // anchor calibration entirely — one request with the full URL + full text.
+  let chunks;
+  if (aligner === 'ivrit-iterative') {
+    chunks = [alignText];
+    console.log(`[Align] ivrit-iterative selected — single request, pod handles long audio internally`);
+  } else {
+    // Force multi-chunk for long audio to keep each CF Worker request under 128MB.
+    // Each chunk's audio slice is fetched and base64-encoded by the Worker —
+    // cap at ~15 min per chunk ≈ 14MB MP3 base64, safely under the limit.
+    const effectiveDurationSec = ((trimEnd > 0 ? trimEnd : audioDuration) - (trimStart || 0)) || audioDuration;
+    const maxAudioMinPerChunk = 15;
+    const minChunksByDuration = Math.max(1, Math.ceil(effectiveDurationSec / 60 / maxAudioMinPerChunk));
+    const maxChunkChars = Math.min(
+      audioDuration > 900 ? 8000 : CHUNK_LIMIT,
+      Math.max(500, Math.floor(alignText.length / minChunksByDuration)),
+    );
+    chunks = splitTextIntoChunks(alignText, maxChunkChars);
 
-  if (chunks.length > 1) {
-    console.log(`[Align] Text too long (${alignText.length} chars) — splitting into ${chunks.length} chunks (audio ~${Math.round(audioDuration)}s)`);
+    if (chunks.length > 1) {
+      console.log(`[Align] Text too long (${alignText.length} chars) — splitting into ${chunks.length} chunks (audio ~${Math.round(audioDuration)}s)`);
+    }
   }
 
   const effectiveEnd = trimEnd > 0 ? trimEnd : audioDuration;
@@ -393,7 +427,7 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
       // Single-chunk: use the existing CF Worker path
       audioResult = await fetchAudioForAlignment(url, audioStart, chunkAudioEnd, audioDuration);
     }
-    const requestBody = buildRequestBody(audioResult, requestText);
+    const requestBody = buildRequestBody(audioResult, requestText, aligner);
     const data = await doAlignRequest(requestBody, chunkLabel, onProgress);
 
     let rawWords = data.timestamps || [];
@@ -487,6 +521,7 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
     alignedAt: new Date().toISOString(),
     trimStart: trimStart || undefined,
     trimEnd: trimEnd || undefined,
+    aligner, // which pod produced this alignment
   };
 
   updateState('alignments', audioId, alignment);
