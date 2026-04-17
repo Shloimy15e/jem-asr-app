@@ -45,14 +45,35 @@ function fmtSec(s) {
 }
 
 /**
+ * Pull the cleaned text for an audio from any of the locations the app has
+ * historically used: the active version, any 'edited'/'cleaned' version, or
+ * the legacy state.cleaning slot.
+ */
+function resolveParentText(state, parentId) {
+  const versions = state.transcriptVersions?.[parentId];
+  if (Array.isArray(versions) && versions.length > 0) {
+    const preferOrder = ['edited', 'cleaned', 'manual'];
+    for (const t of preferOrder) {
+      const v = [...versions].reverse().find(v => v.type === t && (v.text || '').trim());
+      if (v) return v.text;
+    }
+    const anyWithText = [...versions].reverse().find(v => (v.text || '').trim());
+    if (anyWithText) return anyWithText.text;
+  }
+  return state.cleaning?.[parentId]?.cleanedText || '';
+}
+
+/**
  * Create a new audio record split from `parent` at `anchorWord`.
  *
- * @param {object}   parent      - Parent audio row (from state.audio)
- * @param {object}   state       - Full app state
- * @param {number}   wordIndex   - Index into parent's alignment.words
+ * @param {object}   parent       - Parent audio row (from state.audio)
+ * @param {object}   state        - Full app state
+ * @param {number}   wordIndex    - Index into parent's alignment.words
+ * @param {object}  [opts]
+ * @param {string}  [opts.parentText] - Override parent text (e.g. from getCurrentText())
  * @returns {Promise<{id: string, name: string, anchorTime: number}>}
  */
-export async function createSplitFromAudio(parent, state, wordIndex) {
+export async function createSplitFromAudio(parent, state, wordIndex, opts = {}) {
   if (!parent) throw new Error('Missing parent audio');
   const parentAlignment = state.alignments?.[parent.id];
   if (!parentAlignment?.words?.[wordIndex]) {
@@ -62,8 +83,10 @@ export async function createSplitFromAudio(parent, state, wordIndex) {
   const anchorTime = anchor.start;
   if (!(anchorTime >= 0)) throw new Error('Anchor word has no valid start timestamp');
 
-  const parentText = state.cleaning[parent.id]?.cleanedText || '';
-  if (!parentText.trim()) throw new Error('Parent has no cleaned text to split');
+  const parentText = (opts.parentText ?? resolveParentText(state, parent.id) ?? '').toString();
+  if (!parentText.trim()) {
+    throw new Error('Parent has no cleaned text to split — re-clean the source first');
+  }
   const tokens = parentText.trim().split(/\s+/).filter(t => t.length > 0);
   if (wordIndex >= tokens.length) {
     throw new Error(`Anchor index ${wordIndex} out of range (${tokens.length} tokens)`);

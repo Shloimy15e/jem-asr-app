@@ -1641,7 +1641,10 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       splitBtn.disabled = true;
       splitBtn.textContent = 'Creating…';
       try {
-        const res = await createSplitFromAudio(parent, getState(), a.wordIndex);
+        // Pass the actual on-screen text — the audio's cleaned text may live in
+        // a version slot, not state.cleaning.
+        const parentText = await getCurrentText();
+        const res = await createSplitFromAudio(parent, getState(), a.wordIndex, { parentText });
         window.location.href = `/detail?id=${encodeURIComponent(res.id)}`;
       } catch (err) {
         console.error('[Split] Failed:', err);
