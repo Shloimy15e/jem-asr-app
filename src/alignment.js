@@ -510,10 +510,18 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
 
     console.log(`[Align${chunkLabel}] RunPod returned ${rawWords.length} words; first=${JSON.stringify(rawWords[0])}, last=${JSON.stringify(rawWords[rawWords.length - 1])}`);
 
+    // Timestamp offset differs by pod:
+    // - stable-ts: pod receives an already-clipped audio slice and returns
+    //   0-based timestamps relative to the clip → we add audioStart.
+    // - ivrit-iterative: pod receives the full audio + trim_start, and its
+    //   SeekableAudioLoader sets _prev_seek so stable_whisper reports ABSOLUTE
+    //   timestamps already → we must NOT add audioStart (that would double-offset).
+    const timestampOffset = aligner === 'ivrit-iterative' ? 0 : audioStart;
+
     const chunkWords = rawWords.map(t => ({
       word: t.word || t.text || '',
-      start: (t.start || 0) + audioStart,
-      end: (t.end || 0) + audioStart,
+      start: (t.start || 0) + timestampOffset,
+      end: (t.end || 0) + timestampOffset,
       confidence: t.confidence ?? t.probability ?? t.score ?? 0,
     }));
 
