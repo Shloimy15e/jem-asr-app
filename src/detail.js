@@ -1,13 +1,13 @@
 import { initState, getState, getStatus, getCompletedStages, PIPELINE_STAGES, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions, getPipelineStep, getIterationCount, setSegmentApprovals, getApprovedSegments, toggleSegmentApproval } from './state.js';
-import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, setActiveLibrary, getActiveLibraryConfig, isLibraryR2Url, getAccessToken } from './auth.js';
+import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, setActiveLibrary, getActiveLibraryConfig, proxyAudioUrl, populateLibrarySelector, getAccessToken } from './auth.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
 import { batchClean, cleanSectionMarkers, cleanMinor, cleanIntroText, cleanWhitespace, findBracketMatches, findParenMatches, findMinorMatches, applyMatchActions, calculateCleanRate } from './cleaning.js';
 import { alignRow, transcribeAudio } from './alignment.js';
 import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark.js';
 import { buildAsrConfigPanel } from './asr-config.js';
 
-import { formatConfidence, getConfidenceLevel, generateSRT, generateVTT, downloadFile } from './utils.js';
-import { loadAlignmentWords, loadTranscriptText, loadForDetailPage, syncAudioDuration, syncAudioField, loadSegmentApprovals, syncSegmentApproval } from './db.js';
+import { formatConfidence, getConfidenceLevel } from './utils.js';
+import { loadAlignmentWords, loadTranscriptFullText, loadForDetailPage, syncAudioDuration, syncAudioField, loadSegmentApprovals, syncSegmentApproval } from './db.js';
 
 // ── Pipeline indicator for detail page ──────────────────────────────
 
@@ -54,26 +54,6 @@ function renderDetailPipeline(audioId) {
   return container;
 }
 
-// Loads full transcript text using R2 first, then Supabase fallback.
-// Caches on the transcript object for the session.
-async function loadFullText(transcript) {
-  if (transcript.text) return transcript.text;
-  let text = null;
-  if (transcript.r2TranscriptLink) {
-    try {
-      const parsed = new URL(transcript.r2TranscriptLink);
-      const path = parsed.pathname.replace(/^\//, ''); // strip leading slash
-      const params = new URLSearchParams({ name: path, domain: parsed.hostname });
-      const res = await fetch('/api/transcript?' + params).catch(() => null);
-      if (res?.ok) text = await res.text().catch(() => null);
-    } catch { /* fall through to db fallback */ }
-  }
-  if (!text && transcript.id) {
-    text = await loadTranscriptText(transcript.id);
-  }
-  if (text) transcript.text = text;
-  return text;
-}
 
 // Renders a speed-control bar for an audio player element.
 function renderSpeedBar(playerEl, speeds) {
@@ -107,21 +87,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('app-title').textContent = `${activeLibConfig.name} ASR Workbench`;
     document.title = `${activeLibConfig.name} ASR — Detail`;
   }
-  const libSelector = document.getElementById('library-selector');
-  if (libraries.length > 1 && libSelector) {
-    for (const lib of libraries) {
-      const opt = document.createElement('option');
-      opt.value = lib.id;
-      opt.textContent = lib.name;
-      if (lib.id === activeLib) opt.selected = true;
-      libSelector.appendChild(opt);
-    }
-    libSelector.style.display = '';
-    libSelector.addEventListener('change', () => {
-      setActiveLibrary(libSelector.value);
-      location.href = '/';
-    });
-  }
+  populateLibrarySelector(libraries, activeLib, (newId) => {
+    setActiveLibrary(newId);
+    location.href = '/';
+  });
 
   const params = new URLSearchParams(window.location.search);
   const audioId = params.get('id');
@@ -259,7 +228,7 @@ function renderTranscriptPage(transcriptId, transcript, state, container) {
 
   // Load full text from R2 / Supabase
   if (!transcript.text) {
-    loadFullText(transcript).then(text => {
+    loadTranscriptFullText(transcript).then(text => {
       if (text) textarea.value = text;
     }).catch(() => {});
   }
@@ -423,7 +392,7 @@ function renderDetailPage(audioId, audio, state, container) {
 
   if (audio.r2Link) {
     // R2 link exists — use it directly
-    playerEl.src = isLibraryR2Url(audio.r2Link) ? `/api/audio?url=${encodeURIComponent(audio.r2Link)}` : audio.r2Link;
+    playerEl.src = proxyAudioUrl(audio.r2Link);
     playerSection.content.appendChild(playerEl);
     playerSection.content.appendChild(renderSpeedBar(playerEl, [1, 1.25, 1.5, 2, 2.5, 3]));
     renderTrimControls(audioId, playerEl, playerSection.content);
@@ -460,7 +429,7 @@ function renderDetailPage(audioId, audio, state, container) {
         }
         // Success — update local state and load the player
         audio.r2Link = result.r2Link;
-        playerEl.src = `/api/audio?url=${encodeURIComponent(result.r2Link)}`;
+        playerEl.src = proxyAudioUrl(result.r2Link);
         migrateStatus.textContent = 'Migrated to R2 successfully';
         migrateStatus.style.color = 'var(--green)';
         setTimeout(() => migrateStatus.remove(), 3000);
@@ -725,7 +694,7 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
           startBtn.disabled = true;
           startBtn.textContent = 'Loading...';
           let text = transcript?.text;
-          if (!text && transcript) text = await loadFullText(transcript);
+          if (!text && transcript) text = await loadTranscriptFullText(transcript);
           addVersion(audioId, { type: 'edited', sourceTranscriptId: mapping?.transcriptId, text: text || '', createdBy: getCurrentUser() });
           const s = getState();
           renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
@@ -742,7 +711,7 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
         startBtn.disabled = true;
         startBtn.textContent = 'Loading...';
         let text = transcript.text;
-        if (!text) text = await loadFullText(transcript);
+        if (!text) text = await loadTranscriptFullText(transcript);
         addVersion(audioId, { type: 'edited', sourceTranscriptId: mapping?.transcriptId, text: text || '', createdBy: getCurrentUser() });
         const s = getState();
         renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
@@ -1327,7 +1296,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     if (!m) return '';
     const t = getState().transcripts.find(tr => tr.id === m.transcriptId);
     if (!t) return '';
-    const text = await loadFullText(t);
+    const text = await loadTranscriptFullText(t);
     return text || t.firstLine || '';
   }
   async function getOriginalText() {
@@ -1339,7 +1308,7 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     if (!m) return '';
     const t = getState().transcripts.find(tr => tr.id === m.transcriptId);
     if (!t) return '';
-    const text = await loadFullText(t);
+    const text = await loadTranscriptFullText(t);
     return text || t.firstLine || '';
   }
   function buildViewToggle(onEdited, onManual) {
@@ -2035,8 +2004,8 @@ function renderCompareView(audioId, alignedVersions, container, pageContainer, p
     col.appendChild(selector);
 
     const version = selected[colIdx];
-    const words = version.alignment?.words || [];
-    const otherWords = selected[1 - colIdx]?.alignment?.words || [];
+    const words = version.alignment?.words ?? [];
+    const otherWords = selected[1 - colIdx]?.alignment?.words ?? [];
     const otherConfMap = buildConfidenceMap(otherWords);
 
     // Stats bar
@@ -2275,12 +2244,7 @@ function startKaraokeVideoExport(words, playerEl, audioName, onStatus, onDone) {
       const ctx = canvas.getContext('2d');
 
       // Proxy URL for CORS access
-      const rawSrc = playerEl.src;
-      let audioSrc = rawSrc;
-      try {
-        const u = new URL(rawSrc, location.href);
-        if (isLibraryR2Url(rawSrc)) audioSrc = `/api/audio?url=${encodeURIComponent(rawSrc)}`;
-      } catch { /* keep rawSrc */ }
+      const audioSrc = proxyAudioUrl(playerEl.src);
 
       // Fetch and decode audio
       onStatus('Fetching audio...');

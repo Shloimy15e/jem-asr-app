@@ -136,3 +136,27 @@ export function isLibraryR2Url(url) {
     return false;
   }
 }
+
+// Wraps an R2 audio URL with the /api/audio proxy so CORS-restricted hosts work.
+// Returns non-R2 URLs untouched.
+export function proxyAudioUrl(url) {
+  if (!url) return url;
+  return isLibraryR2Url(url) ? `/api/audio?url=${encodeURIComponent(url)}` : url;
+}
+
+// Populates the #library-selector dropdown and shows it when the user has >1 library.
+// onChange receives the new libraryId (and must apply the switch — callers differ in
+// whether they confirm, reload, or redirect).
+export function populateLibrarySelector(libraries, activeLib, onChange) {
+  const libSelector = document.getElementById('library-selector');
+  if (!libSelector || libraries.length <= 1) return;
+  for (const lib of libraries) {
+    const opt = document.createElement('option');
+    opt.value = lib.id;
+    opt.textContent = lib.name;
+    if (lib.id === activeLib) opt.selected = true;
+    libSelector.appendChild(opt);
+  }
+  libSelector.style.display = '';
+  libSelector.addEventListener('change', () => onChange(libSelector.value, libSelector));
+}

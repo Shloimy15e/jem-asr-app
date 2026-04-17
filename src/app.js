@@ -1,5 +1,5 @@
 import { initState, getState, getStatus, mergeSupabaseData } from './state.js';
-import { checkAuth, signOut, getUserLibraries, getActiveLibrary, setActiveLibrary } from './auth.js';
+import { checkAuth, signOut, getUserLibraries, getActiveLibrary, setActiveLibrary, populateLibrarySelector } from './auth.js';
 import { loadFromSupabase } from './db.js';
 import { renderTable, updateTable } from './table.js';
 import { renderTranscriptTable, updateTranscriptTable, setTranscriptFilters } from './transcript-table.js';
@@ -35,27 +35,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (adminBtn) adminBtn.style.display = '';
   }
 
-  const libSelector = document.getElementById('library-selector');
-  if (libraries.length > 1) {
-    for (const lib of libraries) {
-      const opt = document.createElement('option');
-      opt.value = lib.id;
-      opt.textContent = lib.name;
-      if (lib.id === activeLib) opt.selected = true;
-      libSelector.appendChild(opt);
+  populateLibrarySelector(libraries, activeLib, (newId, libSelector) => {
+    const newLib = libraries.find(l => l.id === newId)?.name || newId;
+    if (!confirm(`Switch to "${newLib}"? Any unsaved offline work in the current library will not be migrated.`)) {
+      libSelector.value = activeLib;
+      return;
     }
-    libSelector.style.display = '';
-    libSelector.addEventListener('change', () => {
-      const newLib = libraries.find(l => l.id === libSelector.value)?.name || libSelector.value;
-      if (!confirm(`Switch to "${newLib}"? Any unsaved offline work in the current library will not be migrated.`)) {
-        // Revert selector to current active library
-        libSelector.value = activeLib;
-        return;
-      }
-      setActiveLibrary(libSelector.value);
-      location.reload();
-    });
-  }
+    setActiveLibrary(newId);
+    location.reload();
+  });
 
   const tableContainer = document.getElementById('table-container');
   tableContainer.innerHTML = '<div class="loading-state">Loading…</div>';

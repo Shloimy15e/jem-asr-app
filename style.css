@@ -1922,6 +1922,8 @@ input {
   margin: 0 auto;
   padding: 24px;
   box-sizing: border-box;
+  background: var(--bg);
+  min-height: calc(100vh - 52px);
 }
 
 .detail-title-bar {
@@ -4188,12 +4190,6 @@ details[open] > .pipeline-tools-summary::before {
 .btn-approve:active,
 .btn-reject:active {
   transform: scale(0.97);
-}
-
-/* === Detail page refinement === */
-.detail-page {
-  background: var(--bg);
-  min-height: calc(100vh - 52px);
 }
 
 .detail-title-bar h2 {

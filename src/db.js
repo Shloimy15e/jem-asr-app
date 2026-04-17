@@ -90,7 +90,7 @@ export async function deleteAllWorkData(audioId) {
     supabase.from('transcript_edits').delete().eq('audio_id', audioId).eq('library_id', lib),
     supabase.from('alignments').delete().eq('audio_id', audioId).eq('library_id', lib),
     supabase.from('reviews').delete().eq('audio_id', audioId).eq('library_id', lib),
-    supabase.from('segment_approvals').delete().eq('audio_id', audioId),
+    supabase.from('segment_approvals').delete().eq('audio_id', audioId).eq('library_id', lib),
   ];
   const results = await Promise.allSettled(deletes);
   results.forEach((r, i) => {
@@ -353,6 +353,28 @@ export async function loadTranscriptText(transcriptId) {
   return data.text || null;
 }
 
+// Loads full transcript text: R2 first (preserves full path + hostname), then Supabase fallback.
+// Caches on the transcript object for the session. Used by detail.js and cleaning.js.
+export async function loadTranscriptFullText(transcript) {
+  if (!transcript) return null;
+  if (transcript.text) return transcript.text;
+  let text = null;
+  if (transcript.r2TranscriptLink) {
+    try {
+      const parsed = new URL(transcript.r2TranscriptLink);
+      const path = parsed.pathname.replace(/^\//, '');
+      const params = new URLSearchParams({ name: path, domain: parsed.hostname });
+      const res = await fetch('/api/transcript?' + params).catch(() => null);
+      if (res?.ok) text = await res.text().catch(() => null);
+    } catch { /* fall through to db fallback */ }
+  }
+  if (!text && transcript.id) {
+    text = await loadTranscriptText(transcript.id);
+  }
+  if (text) transcript.text = text;
+  return text;
+}
+
 export async function loadSegmentApprovals(audioId) {
   const { data, error } = await supabase
     .from('segment_approvals')
@@ -382,7 +404,8 @@ export async function syncSegmentApproval(audioId, segHash, approved, approvedBy
     const { error } = await supabase.from('segment_approvals')
       .delete()
       .eq('audio_id', audioId)
-      .eq('segment_hash', segHash);
+      .eq('segment_hash', segHash)
+      .eq('library_id', getActiveLibrary() || 'jemedia');
     if (error) console.warn('[DB] syncSegmentApproval (unapprove):', error.message);
     else logActivity('segment_unapproved', audioId, null, { segmentHash: segHash });
   }

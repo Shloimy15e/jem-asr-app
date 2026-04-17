@@ -1,7 +1,7 @@
 import { getState, getFilteredRows, getFilterCounts, getStatus, getCompletedStages, PIPELINE_STAGES, updateState } from './state.js';
 import { truncateWords, formatConfidence, debounce, HEBREW_MONTHS } from './utils.js';
 import { linkMatch, unlinkMatch, getSuggestedMatches } from './mapping.js';
-import { isLibraryR2Url } from './auth.js';
+import { proxyAudioUrl } from './auth.js';
 import { syncAudioField } from './db.js';
 import { batchClean, cleanSafe } from './cleaning.js';
 
@@ -41,8 +41,7 @@ function toggleInlinePlay(btn, audioUrl, audioId) {
     return;
   }
   stopInlinePlayer();
-  const proxiedUrl = isLibraryR2Url(audioUrl) ? `/api/audio?url=${encodeURIComponent(audioUrl)}` : audioUrl;
-  const audio = new Audio(proxiedUrl);
+  const audio = new Audio(proxyAudioUrl(audioUrl));
   audio.play();
   btn.textContent = '\u25A0';
   btn.classList.add('playing');

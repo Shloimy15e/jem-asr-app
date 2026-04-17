@@ -1,5 +1,5 @@
 import { getVersions, addVersion, updateVersion, updateState, getNextIteration } from './state.js';
-import { loadTranscriptText } from './db.js';
+import { loadTranscriptFullText } from './db.js';
 
 // Individual cleaning passes
 
@@ -248,27 +248,6 @@ export function calculateCleanRate(rawText, cleanedText) {
   return Math.round((cleanedWords.length / rawWords.length) * 100);
 }
 
-// TODO: This duplicates transcript-fetching logic found in detail.js and db.js.
-// Should eventually be replaced with a shared helper (e.g., loadTranscriptText in db.js).
-async function fetchTranscriptText(transcript) {
-  if (transcript.text) return transcript.text;
-  let text = null;
-  if (transcript.r2TranscriptLink) {
-    try {
-      const filename = transcript.r2TranscriptLink.split('/').pop();
-      const resp = await fetch('/api/transcript?name=' + encodeURIComponent(filename));
-      if (resp.ok) text = await resp.text();
-    } catch { /* network error */ }
-  }
-  if (!text && transcript.id) {
-    text = await loadTranscriptText(transcript.id);
-  }
-  if (text?.trim()) {
-    transcript.text = text; // cache for session
-    return text;
-  }
-  return transcript.firstLine || '';
-}
 
 export async function batchClean(audioIds, state, onProgress, cleanFn = cleanText) {
   const total = audioIds.length;
@@ -292,7 +271,7 @@ export async function batchClean(audioIds, state, onProgress, cleanFn = cleanTex
       continue;
     }
 
-    const rawText = await fetchTranscriptText(transcript);
+    const rawText = (await loadTranscriptFullText(transcript)) || transcript.firstLine || '';
     if (!rawText) {
       failed.push({ id: audioId, reason: 'Could not fetch transcript text' });
       if (onProgress) onProgress(i + 1, total);
