@@ -377,24 +377,31 @@ export function addVersion(audioId, versionData) {
 }
 
 export function updateVersion(audioId, versionId, updates) {
-  if (!state) return;
+  if (!state) return null;
   const versions = state.transcriptVersions[audioId];
-  if (!versions) return;
+  if (!versions) return null;
   const v = versions.find(v => v.id === versionId);
-  if (v) {
-    Object.assign(v, updates);
-    syncLegacyKeys(audioId);
-    saveToStorage();
-    // Sync text changes for edited/asr versions to Supabase
-    if (v.type === 'edited' && updates.text != null) {
-      const audioEntry = state.audio?.find(a => a.id === audioId);
-      syncEdited(audioId, v.text, audioEntry).catch(console.warn);
-    }
-    if (v.type === 'asr' && updates.text != null) {
-      const audioEntry = state.audio?.find(a => a.id === audioId);
-      syncAsr(audioId, v.text, v.model, audioEntry).catch(console.warn);
-    }
+  if (!v) return null;
+  Object.assign(v, updates);
+  syncLegacyKeys(audioId);
+  saveToStorage();
+  // Sync text changes for edited/asr versions to Supabase.
+  // Return the promise so callers can surface cloud-ack state; attach an
+  // internal catch so callers that ignore the return don't get unhandled
+  // rejection warnings (preserves prior fire-and-forget behavior).
+  if (v.type === 'edited' && updates.text != null) {
+    const audioEntry = state.audio?.find(a => a.id === audioId);
+    const p = syncEdited(audioId, v.text, audioEntry);
+    p.catch(console.warn);
+    return p;
   }
+  if (v.type === 'asr' && updates.text != null) {
+    const audioEntry = state.audio?.find(a => a.id === audioId);
+    const p = syncAsr(audioId, v.text, v.model, audioEntry);
+    p.catch(console.warn);
+    return p;
+  }
+  return null;
 }
 
 // Store alignment data on a specific version object.

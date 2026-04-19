@@ -2672,10 +2672,43 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   editorDiv.dir = 'rtl';
   editorDiv.spellcheck = false;
 
-  // Build editor content from alignment words with timestamp anchors at segment boundaries.
-  // If the user has saved edits that diverge from the current alignment (i.e. edits
-  // made since the last realign), show those edits instead — otherwise reopening
-  // the page would visually erase edits until the next realign bakes them in.
+  // Wire click/dblclick handlers onto a timestamp-anchor span — shared so that
+  // both the fresh-from-alignment render and the restore-from-saved-HTML path
+  // produce identical behavior.
+  function bindAnchor(anchor) {
+    anchor.title = anchor.classList.contains('timestamp-adjusted')
+      ? `📌 Adjusted to ${anchor.textContent.replace(/[\[\]]/g, '')}`
+      : 'Click to seek • Double-click to pin to playhead';
+    anchor.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (playerEl) {
+        playerEl.currentTime = parseFloat(anchor.dataset.time);
+        playerEl.play().catch(() => {});
+      }
+      const segIdx = anchor.dataset.segIdx;
+      if (segIdx != null) {
+        const sidebarSeg = sidebar.querySelector(`[data-seg-idx="${segIdx}"]`);
+        if (sidebarSeg) sidebarSeg.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+    });
+    anchor.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      if (!playerEl) return;
+      const newTime = playerEl.currentTime;
+      anchor.dataset.time = String(newTime);
+      anchor.textContent = `[${fmtSec(newTime)}]`;
+      anchor.classList.add('timestamp-adjusted');
+      anchor.title = `📌 Adjusted to ${fmtSec(newTime)}`;
+    });
+  }
+
+  // Build editor content. Three branches:
+  // 1. Edits diverge from alignment AND we have a saved editor HTML snapshot →
+  //    restore the exact DOM (blue chips in place) and rebind anchor handlers.
+  // 2. Edits diverge but no HTML snapshot (legacy saves, or edits pulled from
+  //    Supabase which only stores plain text) → fall back to a banner +
+  //    single seek-to-start anchor so edits are at least visible.
+  // 3. Edits match alignment (or none exist) → standard per-segment render.
   function buildEditorContent() {
     editorDiv.innerHTML = '';
 
@@ -2684,6 +2717,12 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     const editedVersion = getVersions(audioId).find(v => v.type === 'edited');
     const editedText = editedVersion?.text || '';
     const showEdited = editedText && normalize(editedText) !== normalize(alignmentText);
+
+    if (showEdited && editedVersion?.editorHtml) {
+      editorDiv.innerHTML = editedVersion.editorHtml;
+      editorDiv.querySelectorAll('.timestamp-anchor').forEach(bindAnchor);
+      return;
+    }
 
     if (showEdited) {
       const banner = document.createElement('div');
@@ -2697,14 +2736,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       anchor.contentEditable = 'false';
       anchor.dataset.time = String(segments[0]?.[0]?.start || 0);
       anchor.textContent = `[${fmtSec(segments[0]?.[0]?.start || 0)}]`;
-      anchor.title = 'Click to seek to start';
-      anchor.addEventListener('click', (e) => {
-        e.preventDefault();
-        if (playerEl) {
-          playerEl.currentTime = parseFloat(anchor.dataset.time);
-          playerEl.play().catch(() => {});
-        }
-      });
+      bindAnchor(anchor);
       editorDiv.appendChild(anchor);
       editorDiv.appendChild(document.createTextNode(' ' + editedText));
       return;
@@ -2716,26 +2748,8 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       anchor.contentEditable = 'false';
       anchor.dataset.time = String(seg[0]?.start || 0);
       anchor.textContent = `[${fmtSec(seg[0]?.start)}]`;
-      anchor.title = 'Click to seek • Double-click to pin to playhead';
       anchor.dataset.segIdx = String(segIdx);
-      anchor.addEventListener('click', (e) => {
-        e.preventDefault();
-        if (playerEl) {
-          playerEl.currentTime = parseFloat(anchor.dataset.time);
-          playerEl.play().catch(() => {});
-        }
-        const sidebarSeg = sidebar.querySelector(`[data-seg-idx="${segIdx}"]`);
-        if (sidebarSeg) sidebarSeg.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      });
-      anchor.addEventListener('dblclick', (e) => {
-        e.preventDefault();
-        if (!playerEl) return;
-        const newTime = playerEl.currentTime;
-        anchor.dataset.time = String(newTime);
-        anchor.textContent = `[${fmtSec(newTime)}]`;
-        anchor.classList.add('timestamp-adjusted');
-        anchor.title = `📌 Adjusted to ${fmtSec(newTime)}`;
-      });
+      bindAnchor(anchor);
       editorDiv.appendChild(anchor);
 
       const text = seg.map(w => w.word || w.text || '').join(' ');
@@ -2763,6 +2777,10 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     if (_viewMode !== 'edited') return;
     const text = getEditorPlainText();
     if (!text) return;
+    // Snapshot the editor's current DOM so per-segment anchor chips can be
+    // restored verbatim on the next reload (localStorage only — Supabase gets
+    // just `text` since HTML isn't needed anywhere else).
+    const editorHtml = editorDiv.innerHTML;
     const versions = getVersions(audioId);
     let editedVersion = versions.find(v => v.type === 'edited');
     if (!editedVersion && !_ensuredEditedPost) {
@@ -2774,9 +2792,16 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     }
     const versionId = editedVersion?.id || activeVersionRef?.id;
     if (versionId && text) {
-      updateVersion(audioId, versionId, { text, updatedAt: new Date().toISOString() });
+      const syncPromise = updateVersion(audioId, versionId, { text, editorHtml, updatedAt: new Date().toISOString() });
       const now = new Date();
-      saveStatus.textContent = `Saved ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const hhmm = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+      saveStatus.textContent = `Saved ${hhmm}`;
+      if (syncPromise && typeof syncPromise.then === 'function') {
+        syncPromise.then(
+          () => { saveStatus.textContent = `Saved ${hhmm} ✓`; },
+          () => { saveStatus.textContent = `Saved locally (offline)`; },
+        );
+      }
     }
   }
   editorDiv.addEventListener('input', () => {
