@@ -1519,6 +1519,15 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
   // buildAlignButton once the DOM bar exists.
   const splitState = { anchor: null, refresh: () => {} };
 
+  // Local fmtSec — buildAlignButton needs it for the split bar label and the
+  // confirm dialog, but renderWordView's fmtSec (line ~2601) is scoped to that
+  // function. Without this, the refresh callback and the Split button click
+  // both throw ReferenceError silently and the bar appears empty.
+  const fmtSec = (s) => {
+    if (s == null || isNaN(s)) return '?';
+    return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+  };
+
   function buildAlignButton(targetEl) {
     const alignBar = document.createElement('div');
     alignBar.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;';
