@@ -2759,11 +2759,23 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       });
     }
 
+    // Batch consecutive word + whitespace pieces into a single text node per
+    // run, flushing only when we hit an anchor or a newline. Per-piece text
+    // nodes (~8k for a long transcript) make Chrome's contentEditable hang on
+    // select-all / bulk delete and block backspace near chip boundaries.
     let tokenIdx = 0;
+    let buffer = '';
+    const flushBuffer = () => {
+      if (buffer) {
+        editorDiv.appendChild(document.createTextNode(buffer));
+        buffer = '';
+      }
+    };
     pieces.forEach((piece) => {
       if (/\S/.test(piece)) {
         const hit = insertAtToken.get(tokenIdx);
         if (hit) {
+          flushBuffer();
           const anchor = document.createElement('span');
           anchor.className = 'timestamp-anchor';
           anchor.contentEditable = 'false';
@@ -2771,21 +2783,23 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
           anchor.dataset.segIdx = String(hit.segIdx);
           anchor.textContent = `[${fmtSec(hit.time)}]`;
           bindAnchor(anchor);
-          // The .timestamp-anchor CSS already adds margin for visual spacing,
-          // so we append the chip inline without extra text-node padding —
-          // otherwise getEditorPlainText (which strips anchors) would pick up
-          // stray double spaces and pollute the text sent to the aligner.
+          // The .timestamp-anchor CSS adds its own margin for visual spacing,
+          // so we don't pad with extra text nodes — getEditorPlainText strips
+          // anchors and any padding we added would turn into stray double
+          // spaces in the text sent to the aligner.
           editorDiv.appendChild(anchor);
         }
-        editorDiv.appendChild(document.createTextNode(piece));
+        buffer += piece;
         tokenIdx++;
       } else if (piece.includes('\n')) {
+        flushBuffer();
         const brCount = (piece.match(/\n/g) || []).length;
         for (let i = 0; i < brCount; i++) editorDiv.appendChild(document.createElement('br'));
       } else {
-        editorDiv.appendChild(document.createTextNode(piece));
+        buffer += piece;
       }
     });
+    flushBuffer();
     refreshEditorWordCount(editedText);
   }
   buildEditorContent();
