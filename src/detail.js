@@ -1315,22 +1315,13 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
   }
 
   // ── Shared text helpers ──
-  // Defensive scrub: a prior build briefly rendered the divergent-state banner
-  // *inside* the contentEditable editor, so versions saved during that window
-  // may carry the banner sentence in their stored text. Strip it anywhere text
-  // is read out, so nothing polluted ever reaches the aligner.
-  const DIVERGENT_BANNER_SENTINEL = 'Your edits are saved. Click Re-Align to restore per-segment timestamps.';
-  function scrubBannerText(s) {
-    if (!s || !s.includes(DIVERGENT_BANNER_SENTINEL)) return s;
-    return s.split(DIVERGENT_BANNER_SENTINEL).join('').trim();
-  }
   async function getCurrentText() {
     const selectedId = activeVersionRef?.id;
     if (selectedId) {
       const versions = getVersions(audioId);
       const selected = versions.find(v => v.id === selectedId);
       if (selected && selected.type !== 'manual' && selected.text) {
-        return scrubBannerText(selected.text);
+        return selected.text;
       }
     }
     const m = getState().mappings[audioId];
@@ -1554,18 +1545,6 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
             alignBtn.textContent = `Retrying… (${attempt}/${maxRetries})`;
           }
         });
-        // Alignment succeeded — the aligner's output is now the canonical text
-        // for this version. Sync the edited version's text to the joined
-        // alignment words and drop the stale editorHtml snapshot so
-        // buildEditorContent renders fresh per-segment chips from the new
-        // alignment (instead of restoring old chips from the prior DOM).
-        const newAlignment = getState().alignments?.[audioId];
-        if (currentVersionId && newAlignment?.words?.length) {
-          const alignedText = newAlignment.words.map(w => w.word || w.text || '').join(' ').trim();
-          if (alignedText) {
-            updateVersion(audioId, currentVersionId, { text: alignedText, editorHtml: null, updatedAt: new Date().toISOString() });
-          }
-        }
       } catch (err) {
         console.error('[Alignment] Failed for', audioId, ':', err);
         // Persistent error state
@@ -2598,17 +2577,26 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
   // ── Two-column layout: Text Editor (main) + Karaoke Sidebar (right) ──
 
+  // Sidebar + chip placement use the RAW aligner output (no reconciliation
+  // placeholders) so the user sees exactly what the aligner timestamped.
+  // `words` stays reconciled — split-from-here, review-panel confidence lookup
+  // and DB sync still expect a 1:1 mapping with the edited text.
+  const rawWords = Array.isArray(alignment?.rawWords) ? alignment.rawWords : words;
+
   const GAP_THRESHOLD = 1.0;
-  const segments = (() => {
+  const segmentize = (arr) => {
+    if (!arr.length) return [];
     const segs = [];
-    let cur = [words[0]];
-    for (let i = 1; i < words.length; i++) {
-      if ((words[i].start - words[i - 1].end) > GAP_THRESHOLD) { segs.push(cur); cur = [words[i]]; }
-      else cur.push(words[i]);
+    let cur = [arr[0]];
+    for (let i = 1; i < arr.length; i++) {
+      if ((arr[i].start - arr[i - 1].end) > GAP_THRESHOLD) { segs.push(cur); cur = [arr[i]]; }
+      else cur.push(arr[i]);
     }
     segs.push(cur);
     return segs;
-  })();
+  };
+  const segments = segmentize(words);
+  const rawSegments = segmentize(rawWords);
 
   function fmtSec(s) {
     if (s == null || isNaN(s)) return '?';
@@ -2680,25 +2668,21 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   toolbar.appendChild(editedToggleBtn);
   toolbar.appendChild(manualToggleBtn);
 
+  const editorWordCountEl = document.createElement('span');
+  editorWordCountEl.className = 'text-secondary';
+  editorWordCountEl.style.cssText = 'font-size:0.8rem;margin-left:auto;';
+  toolbar.appendChild(editorWordCountEl);
+
   const saveStatus = document.createElement('span');
   saveStatus.className = 'text-secondary';
-  saveStatus.style.cssText = 'font-size:0.8rem;margin-left:auto;';
+  saveStatus.style.cssText = 'font-size:0.8rem;';
   toolbar.appendChild(saveStatus);
   leftPanel.appendChild(toolbar);
 
-  // ── Divergent-state banner (sibling of editorDiv — NEVER inside it, so it
-  // can't leak into getEditorPlainText() and contaminate text sent to aligner) ──
-  const divergentBanner = document.createElement('div');
-  divergentBanner.style.cssText = 'display:none;font-size:0.75rem;color:var(--orange,#d97706);margin-bottom:6px;padding:4px 8px;background:var(--surface,#fffbeb);border:1px dashed var(--orange,#d97706);border-radius:4px;';
-  divergentBanner.textContent = 'Your edits are saved. Click Re-Align to restore per-segment timestamps.';
-  const DIVERGENT_BANNER_TEXT = divergentBanner.textContent;
-  leftPanel.appendChild(divergentBanner);
-
-  // Strip any residual banner text that an older build may have persisted
-  // into version.text or version.editorHtml.
-  function scrubBanner(s) {
-    if (!s || !s.includes(DIVERGENT_BANNER_TEXT)) return s;
-    return s.split(DIVERGENT_BANNER_TEXT).join('').trim();
+  const countWords = (s) => (s || '').trim().split(/\s+/).filter(Boolean).length;
+  function refreshEditorWordCount(textMaybe) {
+    const t = textMaybe != null ? textMaybe : (getEditorPlainText ? getEditorPlainText() : '');
+    editorWordCountEl.textContent = `Editor: ${countWords(t)} words`;
   }
 
   // ── Text Editor: contenteditable div with timestamp anchors ──
@@ -2708,9 +2692,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   editorDiv.dir = 'rtl';
   editorDiv.spellcheck = false;
 
-  // Wire click/dblclick handlers onto a timestamp-anchor span — shared so that
-  // both the fresh-from-alignment render and the restore-from-saved-HTML path
-  // produce identical behavior.
+  // Wire click/dblclick handlers onto every timestamp-anchor span.
   function bindAnchor(anchor) {
     anchor.title = anchor.classList.contains('timestamp-adjusted')
       ? `📌 Adjusted to ${anchor.textContent.replace(/[\[\]]/g, '')}`
@@ -2738,60 +2720,73 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     });
   }
 
-  // Build editor content. Three branches:
-  // 1. Edits diverge from alignment AND we have a saved editor HTML snapshot →
-  //    restore the exact DOM (blue chips in place) and rebind anchor handlers.
-  // 2. Edits diverge but no HTML snapshot (legacy saves, or edits pulled from
-  //    Supabase which only stores plain text) → fall back to a sibling banner +
-  //    single seek-to-start anchor so edits are at least visible.
-  // 3. Edits match alignment (or none exist) → standard per-segment render.
+  // Editor renders the user's edited text (what was sent to the aligner),
+  // unchanged by reconciliation. Blue [mm:ss] chips are placed at
+  // proportional positions derived from the RAW alignment's segment
+  // boundaries — the chip's time is exact, its position in the text is an
+  // estimate (ok for click-to-seek nudges).
   function buildEditorContent() {
     editorDiv.innerHTML = '';
-    divergentBanner.style.display = 'none';
 
-    const normalize = (s) => (s || '').replace(/\s+/g, ' ').trim();
-    const alignmentText = segments.flat().map(w => w.word || w.text || '').join(' ');
     const editedVersion = getVersions(audioId).find(v => v.type === 'edited');
-    const editedText = scrubBanner(editedVersion?.text || '');
-    const showEdited = editedText && normalize(editedText) !== normalize(alignmentText);
+    const alignmentJoined = segments.flat().map(w => w.word || w.text || '').join(' ');
+    const editedText = (editedVersion?.text || alignmentJoined || '').trim();
 
-    if (showEdited && editedVersion?.editorHtml) {
-      editorDiv.innerHTML = scrubBanner(editedVersion.editorHtml);
-      editorDiv.querySelectorAll('.timestamp-anchor').forEach(bindAnchor);
-      return;
+    // Tokenize preserving inter-token whitespace so newlines survive.
+    const TOKEN_RE = /\S+|\s+/g;
+    const pieces = editedText.match(TOKEN_RE) || [];
+    const tokenIndices = [];
+    pieces.forEach((p, i) => { if (/\S/.test(p)) tokenIndices.push(i); });
+    const totalTokens = tokenIndices.length;
+
+    const rawFlat = rawSegments.flat();
+    const insertAtToken = new Map(); // tokenIdx → { time, segIdx }
+    if (totalTokens > 0 && rawFlat.length > 0) {
+      let cumRawIdx = 0;
+      rawSegments.forEach((seg, segIdx) => {
+        const proportional = Math.min(
+          totalTokens - 1,
+          Math.round((cumRawIdx / rawFlat.length) * totalTokens),
+        );
+        // First segment always anchors at token 0 so the very start of the
+        // audio has a seek point; otherwise prefer the proportional slot but
+        // skip duplicates.
+        const slot = segIdx === 0 ? 0 : proportional;
+        if (!insertAtToken.has(slot)) {
+          insertAtToken.set(slot, { time: seg[0]?.start || 0, segIdx });
+        }
+        cumRawIdx += seg.length;
+      });
     }
 
-    if (showEdited) {
-      divergentBanner.style.display = 'block';
-
-      const anchor = document.createElement('span');
-      anchor.className = 'timestamp-anchor';
-      anchor.contentEditable = 'false';
-      anchor.dataset.time = String(segments[0]?.[0]?.start || 0);
-      anchor.textContent = `[${fmtSec(segments[0]?.[0]?.start || 0)}]`;
-      bindAnchor(anchor);
-      editorDiv.appendChild(anchor);
-      editorDiv.appendChild(document.createTextNode(' ' + editedText));
-      return;
-    }
-
-    segments.forEach((seg, segIdx) => {
-      const anchor = document.createElement('span');
-      anchor.className = 'timestamp-anchor';
-      anchor.contentEditable = 'false';
-      anchor.dataset.time = String(seg[0]?.start || 0);
-      anchor.textContent = `[${fmtSec(seg[0]?.start)}]`;
-      anchor.dataset.segIdx = String(segIdx);
-      bindAnchor(anchor);
-      editorDiv.appendChild(anchor);
-
-      const text = seg.map(w => w.word || w.text || '').join(' ');
-      editorDiv.appendChild(document.createTextNode(' ' + text + ' '));
-
-      if (segIdx < segments.length - 1) {
-        editorDiv.appendChild(document.createElement('br'));
+    let tokenIdx = 0;
+    pieces.forEach((piece) => {
+      if (/\S/.test(piece)) {
+        const hit = insertAtToken.get(tokenIdx);
+        if (hit) {
+          const anchor = document.createElement('span');
+          anchor.className = 'timestamp-anchor';
+          anchor.contentEditable = 'false';
+          anchor.dataset.time = String(hit.time);
+          anchor.dataset.segIdx = String(hit.segIdx);
+          anchor.textContent = `[${fmtSec(hit.time)}]`;
+          bindAnchor(anchor);
+          // The .timestamp-anchor CSS already adds margin for visual spacing,
+          // so we append the chip inline without extra text-node padding —
+          // otherwise getEditorPlainText (which strips anchors) would pick up
+          // stray double spaces and pollute the text sent to the aligner.
+          editorDiv.appendChild(anchor);
+        }
+        editorDiv.appendChild(document.createTextNode(piece));
+        tokenIdx++;
+      } else if (piece.includes('\n')) {
+        const brCount = (piece.match(/\n/g) || []).length;
+        for (let i = 0; i < brCount; i++) editorDiv.appendChild(document.createElement('br'));
+      } else {
+        editorDiv.appendChild(document.createTextNode(piece));
       }
     });
+    refreshEditorWordCount(editedText);
   }
   buildEditorContent();
 
@@ -2802,8 +2797,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     const clone = editorDiv.cloneNode(true);
     clone.querySelectorAll('.timestamp-anchor').forEach(a => a.remove());
     // Replace <br> with newlines, then collapse
-    const raw = clone.innerText.replace(/\n{3,}/g, '\n\n').trim();
-    return scrubBanner(raw);
+    return clone.innerText.replace(/\n{3,}/g, '\n\n').trim();
   }
 
   let _ensuredEditedPost = false;
@@ -2811,10 +2805,6 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     if (_viewMode !== 'edited') return;
     const text = getEditorPlainText();
     if (!text) return;
-    // Snapshot the editor's current DOM so per-segment anchor chips can be
-    // restored verbatim on the next reload (localStorage only — Supabase gets
-    // just `text` since HTML isn't needed anywhere else).
-    const editorHtml = scrubBanner(editorDiv.innerHTML);
     const versions = getVersions(audioId);
     let editedVersion = versions.find(v => v.type === 'edited');
     if (!editedVersion && !_ensuredEditedPost) {
@@ -2826,7 +2816,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     }
     const versionId = editedVersion?.id || activeVersionRef?.id;
     if (versionId && text) {
-      const syncPromise = updateVersion(audioId, versionId, { text, editorHtml, updatedAt: new Date().toISOString() });
+      const syncPromise = updateVersion(audioId, versionId, { text, updatedAt: new Date().toISOString() });
       const now = new Date();
       const hhmm = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
       saveStatus.textContent = `Saved ${hhmm}`;
@@ -2841,6 +2831,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   editorDiv.addEventListener('input', () => {
     if (_viewMode !== 'edited') return;
     saveStatus.textContent = 'Unsaved...';
+    refreshEditorWordCount();
     clearTimeout(_editorSaveTimer);
     _editorSaveTimer = setTimeout(() => {
       _editorSaveTimer = null;
@@ -2863,19 +2854,29 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     sidebar.innerHTML = '';
     const sidebarLabel = document.createElement('div');
     sidebarLabel.style.cssText = 'font-size:0.75rem;color:var(--text-secondary);margin-bottom:6px;font-weight:600;';
-    const problemCount = segments.filter((seg) => {
+    const problemCount = rawSegments.filter((seg) => {
       let run = 0;
       for (const w of seg) { if ((w.confidence || 0) < 0.4) { run++; if (run >= 3) return true; } else run = 0; }
       return false;
     }).length;
-    sidebarLabel.textContent = `Alignment Quality • ${words.length} words • ${problemCount} problems`;
+    const editorCount = countWords(getEditorPlainText());
+    const unalignedDelta = Math.max(0, editorCount - rawWords.length);
+    const unalignedTag = unalignedDelta > 0 ? ` • ${unalignedDelta} unaligned` : '';
+    sidebarLabel.textContent = `Aligned • ${rawWords.length} words${unalignedTag} • ${problemCount} problems`;
     sidebar.appendChild(sidebarLabel);
 
-    // Track the absolute word index across segments so shift-click can pass
-    // the correct index into createSplitFromAudio.
-    let cumulativeIdx = 0;
+    // Shift-click-to-split expects an index into the reconciled `words` array
+    // (createSplitFromAudio assumes 1:1 mapping with edited text). Raw words
+    // appear in reconciled in order, skipping placeholders — so mapping the
+    // n-th raw word to the n-th non-unaligned reconciled word is exact.
+    const rawIdxToReconciledIdx = [];
+    for (let j = 0; j < words.length; j++) {
+      if (!words[j].unaligned) rawIdxToReconciledIdx.push(j);
+    }
 
-    segments.forEach((seg, segIdx) => {
+    let cumulativeRawIdx = 0;
+
+    rawSegments.forEach((seg, segIdx) => {
       // Segment header
       const segHeader = document.createElement('div');
       segHeader.dataset.segIdx = String(segIdx);
@@ -2893,7 +2894,8 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       const chipRow = document.createElement('div');
       chipRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:2px;direction:rtl;';
       seg.forEach(w => {
-        const myIdx = cumulativeIdx++;
+        const myRawIdx = cumulativeRawIdx++;
+        const reconciledIdx = rawIdxToReconciledIdx[myRawIdx] ?? myRawIdx;
         const conf = typeof w.confidence === 'number' ? w.confidence : 1;
         const chip = document.createElement('span');
         chip.className = `word-chip confidence-${getConfidenceLevel(conf)}`;
@@ -2902,17 +2904,17 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
         chip.title = `${(conf * 100).toFixed(0)}% | ${fmtSec(w.start)}\nClick: seek • Shift+click: set split point`;
         chip.dataset.start = String(w.start);
         chip.dataset.end = String(w.end);
-        chip.dataset.wordIdx = String(myIdx);
-        if (splitState.anchor && splitState.anchor.wordIndex === myIdx) chip.classList.add('split-anchor');
+        chip.dataset.wordIdx = String(reconciledIdx);
+        if (splitState.anchor && splitState.anchor.wordIndex === reconciledIdx) chip.classList.add('split-anchor');
         chip.addEventListener('click', (e) => {
           if (e.shiftKey) {
             sidebar.querySelectorAll('.word-chip.split-anchor').forEach(c => c.classList.remove('split-anchor'));
             chip.classList.add('split-anchor');
             splitState.anchor = {
-              wordIndex: myIdx,
+              wordIndex: reconciledIdx,
               word: w.word || w.text || '',
               time: w.start,
-              tailLen: words.length - myIdx,
+              tailLen: words.length - reconciledIdx,
             };
             splitState.refresh();
             return;

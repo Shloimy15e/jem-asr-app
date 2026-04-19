@@ -587,6 +587,9 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
     }
   }
 
+  // Snapshot the raw aligner output *before* reconciliation so the review UI
+  // can show exactly what the aligner timestamped vs. what was backfilled.
+  const rawAlignerWords = allWords.slice();
   // Reconcile aligner output against the original input text. Any input word
   // the aligner dropped gets re-inserted as a zero-confidence placeholder so
   // it stays in the editor's plain text and survives future realigns.
@@ -613,8 +616,14 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const lowConfidenceCount = finalWords.filter(w => (w.confidence || 0) < 0.4).length;
 
   const priorAlignment = state.alignments?.[audioId];
+  // For a partial merge, keep the prior rawWords intact — the partial only
+  // re-aligns the tail and we don't want to drop prior raw data.
+  const rawWordsForAlignment = (opts.mergeFromIndex != null && Array.isArray(priorAlignment?.rawWords))
+    ? priorAlignment.rawWords.slice(0, opts.mergeFromIndex).concat(rawAlignerWords)
+    : rawAlignerWords;
   const alignment = {
     words: finalWords,
+    rawWords: rawWordsForAlignment,
     avgConfidence,
     lowConfidenceCount,
     alignedAt: new Date().toISOString(),
