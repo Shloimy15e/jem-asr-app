@@ -1315,13 +1315,22 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
   }
 
   // ── Shared text helpers ──
+  // Defensive scrub: a prior build briefly rendered the divergent-state banner
+  // *inside* the contentEditable editor, so versions saved during that window
+  // may carry the banner sentence in their stored text. Strip it anywhere text
+  // is read out, so nothing polluted ever reaches the aligner.
+  const DIVERGENT_BANNER_SENTINEL = 'Your edits are saved. Click Re-Align to restore per-segment timestamps.';
+  function scrubBannerText(s) {
+    if (!s || !s.includes(DIVERGENT_BANNER_SENTINEL)) return s;
+    return s.split(DIVERGENT_BANNER_SENTINEL).join('').trim();
+  }
   async function getCurrentText() {
     const selectedId = activeVersionRef?.id;
     if (selectedId) {
       const versions = getVersions(audioId);
       const selected = versions.find(v => v.id === selectedId);
       if (selected && selected.type !== 'manual' && selected.text) {
-        return selected.text;
+        return scrubBannerText(selected.text);
       }
     }
     const m = getState().mappings[audioId];
@@ -2665,6 +2674,21 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   toolbar.appendChild(saveStatus);
   leftPanel.appendChild(toolbar);
 
+  // ── Divergent-state banner (sibling of editorDiv — NEVER inside it, so it
+  // can't leak into getEditorPlainText() and contaminate text sent to aligner) ──
+  const divergentBanner = document.createElement('div');
+  divergentBanner.style.cssText = 'display:none;font-size:0.75rem;color:var(--orange,#d97706);margin-bottom:6px;padding:4px 8px;background:var(--surface,#fffbeb);border:1px dashed var(--orange,#d97706);border-radius:4px;';
+  divergentBanner.textContent = 'Your edits are saved. Click Re-Align to restore per-segment timestamps.';
+  const DIVERGENT_BANNER_TEXT = divergentBanner.textContent;
+  leftPanel.appendChild(divergentBanner);
+
+  // Strip any residual banner text that an older build may have persisted
+  // into version.text or version.editorHtml.
+  function scrubBanner(s) {
+    if (!s || !s.includes(DIVERGENT_BANNER_TEXT)) return s;
+    return s.split(DIVERGENT_BANNER_TEXT).join('').trim();
+  }
+
   // ── Text Editor: contenteditable div with timestamp anchors ──
   const editorDiv = document.createElement('div');
   editorDiv.className = 'text-editor-view';
@@ -2706,30 +2730,27 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   // 1. Edits diverge from alignment AND we have a saved editor HTML snapshot →
   //    restore the exact DOM (blue chips in place) and rebind anchor handlers.
   // 2. Edits diverge but no HTML snapshot (legacy saves, or edits pulled from
-  //    Supabase which only stores plain text) → fall back to a banner +
+  //    Supabase which only stores plain text) → fall back to a sibling banner +
   //    single seek-to-start anchor so edits are at least visible.
   // 3. Edits match alignment (or none exist) → standard per-segment render.
   function buildEditorContent() {
     editorDiv.innerHTML = '';
+    divergentBanner.style.display = 'none';
 
     const normalize = (s) => (s || '').replace(/\s+/g, ' ').trim();
     const alignmentText = segments.flat().map(w => w.word || w.text || '').join(' ');
     const editedVersion = getVersions(audioId).find(v => v.type === 'edited');
-    const editedText = editedVersion?.text || '';
+    const editedText = scrubBanner(editedVersion?.text || '');
     const showEdited = editedText && normalize(editedText) !== normalize(alignmentText);
 
     if (showEdited && editedVersion?.editorHtml) {
-      editorDiv.innerHTML = editedVersion.editorHtml;
+      editorDiv.innerHTML = scrubBanner(editedVersion.editorHtml);
       editorDiv.querySelectorAll('.timestamp-anchor').forEach(bindAnchor);
       return;
     }
 
     if (showEdited) {
-      const banner = document.createElement('div');
-      banner.contentEditable = 'false';
-      banner.style.cssText = 'font-size:0.75rem;color:var(--orange,#d97706);margin-bottom:6px;padding:4px 8px;background:var(--surface,#fffbeb);border:1px dashed var(--orange,#d97706);border-radius:4px;';
-      banner.textContent = 'Your edits are saved. Click Re-Align to restore per-segment timestamps.';
-      editorDiv.appendChild(banner);
+      divergentBanner.style.display = 'block';
 
       const anchor = document.createElement('span');
       anchor.className = 'timestamp-anchor';
@@ -2769,7 +2790,8 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     const clone = editorDiv.cloneNode(true);
     clone.querySelectorAll('.timestamp-anchor').forEach(a => a.remove());
     // Replace <br> with newlines, then collapse
-    return clone.innerText.replace(/\n{3,}/g, '\n\n').trim();
+    const raw = clone.innerText.replace(/\n{3,}/g, '\n\n').trim();
+    return scrubBanner(raw);
   }
 
   let _ensuredEditedPost = false;
@@ -2780,7 +2802,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     // Snapshot the editor's current DOM so per-segment anchor chips can be
     // restored verbatim on the next reload (localStorage only — Supabase gets
     // just `text` since HTML isn't needed anywhere else).
-    const editorHtml = editorDiv.innerHTML;
+    const editorHtml = scrubBanner(editorDiv.innerHTML);
     const versions = getVersions(audioId);
     let editedVersion = versions.find(v => v.type === 'edited');
     if (!editedVersion && !_ensuredEditedPost) {
