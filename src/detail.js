@@ -1554,6 +1554,18 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
             alignBtn.textContent = `Retrying… (${attempt}/${maxRetries})`;
           }
         });
+        // Alignment succeeded — the aligner's output is now the canonical text
+        // for this version. Sync the edited version's text to the joined
+        // alignment words and drop the stale editorHtml snapshot so
+        // buildEditorContent renders fresh per-segment chips from the new
+        // alignment (instead of restoring old chips from the prior DOM).
+        const newAlignment = getState().alignments?.[audioId];
+        if (currentVersionId && newAlignment?.words?.length) {
+          const alignedText = newAlignment.words.map(w => w.word || w.text || '').join(' ').trim();
+          if (alignedText) {
+            updateVersion(audioId, currentVersionId, { text: alignedText, editorHtml: null, updatedAt: new Date().toISOString() });
+          }
+        }
       } catch (err) {
         console.error('[Alignment] Failed for', audioId, ':', err);
         // Persistent error state
