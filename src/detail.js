@@ -310,6 +310,41 @@ function renderDetailPage(audioId, audio, state, container) {
   titleBar.appendChild(renderDetailPipeline(audioId));
   container.appendChild(titleBar);
 
+  // Split-relationship links — parent + sibling parts. Split IDs follow
+  // `<parentId>_p<n>` (see split.js:nextSplitId) so the whole hierarchy is
+  // derivable from `state.audio` without any schema change.
+  const partMatch = /^(.+)_p(\d+)$/.exec(audioId);
+  const parentId = partMatch ? partMatch[1] : audioId;
+  const siblingIds = (state.audio || [])
+    .map(a => a.id)
+    .filter(id => id !== audioId && (id === parentId || new RegExp('^' + parentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '_p\\d+$').test(id)))
+    .sort((a, b) => {
+      const ma = /_p(\d+)$/.exec(a); const mb = /_p(\d+)$/.exec(b);
+      return (ma ? +ma[1] : 1) - (mb ? +mb[1] : 1);
+    });
+  if (siblingIds.length > 0) {
+    const row = document.createElement('div');
+    row.className = 'split-links-row';
+    row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0 10px;font-size:0.82rem;color:var(--text-secondary,#666);';
+    const label = document.createElement('span');
+    label.textContent = partMatch ? 'Parts:' : 'Split parts:';
+    row.appendChild(label);
+    const linkFor = (id) => {
+      const a = (state.audio || []).find(x => x.id === id);
+      const link = document.createElement('a');
+      link.href = `/detail?id=${encodeURIComponent(id)}`;
+      link.style.cssText = 'color:var(--primary,#2962ff);text-decoration:none;padding:2px 8px;border:1px solid var(--border,#ddd);border-radius:10px;';
+      const m = /_p(\d+)$/.exec(id);
+      link.textContent = m ? `Part ${m[1]}` : 'Parent';
+      link.title = a?.name || id;
+      return link;
+    };
+    // For a part: show parent first, then siblings
+    if (partMatch) row.appendChild(linkFor(parentId));
+    siblingIds.filter(id => id !== parentId).forEach(id => row.appendChild(linkFor(id)));
+    container.appendChild(row);
+  }
+
   // Meta row
   const meta = document.createElement('div');
   meta.className = 'detail-meta';
@@ -2882,11 +2917,41 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       for (const w of seg) { if ((w.confidence || 0) < 0.4) { run++; if (run >= 3) return true; } else run = 0; }
       return false;
     }).length;
-    const editorCount = countWords(getEditorPlainText());
-    const unalignedDelta = Math.max(0, editorCount - rawWords.length);
-    const unalignedTag = unalignedDelta > 0 ? ` • ${unalignedDelta} unaligned` : '';
-    sidebarLabel.textContent = `Aligned • ${rawWords.length} words${unalignedTag} • ${problemCount} problems`;
+    const unalignedList = words.filter(w => w.unaligned);
+    const unalignedCount = unalignedList.length;
+    sidebarLabel.textContent = `Aligned • ${rawWords.length} words • ${problemCount} problems`;
     sidebar.appendChild(sidebarLabel);
+
+    // Dropped-words panel — every input word that the aligner couldn't place.
+    // Reconciliation in alignment.js flags these with unaligned=true. Click to
+    // expand a chip grid so the user can see exactly which words got lost.
+    if (unalignedCount > 0) {
+      const droppedBar = document.createElement('div');
+      droppedBar.style.cssText = 'margin-bottom:8px;';
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.style.cssText = 'font-size:0.72rem;padding:2px 8px;border:1px solid var(--orange,#d97706);color:var(--orange,#d97706);background:transparent;border-radius:10px;cursor:pointer;';
+      toggle.textContent = `⚠ ${unalignedCount} dropped — click to show`;
+      droppedBar.appendChild(toggle);
+      const listEl = document.createElement('div');
+      listEl.style.cssText = 'display:none;flex-wrap:wrap;gap:2px;direction:rtl;margin-top:4px;padding:4px;border:1px dashed var(--orange,#d97706);border-radius:4px;background:rgba(217,119,6,0.05);';
+      unalignedList.forEach(w => {
+        const chip = document.createElement('span');
+        chip.style.cssText = 'font-size:0.72rem;padding:1px 4px;background:#fff;border:1px dashed var(--orange,#d97706);border-radius:3px;color:var(--text);';
+        chip.textContent = w.word || '';
+        chip.title = `Dropped by aligner — no timestamp. Approx near ${fmtSec(w.start)}`;
+        listEl.appendChild(chip);
+      });
+      droppedBar.appendChild(listEl);
+      toggle.addEventListener('click', () => {
+        const shown = listEl.style.display !== 'none';
+        listEl.style.display = shown ? 'none' : 'flex';
+        toggle.textContent = shown
+          ? `⚠ ${unalignedCount} dropped — click to show`
+          : `⚠ ${unalignedCount} dropped — click to hide`;
+      });
+      sidebar.appendChild(droppedBar);
+    }
 
     // Shift-click-to-split expects an index into the reconciled `words` array
     // (createSplitFromAudio assumes 1:1 mapping with edited text). Raw words
