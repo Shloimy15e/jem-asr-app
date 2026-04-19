@@ -2673,9 +2673,43 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   editorDiv.spellcheck = false;
 
   // Build editor content from alignment words with timestamp anchors at segment boundaries.
-  // Always shows the current alignment state. Edits save to the version text for the next alignment.
+  // If the user has saved edits that diverge from the current alignment (i.e. edits
+  // made since the last realign), show those edits instead — otherwise reopening
+  // the page would visually erase edits until the next realign bakes them in.
   function buildEditorContent() {
     editorDiv.innerHTML = '';
+
+    const normalize = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    const alignmentText = segments.flat().map(w => w.word || w.text || '').join(' ');
+    const editedVersion = getVersions(audioId).find(v => v.type === 'edited');
+    const editedText = editedVersion?.text || '';
+    const showEdited = editedText && normalize(editedText) !== normalize(alignmentText);
+
+    if (showEdited) {
+      const banner = document.createElement('div');
+      banner.contentEditable = 'false';
+      banner.style.cssText = 'font-size:0.75rem;color:var(--orange,#d97706);margin-bottom:6px;padding:4px 8px;background:var(--surface,#fffbeb);border:1px dashed var(--orange,#d97706);border-radius:4px;';
+      banner.textContent = 'Your edits are saved. Click Re-Align to restore per-segment timestamps.';
+      editorDiv.appendChild(banner);
+
+      const anchor = document.createElement('span');
+      anchor.className = 'timestamp-anchor';
+      anchor.contentEditable = 'false';
+      anchor.dataset.time = String(segments[0]?.[0]?.start || 0);
+      anchor.textContent = `[${fmtSec(segments[0]?.[0]?.start || 0)}]`;
+      anchor.title = 'Click to seek to start';
+      anchor.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (playerEl) {
+          playerEl.currentTime = parseFloat(anchor.dataset.time);
+          playerEl.play().catch(() => {});
+        }
+      });
+      editorDiv.appendChild(anchor);
+      editorDiv.appendChild(document.createTextNode(' ' + editedText));
+      return;
+    }
+
     segments.forEach((seg, segIdx) => {
       const anchor = document.createElement('span');
       anchor.className = 'timestamp-anchor';
@@ -2725,30 +2759,42 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   }
 
   let _ensuredEditedPost = false;
+  function flushEditorSave() {
+    if (_viewMode !== 'edited') return;
+    const text = getEditorPlainText();
+    if (!text) return;
+    const versions = getVersions(audioId);
+    let editedVersion = versions.find(v => v.type === 'edited');
+    if (!editedVersion && !_ensuredEditedPost) {
+      _ensuredEditedPost = true;
+      const mapping = getState().mappings[audioId];
+      addVersion(audioId, { type: 'edited', sourceTranscriptId: mapping?.transcriptId, text, createdBy: getCurrentUser() });
+      editedVersion = getVersions(audioId).find(v => v.type === 'edited');
+      if (activeVersionRef && editedVersion) activeVersionRef.id = editedVersion.id;
+    }
+    const versionId = editedVersion?.id || activeVersionRef?.id;
+    if (versionId && text) {
+      updateVersion(audioId, versionId, { text, updatedAt: new Date().toISOString() });
+      const now = new Date();
+      saveStatus.textContent = `Saved ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+    }
+  }
   editorDiv.addEventListener('input', () => {
     if (_viewMode !== 'edited') return;
     saveStatus.textContent = 'Unsaved...';
     clearTimeout(_editorSaveTimer);
     _editorSaveTimer = setTimeout(() => {
-      const text = getEditorPlainText();
-      if (!text) return;
-      // Ensure we save to an edited version, not manual
-      const versions = getVersions(audioId);
-      let editedVersion = versions.find(v => v.type === 'edited');
-      if (!editedVersion && !_ensuredEditedPost) {
-        _ensuredEditedPost = true;
-        const mapping = getState().mappings[audioId];
-        addVersion(audioId, { type: 'edited', sourceTranscriptId: mapping?.transcriptId, text, createdBy: getCurrentUser() });
-        editedVersion = getVersions(audioId).find(v => v.type === 'edited');
-        if (activeVersionRef && editedVersion) activeVersionRef.id = editedVersion.id;
-      }
-      const versionId = editedVersion?.id || activeVersionRef?.id;
-      if (versionId && text) {
-        updateVersion(audioId, versionId, { text, updatedAt: new Date().toISOString() });
-        const now = new Date();
-        saveStatus.textContent = `Saved ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
-      }
+      _editorSaveTimer = null;
+      flushEditorSave();
     }, 800);
+  });
+  // Flush pending save when the editor loses focus (e.g. user clicks Re-Align)
+  // so a sub-800ms edit-then-click doesn't lose the latest text.
+  editorDiv.addEventListener('blur', () => {
+    if (!_editorSaveTimer) return;
+    clearTimeout(_editorSaveTimer);
+    _editorSaveTimer = null;
+    flushEditorSave();
   });
 
   leftPanel.appendChild(editorDiv);
