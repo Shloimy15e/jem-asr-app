@@ -398,30 +398,18 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const audioEntry = state.audio.find(a => a.id === audioId);
   const audioDuration = (audioEntry?.estMinutes || 0) * 60;
 
-  // ivrit-iterative pod downloads the audio on the VM and runs iterative alignment
-  // with confusion-zone recovery server-side, so we skip browser-side chunking and
-  // anchor calibration entirely — one request with the full URL + full text.
-  let chunks;
-  if (aligner === 'ivrit-iterative') {
-    chunks = [alignText];
-    console.log(`[Align] ivrit-iterative selected — single request, pod handles long audio internally`);
-  } else {
-    // Force multi-chunk for long audio to keep each CF Worker request under 128MB.
-    // Each chunk's audio slice is fetched and base64-encoded by the Worker —
-    // cap at ~15 min per chunk ≈ 14MB MP3 base64, safely under the limit.
-    const effectiveDurationSec = ((trimEnd > 0 ? trimEnd : audioDuration) - (trimStart || 0)) || audioDuration;
-    const maxAudioMinPerChunk = 15;
-    const minChunksByDuration = Math.max(1, Math.ceil(effectiveDurationSec / 60 / maxAudioMinPerChunk));
-    const maxChunkChars = Math.min(
-      audioDuration > 900 ? 8000 : CHUNK_LIMIT,
-      Math.max(500, Math.floor(alignText.length / minChunksByDuration)),
-    );
-    chunks = splitTextIntoChunks(alignText, maxChunkChars);
-
-    if (chunks.length > 1) {
-      console.log(`[Align] Text too long (${alignText.length} chars) — splitting into ${chunks.length} chunks (audio ~${Math.round(audioDuration)}s)`);
-    }
-  }
+  // Single-request path for both aligners. Browser-side chunking + anchor-word
+  // calibration was removed because the calibration used chunk N's last ~20 words
+  // as ground truth, but those words suffer from end-of-chunk boundary inflation
+  // (~18-19s late). The median of inflated anchors becomes the calibration delta,
+  // which then shifts every word in chunk N+1 forward by the inflation amount —
+  // and the error rides forward through all subsequent chunks.
+  //
+  // For R2 audio, the pod downloads directly (no size limit). For non-R2 audio,
+  // the CF Worker base64-encodes the whole file; 38 min of MP3 ≈ 35MB base64, still
+  // under the 128MB Worker body limit.
+  const chunks = [alignText];
+  console.log(`[Align] ${aligner} — single-request (no browser chunking); text=${alignText.length}c, audio=${Math.round(audioDuration)}s`);
 
   const effectiveEnd = trimEnd > 0 ? trimEnd : audioDuration;
 
