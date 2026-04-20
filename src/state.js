@@ -345,12 +345,16 @@ export function getVersionsByType(audioId, type) {
 export function getBestVersion(audioId) {
   const versions = getVersions(audioId);
   if (versions.length === 0) return null;
-  // Priority: edited > cleaned > asr > manual
+  // Priority: edited > cleaned > asr > manual. A version with empty text is
+  // treated as absent — an empty 'edited' (often auto-created) must not
+  // eclipse a filled 'asr' or 'manual' version.
+  const hasText = (v) => typeof v.text === 'string' && v.text.trim().length > 0;
   const priority = ['edited', 'cleaned', 'asr', 'manual'];
   for (const type of priority) {
-    const v = versions.filter(v => v.type === type);
-    if (v.length > 0) return v[v.length - 1]; // latest of that type
+    const filled = versions.filter(v => v.type === type && hasText(v));
+    if (filled.length > 0) return filled[filled.length - 1]; // latest of that type
   }
+  // All empty — fall back to any version so callers still get *something*.
   return versions[versions.length - 1];
 }
 

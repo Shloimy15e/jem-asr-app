@@ -283,6 +283,12 @@ function renderTranscriptPage(transcriptId, transcript, state, container) {
   container.appendChild(textSection.el);
 }
 
+// In-memory override for the "active" version per audio, written by the
+// version picker. Survives renderDetailPage re-renders (which otherwise reset
+// activeVersionRef to getBestVersion) but resets on full page reload — that's
+// fine, we just need the user's choice to stick while they're on the page.
+const _pickedVersionByAudio = new Map();
+
 function renderDetailPage(audioId, audio, state, container) {
   container.innerHTML = '';
   const status = getStatus(audioId);
@@ -518,7 +524,10 @@ function renderDetailPage(audioId, audio, state, container) {
     const mappingSection = createSection('Transcript Mapping');
     // Collapse mapping on mobile if already mapped or further along
     addCollapseBehavior(mappingSection.el, mappingSection.header, status !== 'unmapped');
-    const activeVersionRef = { id: getBestVersion(audioId)?.id || null };
+    // Honor a version-picker override if the user selected one this session.
+    const pickedId = _pickedVersionByAudio.get(audioId);
+    const pickedValid = pickedId && (getVersions(audioId) || []).some(v => v.id === pickedId);
+    const activeVersionRef = { id: pickedValid ? pickedId : (getBestVersion(audioId)?.id || null) };
     renderMappingSection(audioId, state, mappingSection.content, container, activeVersionRef);
     container.appendChild(mappingSection.el);
 
@@ -717,19 +726,52 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
 
     // Set active version ref to best version (edited > cleaned > manual)
     if (versions.length > 0) {
-      const activeVersionId = getBestVersion(audioId)?.id || versions[0].id;
+      const pickedId = _pickedVersionByAudio.get(audioId);
+      const pickedValid = pickedId && versions.some(v => v.id === pickedId);
+      const activeVersionId = pickedValid ? pickedId : (getBestVersion(audioId)?.id || versions[0].id);
       if (activeVersionRef) activeVersionRef.id = activeVersionId;
     }
 
-    // Compact info bar — version metadata only, no textarea (text editor is in the word view)
-    const bestVersion = getBestVersion(audioId);
+    // Compact info bar — version metadata only, no textarea (text editor is in the word view).
+    // Use the ACTIVE version (which honors the picker override) rather than
+    // always the best one, so metadata/controls reflect what the user picked.
+    const activeVersion = versions.find(v => v.id === activeVersionRef?.id) || getBestVersion(audioId);
+    const bestVersion = activeVersion;
     if (bestVersion) {
       const infoBar = document.createElement('div');
       infoBar.style.cssText = 'display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:4px;';
-      const typeLabel = document.createElement('span');
-      typeLabel.className = `version-type-badge version-type-${bestVersion.type}`;
-      typeLabel.textContent = bestVersion.type.charAt(0).toUpperCase() + bestVersion.type.slice(1);
-      infoBar.appendChild(typeLabel);
+      // Version picker — let the user switch between all saved versions for
+      // this audio (manual / edited / cleaned / asr-<model>) instead of being
+      // stuck on whatever getBestVersion picked. Empty versions are still
+      // listed so users can see they exist, but marked so they're obvious.
+      if (versions.length > 1) {
+        const picker = document.createElement('select');
+        picker.className = 'version-picker';
+        picker.style.cssText = 'padding:3px 8px;border:1px solid var(--border,#ccc);border-radius:6px;font-size:0.85rem;background:#fff;';
+        picker.setAttribute('aria-label', 'Select transcript version');
+        const byType = { edited: 'Edited', cleaned: 'Cleaned', asr: 'ASR', manual: 'Original' };
+        versions.forEach((v) => {
+          const opt = document.createElement('option');
+          opt.value = v.id;
+          const label = v.type === 'asr' ? `ASR (${v.model || '?'})` : (byType[v.type] || v.type);
+          const empty = !(typeof v.text === 'string' && v.text.trim().length > 0);
+          opt.textContent = empty ? `${label} — (empty)` : label;
+          if (v.id === activeVersionRef?.id) opt.selected = true;
+          picker.appendChild(opt);
+        });
+        picker.addEventListener('change', (e) => {
+          _pickedVersionByAudio.set(audioId, e.target.value);
+          if (activeVersionRef) activeVersionRef.id = e.target.value;
+          const s = getState();
+          renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
+        });
+        infoBar.appendChild(picker);
+      } else {
+        const typeLabel = document.createElement('span');
+        typeLabel.className = `version-type-badge version-type-${bestVersion.type}`;
+        typeLabel.textContent = bestVersion.type.charAt(0).toUpperCase() + bestVersion.type.slice(1);
+        infoBar.appendChild(typeLabel);
+      }
       if (bestVersion.cleanRate) {
         const cr = document.createElement('span');
         cr.className = 'text-secondary';
