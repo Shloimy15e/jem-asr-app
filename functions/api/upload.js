@@ -1,16 +1,23 @@
-// Upload audio or transcript files to R2 for any library.
-// POST /api/upload
-// Headers: Authorization: Bearer <supabase-jwt>
-// Body: multipart/form-data
-//   file     — the File blob
-//   key      — R2 object key, e.g. "satmar/hoshana-5710.mp3"
+// Upload audio or transcript files to R2.
+// PUT /api/upload
+// Headers:
+//   Authorization: Bearer <supabase-jwt>
+//   x-upload-key:  "<libraryId>/<safe-filename>"
+//   Content-Type:  <MIME type of the file>
+// Body: raw file bytes (streamed straight to R2, never buffered in the Worker)
+//
+// Earlier revision accepted multipart/form-data and called request.formData(),
+// which buffered the whole file in Worker memory before the R2 put could start
+// — that blew past the 128 MB Worker memory cap on ~40+ MB MP3s and returned
+// Cloudflare's 1102 HTML error page (which the client then failed to parse as
+// JSON). Streaming request.body directly into R2.put() keeps memory flat.
 
 const R2_PUBLIC_BASE = 'https://pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Methods': 'PUT, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-upload-key',
 };
 
 function json(body, status = 200) {
@@ -24,17 +31,24 @@ export async function onRequestOptions() {
   return new Response(null, { headers: CORS_HEADERS });
 }
 
+export async function onRequestPut(context) {
+  return handle(context);
+}
+
+// Keep POST working too so older clients don't break mid-deploy.
 export async function onRequestPost(context) {
+  return handle(context);
+}
+
+async function handle(context) {
   const { request, env } = context;
 
-  // ── Auth: verify Supabase JWT ─────────────────────────────────────────
   const authHeader = request.headers.get('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
     return json({ error: 'Missing Authorization header' }, 401);
   }
   const jwt = authHeader.slice(7);
 
-  // Verify against Supabase if secrets are configured
   if (env.SUPABASE_URL && env.SUPABASE_ANON_KEY) {
     try {
       const authRes = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
@@ -49,46 +63,33 @@ export async function onRequestPost(context) {
     }
   }
 
-  // ── R2 binding check ──────────────────────────────────────────────────
   if (!env.R2_BUCKET) {
     return json({ error: 'R2 bucket not configured on this deployment' }, 500);
   }
 
-  // ── Parse form data ───────────────────────────────────────────────────
-  let formData;
-  try {
-    formData = await request.formData();
-  } catch {
-    return json({ error: 'Invalid multipart form data' }, 400);
+  const rawKey = request.headers.get('x-upload-key');
+  if (!rawKey || rawKey.length > 512) {
+    return json({ error: 'Missing or invalid x-upload-key header' }, 400);
   }
-
-  const file = formData.get('file');
-  const key  = formData.get('key');
-
-  if (!file || !(file instanceof File)) {
-    return json({ error: 'Missing "file" field' }, 400);
-  }
-  if (!key || typeof key !== 'string' || key.length > 512) {
-    return json({ error: 'Missing or invalid "key" field' }, 400);
-  }
-
-  // Sanitize key: strip leading slashes, block path traversal
-  const sanitizedKey = key.replace(/\.\./g, '_').replace(/^\/+/, '');
-  if (!sanitizedKey) {
+  // Strip path-traversal, drop leading slashes.
+  const key = rawKey.replace(/\.\./g, '_').replace(/^\/+/, '');
+  if (!key) {
     return json({ error: 'Key is empty after sanitization' }, 400);
   }
 
-  // ── Upload to R2 ──────────────────────────────────────────────────────
+  if (!request.body) {
+    return json({ error: 'Missing request body' }, 400);
+  }
+
+  const contentType = request.headers.get('Content-Type') || 'application/octet-stream';
+
   try {
-    await env.R2_BUCKET.put(sanitizedKey, file.stream(), {
-      httpMetadata: {
-        contentType: file.type || 'application/octet-stream',
-      },
+    await env.R2_BUCKET.put(key, request.body, {
+      httpMetadata: { contentType },
     });
   } catch (err) {
     return json({ error: 'R2 upload failed: ' + err.message }, 500);
   }
 
-  const url = `${R2_PUBLIC_BASE}/${sanitizedKey}`;
-  return json({ url, key: sanitizedKey });
+  return json({ url: `${R2_PUBLIC_BASE}/${key}`, key });
 }
