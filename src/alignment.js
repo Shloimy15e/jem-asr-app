@@ -410,27 +410,14 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   // well under the 128 MB Worker body limit.
   console.log(`[Align] ${aligner} — single-request; text=${alignText.length}c, audio=${Math.round(audioDuration)}s`);
 
-  // Frame-accurate browser slicing for trimmed R2 files. The CF Worker's XING
-  // VBR TOC byte-seek is approximate and can land ~1–2 s off the intended
-  // trim_start, so chip timestamps would be consistently 1–2 s earlier than
-  // reality. AudioContext decoding handles VBR correctly and slices at exact
-  // sample boundaries, so the clip the pod receives starts at exactly trim_start.
-  // (Non-R2 trimmed audio already goes through a browser-side AudioContext
-  // decode in fetchAudioForAlignment, so we only need this for R2.)
-  let fullAudioBuffer = null;
-  if (trimStart > 0 && isLibraryR2Url(url)) {
-    console.log(`[Align] R2 trimmed (trim_start=${trimStart}s): decoding in browser for frame-accurate slice…`);
-    fullAudioBuffer = await fetchAndDecodeFullAudio(url);
-  }
-
-  let audioResult;
-  if (fullAudioBuffer) {
-    const sliceEnd = trimEnd > 0 ? trimEnd : fullAudioBuffer.duration;
-    const wavBase64 = await sliceToWavBase64(fullAudioBuffer, trimStart, sliceEnd);
-    audioResult = { base64: wavBase64, format: '.wav' };
-  } else {
-    audioResult = await fetchAudioForAlignment(url, trimStart, trimEnd, audioDuration);
-  }
+  // TODO (drift): For trimmed R2 alignments, the CF Worker's XING VBR TOC
+  // byte-seek is approximate and can land ~1–2s off the intended trim_start.
+  // We tried browser-side AudioContext decode + WAV slice to get frame-accurate
+  // output, but the resulting base64 WAV is 2.5× the MP3 size, pushing payloads
+  // past the pod's ~20 MB body limit on long audio and causing hard 400s.
+  // Proper fix: either an in-browser MP3 encoder (lamejs), or pod-side trim
+  // support. Until then we accept the sub-2s drift.
+  const audioResult = await fetchAudioForAlignment(url, trimStart, trimEnd, audioDuration);
 
   const requestBody = buildRequestBody(audioResult, alignText, aligner);
   const data = await doAlignRequest(requestBody, '', onProgress);
