@@ -36,9 +36,12 @@ export function initState(data) {
     segmentApprovals: {},
     asrModels: saved.asrModels || [],
     transcribeProviders: saved.transcribeProviders || {
-      // Secrets (SA JSON, API keys) are Cloudflare Worker secrets — not stored here.
-      // Only non-sensitive config lives in state.
-      gemini: { projectId: 'fink-partnership', region: 'us-central1', endpointId: '5718022314876993536' },
+      // Secrets (SA JSON, API keys) are Cloudflare Worker secrets — not stored
+      // here. Only non-sensitive config lives in state.
+      // Gemini supports multiple fine-tuned endpoints in the same GCP project,
+      // sharing the single GEMINI_SA_JSON credential. See migrateGeminiEndpoints
+      // for the shape and the legacy-to-list migration.
+      gemini: { endpoints: [], selectedId: null },
       whisper: {},
       mendel: { endpoint: '' },
     },
@@ -51,7 +54,32 @@ export function initState(data) {
   };
   // Migrate old format into transcriptVersions
   migrateToVersions();
+  migrateGeminiEndpoints();
   return state;
+}
+
+// Legacy Gemini config was { projectId, region, endpointId }. Convert to the
+// list shape { endpoints: [{id, name, projectId, region, endpointId}], selectedId }.
+// No-op if already migrated.
+function migrateGeminiEndpoints() {
+  const g = state.transcribeProviders?.gemini;
+  if (!g) return;
+  if (Array.isArray(g.endpoints)) return; // already list shape
+  if (g.projectId || g.region || g.endpointId) {
+    const id = `ep_${Date.now()}`;
+    state.transcribeProviders.gemini = {
+      endpoints: [{
+        id,
+        name: g.endpointId ? `Endpoint ${g.endpointId.slice(-6)}` : 'Default',
+        projectId: g.projectId || '',
+        region: g.region || 'us-central1',
+        endpointId: g.endpointId || '',
+      }],
+      selectedId: id,
+    };
+  } else {
+    state.transcribeProviders.gemini = { endpoints: [], selectedId: null };
+  }
 }
 
 function migrateToVersions() {
