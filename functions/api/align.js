@@ -20,7 +20,7 @@ function getAllowedDomains(env) {
   if (env?.ALLOWED_R2_DOMAINS) {
     return env.ALLOWED_R2_DOMAINS.split(',').map(d => d.trim()).filter(Boolean);
   }
-  return ['audio.kohnai.ai'];
+  return ['audio.kohnai.ai', 'pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev'];
 }
 
 // Forward an already-validated audio_url request to the ivrit-iterative RunPod endpoint.
