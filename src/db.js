@@ -100,42 +100,25 @@ export async function deleteAllWorkData(audioId) {
   });
 }
 
-export async function syncCleaning(audioId, cleaningData, audioEntry) {
-  if (!cleaningData) return;
-  await ensureAudioFile(audioEntry);
-  const { error } = await supabase.from('transcript_edits').upsert(
-    {
-      audio_id: audioId,
-      version: 'cleaned',
-      text: cleaningData.cleanedText,
-      original_text: cleaningData.originalText,
-      clean_rate: cleaningData.cleanRate,
-      created_at: cleaningData.cleanedAt || new Date().toISOString(),
-      created_by: 'system',
-      library_id: getActiveLibrary() || 'jemedia',
-    },
-    { onConflict: 'audio_id,version' },
-  );
-  if (error) console.warn('[DB] syncCleaning:', error.message);
-  else logActivity('cleaning_run', audioId, audioEntry?.name, { cleanRate: cleaningData.cleanRate });
-}
-
-export async function syncEdited(audioId, text, audioEntry) {
+export async function syncEdited(audioId, text, audioEntry, extras = {}) {
   if (text == null) return;
   await ensureAudioFile(audioEntry);
-  const { error } = await supabase.from('transcript_edits').upsert(
-    {
-      audio_id: audioId,
-      version: 'edited',
-      text,
-      created_at: new Date().toISOString(),
-      created_by: 'user',
-      library_id: getActiveLibrary() || 'jemedia',
-    },
-    { onConflict: 'audio_id,version' },
-  );
+  const row = {
+    audio_id: audioId,
+    version: 'edited',
+    text,
+    created_at: new Date().toISOString(),
+    created_by: extras.createdBy || 'user',
+    library_id: getActiveLibrary() || 'jemedia',
+  };
+  if (extras.originalText !== undefined) row.original_text = extras.originalText;
+  if (extras.cleanRate !== undefined) row.clean_rate = extras.cleanRate;
+  const { error } = await supabase.from('transcript_edits').upsert(row, { onConflict: 'audio_id,version' });
   if (error) console.warn('[DB] syncEdited:', error.message);
-  else logActivity('transcript_edited', audioId, audioEntry?.name);
+  else {
+    const action = extras.cleanRate != null ? 'cleaning_run' : 'transcript_edited';
+    logActivity(action, audioId, audioEntry?.name, extras.cleanRate != null ? { cleanRate: extras.cleanRate } : undefined);
+  }
 }
 
 export async function syncAsr(audioId, text, modelName, audioEntry) {
@@ -255,9 +238,6 @@ export function syncStateKey(key, audioId, value, audioEntry) {
       break;
     case 'mappings':
       syncMapping(audioId, value, audioEntry).catch(console.warn);
-      break;
-    case 'cleaning':
-      syncCleaning(audioId, value, audioEntry).catch(console.warn);
       break;
     case 'edited':
       syncEdited(audioId, value, audioEntry).catch(console.warn);
@@ -574,22 +554,23 @@ export async function loadFromSupabase(libraryId = null) {
       };
     });
 
+    // Cleaning metadata and edited text both come from the same 'edited' row.
+    // clean_rate != null means a cleaning pass has been applied.
     const cleaning = {};
-    (editsData || []).filter(e => e.version === 'cleaned').forEach(e => {
-      cleaning[e.audio_id] = {
-        cleanedText: e.text,
-        originalText: e.original_text,
-        cleanRate: e.clean_rate,
-        cleanedAt: e.created_at,
-      };
-    });
-
     const edited = {};
     (editsData || []).filter(e => e.version === 'edited').forEach(e => {
       edited[e.audio_id] = {
         text: e.text,
         createdAt: e.created_at,
       };
+      if (e.clean_rate != null) {
+        cleaning[e.audio_id] = {
+          cleanedText: e.text,
+          originalText: e.original_text,
+          cleanRate: e.clean_rate,
+          cleanedAt: e.created_at,
+        };
+      }
     });
 
     // asr[audioId] = array of { text, model, createdAt } — one entry per model
@@ -678,13 +659,14 @@ export async function loadForDetailPage(audioId, libraryId = null) {
     if (rv) reviews[rv.audio_id] = { status: rv.status, editedText: rv.edited_text, reviewedAt: rv.reviewed_at };
 
     const edits = editsRows.data || [];
+    // Cleaning metadata and edited text both come from the same 'edited' row.
     const cleaning = {};
-    edits.filter(e => e.version === 'cleaned').forEach(e => {
-      cleaning[e.audio_id] = { cleanedText: e.text, originalText: e.original_text, cleanRate: e.clean_rate, cleanedAt: e.created_at };
-    });
     const edited = {};
     edits.filter(e => e.version === 'edited').forEach(e => {
       edited[e.audio_id] = { text: e.text, createdAt: e.created_at };
+      if (e.clean_rate != null) {
+        cleaning[e.audio_id] = { cleanedText: e.text, originalText: e.original_text, cleanRate: e.clean_rate, cleanedAt: e.created_at };
+      }
     });
     const asr = {};
     edits.filter(e => e.version.startsWith('asr-')).forEach(e => {

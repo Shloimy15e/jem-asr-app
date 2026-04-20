@@ -135,17 +135,17 @@ export async function createSplitFromAudio(parent, state, wordIndex) {
     if (mapErr) console.warn('[split] mapping insert:', mapErr.message);
   }
 
-  // Cleaning — tail of the parent's cleaned text
-  // Stored in transcript_edits with version='cleaned' (same pattern as syncCleaning)
-  const { error: cleanErr } = await supabase.from('transcript_edits').insert({
+  // Seed the split child's editable transcript with the tail of the parent's text.
+  // Single source of truth: version='edited' (no separate 'cleaned' row).
+  const { error: editedErr } = await supabase.from('transcript_edits').insert({
     audio_id: newId,
-    version: 'cleaned',
+    version: 'edited',
     text: tailText,
     created_at: new Date().toISOString(),
     created_by: 'system',
     library_id: lib,
   });
-  if (cleanErr) console.warn('[split] cleaning insert:', cleanErr.message);
+  if (editedErr) console.warn('[split] edited insert:', editedErr.message);
 
   // ── Local state writes ──────────────────────────────────────────────
   if (!state.audio) state.audio = [];
@@ -163,8 +163,15 @@ export async function createSplitFromAudio(parent, state, wordIndex) {
       confirmedAt: new Date().toISOString(),
     };
   }
-  if (!state.cleaning) state.cleaning = {};
-  state.cleaning[newId] = { cleanedText: tailText, cleanedAt: new Date().toISOString() };
+  // Seed the editable version locally so the detail page shows the tail text immediately.
+  if (!state.transcriptVersions) state.transcriptVersions = {};
+  state.transcriptVersions[newId] = [{
+    id: `tv_${newId}_edited_split`,
+    type: 'edited',
+    text: tailText,
+    createdAt: new Date().toISOString(),
+    createdBy: 'system',
+  }];
   if (!state.trims) state.trims = {};
   state.trims[newId] = { start: anchorTime, end: 0 };
 

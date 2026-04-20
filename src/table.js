@@ -3,7 +3,6 @@ import { truncateWords, formatConfidence, debounce, HEBREW_MONTHS } from './util
 import { linkMatch, unlinkMatch, getSuggestedMatches } from './mapping.js';
 import { isLibraryR2Url } from './auth.js';
 import { syncAudioField } from './db.js';
-import { batchClean, cleanSafe } from './cleaning.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -1091,25 +1090,6 @@ function buildBulkBar() {
     updateTable();
   });
   bar.appendChild(unlinkBtn);
-
-  // Bulk clean (safe passes only — no brackets/parentheses)
-  const cleanBtn = document.createElement('button');
-  cleanBtn.className = 'action-btn action-btn-primary';
-  cleanBtn.textContent = 'Clean';
-  cleanBtn.addEventListener('click', async () => {
-    const ids = [...selectedIds];
-    if (!confirm(`Clean ${ids.length} file(s)? Removes section markers, symbols, whitespace, and intro text. No brackets/parentheses.`)) return;
-    cleanBtn.textContent = 'Cleaning...';
-    cleanBtn.disabled = true;
-    await batchClean(ids, getState(), (current, total) => {
-      cleanBtn.textContent = `Cleaning ${current}/${total}...`;
-    }, cleanSafe);
-    cleanBtn.textContent = 'Clean';
-    cleanBtn.disabled = false;
-    selectedIds.clear();
-    updateTable();
-  });
-  bar.appendChild(cleanBtn);
 
   // Clear selection
   const clearBtn = document.createElement('button');

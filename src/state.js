@@ -101,25 +101,12 @@ function migrateToVersions() {
         createdBy: mapping.confirmedBy || 'imported',
       });
     }
-    // Migrate cleaning data
-    const cleaning = state.cleaning[audioId];
-    if (cleaning && !versions.some(v => v.type === 'cleaned')) {
-      versions.push({
-        id: `tv_${audioId}_cleaned`,
-        type: 'cleaned',
-        parentVersionId: `tv_${audioId}_manual`,
-        sourceTranscriptId: mapping.transcriptId,
-        text: cleaning.cleanedText,
-        originalText: cleaning.originalText,
-        cleanRate: cleaning.cleanRate,
-        createdAt: cleaning.cleanedAt || new Date().toISOString(),
-        createdBy: 'system',
-      });
-    }
-    // Migrate alignment data
+    // Migrate alignment data — prefer an edited version as the target,
+    // fall back to manual. (The separate 'cleaned' version type has been
+    // retired — cleaning metadata now lives on the edited version.)
     const alignment = state.alignments[audioId];
     if (alignment) {
-      const target = versions.find(v => v.type === 'cleaned') || versions.find(v => v.type === 'manual');
+      const target = versions.find(v => v.type === 'edited') || versions.find(v => v.type === 'manual');
       if (target && !target.alignment) {
         target.alignment = {
           words: alignment.words,
@@ -177,14 +164,21 @@ export function mergeSupabaseData(remote) {
   if (remote.reviews)    state.reviews = remote.reviews;
   if (remote.trims)      Object.assign(state.trims, remote.trims);
 
-  // Restore edited versions loaded from Supabase into transcriptVersions
+  // Restore edited versions loaded from Supabase into transcriptVersions.
+  // Cleaning metadata (originalText / cleanRate / cleanedAt) lives on the
+  // same row, surfaced here via remote.cleaning.
   if (remote.edited) {
     for (const [audioId, editedData] of Object.entries(remote.edited)) {
       const versions = state.transcriptVersions[audioId];
       if (!versions || versions.length === 0) continue;
+      const cleaningMeta = remote.cleaning?.[audioId];
       const existing = versions.find(v => v.type === 'edited');
       if (existing) {
         existing.text = editedData.text;
+        if (cleaningMeta) {
+          existing.originalText = cleaningMeta.originalText;
+          existing.cleanRate = cleaningMeta.cleanRate;
+        }
       } else {
         const manual = versions.find(v => v.type === 'manual');
         versions.push({
@@ -193,6 +187,8 @@ export function mergeSupabaseData(remote) {
           parentVersionId: manual?.id,
           sourceTranscriptId: manual?.sourceTranscriptId,
           text: editedData.text,
+          originalText: cleaningMeta?.originalText,
+          cleanRate: cleaningMeta?.cleanRate,
           createdAt: editedData.createdAt,
           createdBy: 'user',
         });
@@ -296,7 +292,7 @@ export function getStatus(audioId) {
     if (versions.some(v => v.review?.status === 'approved')) return 'approved';
     if (versions.some(v => v.review?.status === 'rejected')) return 'rejected';
     if (versions.some(v => v.alignment)) return 'aligned';
-    if (versions.some(v => v.type === 'cleaned' || v.type === 'edited')) return 'cleaned';
+    if (versions.some(v => v.type === 'edited')) return 'cleaned';
     return 'mapped';
   }
   // Fallback to legacy
@@ -329,7 +325,7 @@ export function getCompletedStages(audioId) {
 
   // Check cleaned/edited
   if (versions && versions.length > 0) {
-    if (versions.some(v => v.type === 'cleaned' || v.type === 'edited')) result.cleaned = true;
+    if (versions.some(v => v.type === 'edited')) result.cleaned = true;
     if (versions.some(v => v.alignment)) result.aligned = true;
     if (versions.some(v => v.review?.status === 'approved')) result.approved = true;
     if (versions.some(v => v.review?.status === 'rejected')) result.rejected = true;
@@ -373,11 +369,11 @@ export function getVersionsByType(audioId, type) {
 export function getBestVersion(audioId) {
   const versions = getVersions(audioId);
   if (versions.length === 0) return null;
-  // Priority: edited > cleaned > asr > manual. A version with empty text is
+  // Priority: edited > asr > manual. A version with empty text is
   // treated as absent — an empty 'edited' (often auto-created) must not
   // eclipse a filled 'asr' or 'manual' version.
   const hasText = (v) => typeof v.text === 'string' && v.text.trim().length > 0;
-  const priority = ['edited', 'cleaned', 'asr', 'manual'];
+  const priority = ['edited', 'asr', 'manual'];
   for (const type of priority) {
     const filled = versions.filter(v => v.type === type && hasText(v));
     if (filled.length > 0) return filled[filled.length - 1]; // latest of that type
@@ -399,7 +395,11 @@ export function addVersion(audioId, versionData) {
   // Persist edited/asr versions to Supabase so they survive across browsers/sessions
   if (versionData.type === 'edited' && versionData.text != null) {
     const audioEntry = state.audio?.find(a => a.id === audioId);
-    syncEdited(audioId, versionData.text, audioEntry).catch(console.warn);
+    syncEdited(audioId, versionData.text, audioEntry, {
+      originalText: versionData.originalText,
+      cleanRate: versionData.cleanRate,
+      createdBy: versionData.createdBy,
+    }).catch(console.warn);
   }
   if (versionData.type === 'asr' && versionData.text != null) {
     const audioEntry = state.audio?.find(a => a.id === audioId);
@@ -423,7 +423,11 @@ export function updateVersion(audioId, versionId, updates) {
   // rejection warnings (preserves prior fire-and-forget behavior).
   if (v.type === 'edited' && updates.text != null) {
     const audioEntry = state.audio?.find(a => a.id === audioId);
-    const p = syncEdited(audioId, v.text, audioEntry);
+    const p = syncEdited(audioId, v.text, audioEntry, {
+      originalText: v.originalText,
+      cleanRate: v.cleanRate,
+      createdBy: v.createdBy,
+    });
     p.catch(console.warn);
     return p;
   }
@@ -464,7 +468,7 @@ export function getPipelineStep(audioId) {
   const best = getBestVersion(audioId);
   if (!best) return 'clean';
   if (best.alignment?.avgConfidence != null) return 'review';
-  if (best.type === 'cleaned' || best.type === 'edited' || best.type === 'asr') return 'align';
+  if (best.type === 'edited' || best.type === 'asr') return 'align';
   return 'clean';
 }
 
@@ -503,18 +507,18 @@ function syncLegacyKeys(audioId) {
       confirmedAt: manual.createdAt,
     };
   }
-  const cleaned = versions.find(v => v.type === 'edited') || versions.find(v => v.type === 'cleaned');
-  if (cleaned) {
+  const edited = versions.find(v => v.type === 'edited');
+  if (edited) {
     state.cleaning[audioId] = {
-      originalText: cleaned.originalText,
-      cleanedText: cleaned.text,
-      cleanRate: cleaned.cleanRate,
-      cleanedAt: cleaned.createdAt,
+      originalText: edited.originalText,
+      cleanedText: edited.text,
+      cleanRate: edited.cleanRate,
+      cleanedAt: edited.createdAt,
     };
   }
-  // Use same priority as getBestVersion (edited > cleaned > asr > manual)
+  // Use same priority as getBestVersion (edited > asr > manual)
   // so the legacy key always reflects the most-relevant aligned version.
-  const withAlignment = ['edited', 'cleaned', 'asr', 'manual']
+  const withAlignment = ['edited', 'asr', 'manual']
     .reduce((found, type) => found || versions.find(v => v.type === type && v.alignment), null);
   if (withAlignment) {
     state.alignments[audioId] = withAlignment.alignment;

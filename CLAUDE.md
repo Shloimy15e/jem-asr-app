@@ -212,7 +212,7 @@ stateDiagram-v2
 | `mappings` | `audio_id` | Audio → transcript links. Columns: `transcript_id`, `confidence`, `match_reason`, `confirmed_by`, `created_at` |
 | `alignments` | `audio_id` | Word timestamps + confidence scores |
 | `reviews` | `audio_id` | Approval status + `edited_text` (user's corrected text) + `reviewed_at` |
-| `transcript_edits` | `(audio_id, version)` | Versioned transcript text. `version` is TEXT: `'cleaned'` (status tracking) or `'edited'` (the unified working version updated by both cleaning passes and manual edits). Columns: `text`, `original_text`, `clean_rate`, `created_at`, `created_by` |
+| `transcript_edits` | `(audio_id, version)` | Versioned transcript text. `version` is TEXT: `'edited'` (the unified working version updated by both cleaning passes and manual edits) or `'asr-<model>'` (one row per ASR model output). Cleaning metadata lives on the `edited` row itself via `original_text` + `clean_rate`. Columns: `text`, `original_text`, `clean_rate`, `created_at`, `created_by`, `edited_by` |
 | `segment_approvals` | `(audio_id, segment_hash)` | Persistent per-segment approval state. `segment_hash` is the space-joined word text of the segment. Approved state survives re-alignment as long as text is unchanged. |
 | `asr_models` | `id` | ASR model configurations |
 | `benchmark_results` | `id` | WER/CER benchmark run results |
@@ -744,7 +744,7 @@ First checks that `mappings[audioId]` points to a transcript that exists in `sta
 versions.some(v => v.review?.status === 'approved')   → 'approved'
 versions.some(v => v.review?.status === 'rejected')   → 'rejected'
 versions.some(v => v.alignment)                       → 'aligned'
-versions.some(v => v.type === 'cleaned')              → 'cleaned'
+versions.some(v => v.type === 'edited')               → 'cleaned'
 versions.length > 0                                   → 'mapped'
 else (has valid transcript but no versions)            → 'mapped'
 ```

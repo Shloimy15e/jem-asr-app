@@ -317,9 +317,6 @@ export async function batchClean(audioIds, state, onProgress, cleanFn = cleanTex
       addVersion(audioId, { type: 'edited', text: cleanedText, originalText, cleanRate, iteration, createdBy: 'system' });
     }
 
-    // Also sync a 'cleaned' row so the Supabase audio_pipeline_status view is accurate
-    updateState('cleaning', audioId, { cleanedText, originalText, cleanRate, cleanedAt: new Date().toISOString() });
-
     succeeded++;
     if (onProgress) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
