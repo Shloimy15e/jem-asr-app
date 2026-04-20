@@ -144,7 +144,7 @@ function buildGeminiRequestBody(audio) {
       role: 'user',
       parts: [
         { inline_data: { mime_type: mimeType, data: audio.base64 } },
-        { text: 'Transcribe this Yiddish audio accurately. Output only the transcription text, nothing else.' },
+        { text: 'transcribe this yiddish audio' },
       ],
     }],
     generationConfig: { temperature: 0, maxOutputTokens: 8192 },
