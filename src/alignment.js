@@ -431,13 +431,21 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const BOUNDARY_GAP_THRESHOLD = 5; // seconds — inter-word gap larger than this = inflation artifact
   const BOUNDARY_MAX_POPS = 3;     // cap pops at a boundary so real pauses don't eat legit words
 
-  // For multi-chunk alignment with non-R2 audio, decode the full audio once in the
-  // browser to produce frame-accurate WAV slices. For R2 audio, use the URL-based
-  // path (CF Worker fetches server-side) — WAV slices are too large for the CF proxy
-  // body limit (~25MB), and the anchor-word calibration handles byte-seeking drift.
+  // Decode the full audio in the browser when we need frame-accurate slicing:
+  //   (a) multi-chunk non-R2 (original case — no URL handoff available), or
+  //   (b) R2 with trim_start > 0 (split file). For (b), the CF Worker's XING
+  //       VBR TOC byte-seek is approximate and can land ~1–2s off trim_start,
+  //       so chip timestamps would be consistently 1-2s earlier than reality
+  //       across the whole split. Browser-side AudioContext decoding handles
+  //       VBR correctly and slices at exact sample boundaries, so the clip
+  //       the pod receives starts at exactly trim_start.
   let fullAudioBuffer = null;
-  if (chunks.length > 1 && !isLibraryR2Url(url)) {
-    console.log(`[Align] Multi-chunk (non-R2): decoding full audio in browser for frame-accurate slicing…`);
+  const needsPreciseTrim = trimStart > 0 && isLibraryR2Url(url);
+  if ((chunks.length > 1 && !isLibraryR2Url(url)) || needsPreciseTrim) {
+    const reason = needsPreciseTrim
+      ? `R2 split (trim_start=${trimStart}s): decoding in browser for frame-accurate slice`
+      : 'Multi-chunk (non-R2): decoding full audio in browser for frame-accurate slicing';
+    console.log(`[Align] ${reason}…`);
     fullAudioBuffer = await fetchAndDecodeFullAudio(url);
   }
 
