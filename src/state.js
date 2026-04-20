@@ -177,11 +177,13 @@ export function mergeSupabaseData(remote) {
   if (remote.reviews)    state.reviews = remote.reviews;
   if (remote.trims)      Object.assign(state.trims, remote.trims);
 
-  // Restore edited versions loaded from Supabase into transcriptVersions
+  // Restore edited versions loaded from Supabase into transcriptVersions.
+  // Seed a fresh versions array when none exists (audio-first training files
+  // carry no manual version — the edited row is the whole story).
   if (remote.edited) {
     for (const [audioId, editedData] of Object.entries(remote.edited)) {
+      if (!state.transcriptVersions[audioId]) state.transcriptVersions[audioId] = [];
       const versions = state.transcriptVersions[audioId];
-      if (!versions || versions.length === 0) continue;
       const existing = versions.find(v => v.type === 'edited');
       if (existing) {
         existing.text = editedData.text;
@@ -200,11 +202,12 @@ export function mergeSupabaseData(remote) {
     }
   }
 
-  // Restore asr versions loaded from Supabase — one version per model
+  // Restore asr versions loaded from Supabase — one version per model.
+  // Same seeding rationale as edited: training files may have only ASR rows.
   if (remote.asr) {
     for (const [audioId, asrArray] of Object.entries(remote.asr)) {
+      if (!state.transcriptVersions[audioId]) state.transcriptVersions[audioId] = [];
       const versions = state.transcriptVersions[audioId];
-      if (!versions || versions.length === 0) continue;
       for (const asrData of asrArray) {
         const existing = versions.find(v => v.type === 'asr' && v.model === asrData.model);
         if (existing) {
@@ -222,12 +225,15 @@ export function mergeSupabaseData(remote) {
     }
   }
 
-  // Reconstruct missing mappings from manual versions BEFORE migration —
-  // covers cases where work was done locally but the mapping wasn't synced
-  // to Supabase.  Must happen first so migrateToVersions sees all mappings
-  // and can deduplicate versions properly.
+  // Reconstruct missing mappings from versions BEFORE migration — covers
+  // two cases: (1) work done locally but the mapping wasn't synced to
+  // Supabase, and (2) audio-first training files whose synthetic mapping
+  // (transcriptId=null) was historically rejected by the NOT NULL constraint
+  // on mappings.transcript_id. Must happen first so migrateToVersions sees
+  // all mappings and can deduplicate versions properly.
   for (const [audioId, versions] of Object.entries(state.transcriptVersions)) {
     if (state.mappings[audioId]) continue; // already have a mapping
+    if (!versions || versions.length === 0) continue;
     const manual = versions.find(v => v.type === 'manual');
     if (manual?.sourceTranscriptId) {
       state.mappings[audioId] = {
@@ -236,6 +242,16 @@ export function mergeSupabaseData(remote) {
         matchReason: manual.matchReason || 'reconstructed from version',
         confirmedBy: manual.createdBy || 'system',
         confirmedAt: manual.createdAt || new Date().toISOString(),
+      };
+    } else {
+      // Audio-first file (training / ASR-generated) — synthesize a null-
+      // transcript mapping so the pipeline UI renders.
+      state.mappings[audioId] = {
+        transcriptId: null,
+        confidence: 1.0,
+        matchReason: 'reconstructed (no transcript)',
+        confirmedBy: 'system',
+        confirmedAt: new Date().toISOString(),
       };
     }
   }

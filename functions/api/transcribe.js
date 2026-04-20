@@ -101,15 +101,26 @@ async function getVertexAccessToken(saJson) {
   return tokenData.access_token;
 }
 
+// Allowlist for SSRF protection. Matches align.js / audio.js so training files
+// on the r2.dev public URL aren't blocked when ALLOWED_R2_DOMAINS is unset
+// (e.g. preview deploys).
+function getAllowedDomains(env) {
+  if (env?.ALLOWED_R2_DOMAINS) {
+    return env.ALLOWED_R2_DOMAINS.split(',').map(d => d.trim()).filter(Boolean);
+  }
+  return ['audio.kohnai.ai', 'pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev'];
+}
+
 // Resolve audio_url (R2 only, SSRF-protected) or use provided base64.
-async function resolveAudio(payload) {
+async function resolveAudio(payload, env) {
   if (payload.audio_url) {
     let parsedUrl;
     try { parsedUrl = new URL(payload.audio_url); } catch {
       throw { status: 400, message: 'Invalid audio_url' };
     }
-    if (parsedUrl.hostname !== 'audio.kohnai.ai') {
-      throw { status: 400, message: 'audio_url must point to audio.kohnai.ai' };
+    const allowedDomains = getAllowedDomains(env);
+    if (!allowedDomains.includes(parsedUrl.hostname)) {
+      throw { status: 400, message: `audio_url domain not in allowed list (${parsedUrl.hostname})` };
     }
     if (parsedUrl.protocol !== 'https:') {
       throw { status: 400, message: 'audio_url must use https' };
@@ -288,7 +299,7 @@ export async function onRequestPost(context) {
 
     if (!provider) return errorResponse(400, 'Missing provider');
 
-    const audio = await resolveAudio(payload);
+    const audio = await resolveAudio(payload, env);
 
     let text;
     if (provider === 'gemini') {
