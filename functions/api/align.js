@@ -255,9 +255,39 @@ export async function onRequestPost(context) {
         return forwardToIvritPod(payload, context.env, CORS_HEADERS);
       }
 
+      // ── Untrimmed stable-ts path (URL passthrough) ───────────────────
+      // The pod at align.kohnai.ai accepts audio_url directly and downloads
+      // the file on its side. For untrimmed alignments we forward the URL
+      // as-is instead of fetching the whole file into the Worker, base64-
+      // encoding it, and re-uploading — that caused CPU/memory exhaustion
+      // (CF error 1102) on long audio after browser-side chunking was
+      // removed. Trimmed alignments still need byte-slicing because the
+      // pod has no trim parameter.
+      const hasTrim = (payload.trim_start > 0) || (payload.trim_end > 0);
+      if (!hasTrim) {
+        const forwardPayload = { ...payload };
+        // Pod reads `audio_url`, not the extra trim/duration hints.
+        delete forwardPayload.trim_start;
+        delete forwardPayload.trim_end;
+        delete forwardPayload.audio_duration;
+        const resp = await fetch(ALIGN_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(forwardPayload),
+          cf: { cacheTtl: 0 },
+        });
+        return new Response(resp.body, {
+          status: resp.status,
+          headers: {
+            'Content-Type': resp.headers.get('Content-Type') || 'application/json',
+            ...CORS_HEADERS,
+          },
+        });
+      }
+
       let audioBuffer;
 
-      if (payload.trim_start != null || payload.trim_end != null) {
+      if (hasTrim) {
         // Trimming requested. Use two-step fetch:
         // 1. Fetch the first 64 KB to read the XING VBR TOC (if present).
         // 2. Use the TOC for accurate byte-seeking, then range-fetch only the needed slice.
@@ -300,16 +330,6 @@ export async function onRequestPost(context) {
           );
         }
         audioBuffer = await sliceResp.arrayBuffer();
-      } else {
-        // No trimming — fetch the full audio as before.
-        const audioResp = await fetch(parsedUrl.href);
-        if (!audioResp.ok) {
-          return new Response(
-            JSON.stringify({ error: `Failed to fetch audio: ${audioResp.status}` }),
-            { status: 502, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
-          );
-        }
-        audioBuffer = await audioResp.arrayBuffer();
       }
 
       // Detect format from URL extension, default to .mp3
