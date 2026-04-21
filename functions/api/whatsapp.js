@@ -388,10 +388,21 @@ export async function onRequestGet(context) {
   const token = searchParams.get('hub.verify_token');
   const challenge = searchParams.get('hub.challenge');
 
-  if (mode === 'subscribe' && token === context.env.WHATSAPP_VERIFY_TOKEN) {
+  if (mode === 'subscribe' && token && constantTimeEqual(token, context.env.WHATSAPP_VERIFY_TOKEN || '')) {
     return new Response(challenge, { status: 200 });
   }
   return new Response('Forbidden', { status: 403 });
+}
+
+// Constant-time string comparison to prevent timing attacks on the verify token.
+function constantTimeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) {
+    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return mismatch === 0;
 }
 
 /** POST /api/whatsapp — incoming messages */
