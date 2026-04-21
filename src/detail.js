@@ -149,7 +149,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     remote = await loadForDetailPage(audioId, activeLib);
   } catch (err) {
-    page.innerHTML = `<div class="empty-state"><div class="empty-state-title">Failed to load data: ${err.message}</div></div>`;
+    page.innerHTML = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'empty-state';
+    const title = document.createElement('div');
+    title.className = 'empty-state-title';
+    const msg = String(err?.message || err || 'Unknown error').slice(0, 500);
+    title.textContent = `Failed to load data: ${msg}`;
+    wrap.appendChild(title);
+    page.appendChild(wrap);
     return;
   }
 
@@ -1875,13 +1883,21 @@ function renderProgressCard(alignment) {
 
   const statConf = document.createElement('span');
   statConf.className = 'pipeline-progress-stat';
-  statConf.innerHTML = `<strong>${pct}%</strong> high-confidence words`;
+  const pctStrong = document.createElement('strong');
+  pctStrong.textContent = `${pct}%`;
+  statConf.appendChild(pctStrong);
+  statConf.appendChild(document.createTextNode(' high-confidence words'));
   header.appendChild(statConf);
 
   if (low > 0) {
     const statLow = document.createElement('span');
     statLow.className = 'pipeline-progress-stat';
-    statLow.innerHTML = `&nbsp;·&nbsp;<strong style="color:var(--red)">${low}</strong> low-confidence`;
+    statLow.appendChild(document.createTextNode('\u00a0·\u00a0'));
+    const lowStrong = document.createElement('strong');
+    lowStrong.style.color = 'var(--red)';
+    lowStrong.textContent = String(low);
+    statLow.appendChild(lowStrong);
+    statLow.appendChild(document.createTextNode(' low-confidence'));
     header.appendChild(statLow);
   }
 
@@ -2138,9 +2154,18 @@ function renderCompareView(audioId, alignedVersions, container, pageContainer, p
     const avg = version.alignment?.avgConfidence;
     const low = version.alignment?.lowConfidenceCount ?? 0;
     const wordCount = words.length;
-    stats.innerHTML = `<span>Words: <strong>${wordCount}</strong></span>` +
-      `<span>Avg: <strong>${avg != null ? (avg * 100).toFixed(0) + '%' : '—'}</strong></span>` +
-      `<span>Low confidence: <strong style="color:var(--red)">${low}</strong></span>`;
+    const statSpan = (label, valueText, color) => {
+      const s = document.createElement('span');
+      s.appendChild(document.createTextNode(label));
+      const strong = document.createElement('strong');
+      if (color) strong.style.color = color;
+      strong.textContent = valueText;
+      s.appendChild(strong);
+      return s;
+    };
+    stats.appendChild(statSpan('Words: ', String(wordCount)));
+    stats.appendChild(statSpan('Avg: ', avg != null ? `${(avg * 100).toFixed(0)}%` : '—'));
+    stats.appendChild(statSpan('Low confidence: ', String(low), 'var(--red)'));
     col.appendChild(stats);
 
     // Word grid with chips
