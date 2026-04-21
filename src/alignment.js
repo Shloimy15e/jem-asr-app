@@ -1,4 +1,4 @@
-import { updateState, setVersionAlignment } from './state.js';
+import { updateState, setVersionAlignment, getBestVersion } from './state.js';
 import { isLibraryR2Url } from './auth.js';
 
 const ALIGN_ENDPOINT = '/api/align';
@@ -379,7 +379,14 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const url = getAudioUrl(audioId, state);
   if (!url) throw new Error(`No audio URL for ${audioId}`);
 
-  const rawAlignText = textOverride || state.cleaning[audioId]?.cleanedText;
+  // Resolve text source in priority order so realignment NEVER reverts user edits:
+  //   1. Explicit override from the caller.
+  //   2. Active best version (edited > cleaned > asr > manual) — preserves edits.
+  //   3. Legacy state.cleaning fallback for pre-versions records.
+  const rawAlignText =
+    textOverride ||
+    getBestVersion(audioId)?.text ||
+    state.cleaning[audioId]?.cleanedText;
   if (!rawAlignText) {
     throw new Error(`No text for alignment for ${audioId}`);
   }
