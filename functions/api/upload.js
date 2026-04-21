@@ -72,8 +72,14 @@ export async function onRequestPost(context) {
     return json({ error: 'Missing or invalid "key" field' }, 400);
   }
 
-  // Sanitize key: strip leading slashes, block path traversal
-  const sanitizedKey = key.replace(/\.\./g, '_').replace(/^\/+/, '');
+  // Sanitize key: allowlist safe chars, block path traversal, normalize slashes.
+  // R2 keys look like "library/audio/song.mp3" — only [A-Za-z0-9._/-] are valid.
+  const sanitizedKey = key
+    .replace(/^\/+/, '')
+    .replace(/\.\./g, '_')
+    .replace(/[^A-Za-z0-9._/-]/g, '_')
+    .replace(/\/+/g, '/')
+    .replace(/^\/+/, '');
   if (!sanitizedKey) {
     return json({ error: 'Key is empty after sanitization' }, 400);
   }
