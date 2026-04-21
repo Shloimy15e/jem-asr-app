@@ -112,6 +112,13 @@ export async function onRequestPost(context) {
       console.warn('checkout.session.completed with no client_reference_id — skipping');
       return new Response('OK', { status: 200 });
     }
+    // E.164 without the leading + (the WhatsApp API and our DB store it this way).
+    // Reject anything else so a malformed client_reference_id can't poison the DB
+    // or flow into the WhatsApp API call below.
+    if (!/^[1-9]\d{6,14}$/.test(phone)) {
+      console.warn(`checkout.session.completed with malformed client_reference_id: ${phone}`);
+      return new Response('OK', { status: 200 });
+    }
 
     try {
       // Add credits via Postgres RPC (handles upsert + increment atomically)
