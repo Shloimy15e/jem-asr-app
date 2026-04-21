@@ -163,18 +163,21 @@ function extractGeminiText(data) {
  * Gemini via Vertex AI endpoint (service account auth).
  * Used for fine-tuned models deployed on GCP Vertex AI.
  */
-async function handleGeminiVertex(audio, payload, saJson) {
-  const { gemini_project_id, gemini_region, gemini_endpoint_id } = payload;
-  if (!gemini_endpoint_id) throw { status: 500, message: 'Missing gemini_endpoint_id — set it in ASR Settings' };
-
+async function handleGeminiVertex(audio, payload, env) {
+  const saJson = env.GEMINI_SA_JSON;
   const sa = typeof saJson === 'string' ? JSON.parse(saJson) : saJson;
-  const projectId = gemini_project_id || sa.project_id;
-  const region = gemini_region || 'us-central1';
+  // Prefer env for deployment-configured endpoint; payload fields are
+  // sanitized upstream (see sanitizePayload) so the fallback is safe.
+  const endpointId = env.GEMINI_ENDPOINT_ID || payload.gemini_endpoint_id;
+  const projectId  = env.GEMINI_PROJECT_ID  || payload.gemini_project_id || sa.project_id;
+  const region     = env.GEMINI_REGION      || payload.gemini_region     || 'us-central1';
+  if (!endpointId) throw { status: 500, message: 'Missing GEMINI_ENDPOINT_ID (set as Worker secret or in ASR Settings)' };
   if (!projectId) throw { status: 400, message: 'Missing gemini_project_id (and not found in service account JSON)' };
+  if (!GCP_ID_RE.test(region)) throw { status: 400, message: 'Invalid gemini_region' };
 
   const accessToken = await getVertexAccessToken(saJson);
 
-  const url = `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/endpoints/${gemini_endpoint_id}:generateContent`;
+  const url = `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/endpoints/${endpointId}:generateContent`;
 
   const resp = await fetch(url, {
     method: 'POST',
@@ -219,9 +222,9 @@ async function handleGeminiApiKey(audio, payload) {
 }
 
 async function handleGemini(audio, payload, env) {
-  // Secrets come from Cloudflare Worker env, never from the request payload
+  // Secrets come from Cloudflare Worker env, never from the request payload.
   if (env.GEMINI_SA_JSON) {
-    return handleGeminiVertex(audio, payload, env.GEMINI_SA_JSON);
+    return handleGeminiVertex(audio, payload, env);
   }
   if (env.GEMINI_API_KEY) {
     return handleGeminiApiKey(audio, { ...payload, gemini_api_key: env.GEMINI_API_KEY });
@@ -280,9 +283,27 @@ async function handleMendel(audio, payload, env) {
   return text.trim();
 }
 
+// GCP identifiers are [a-z0-9-]; keep the regex strict so a malicious payload
+// can never smuggle path segments or query into the Vertex URL.
+const GCP_ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/i;
+
+function sanitizePayload(payload) {
+  // Never accept provider credentials from the client — only env secrets.
+  delete payload.gemini_api_key;
+  delete payload.gemini_sa_json;
+  delete payload.yl_api_key;
+  for (const key of ['gemini_endpoint_id', 'gemini_project_id', 'gemini_region']) {
+    const v = payload[key];
+    if (v != null && (typeof v !== 'string' || !GCP_ID_RE.test(v))) {
+      delete payload[key];
+    }
+  }
+  return payload;
+}
+
 export async function onRequestPost(context) {
   try {
-    const payload = await context.request.json();
+    const payload = sanitizePayload(await context.request.json());
     const { provider } = payload;
     const env = context.env;
 
