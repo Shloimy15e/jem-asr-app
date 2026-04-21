@@ -11,10 +11,13 @@ const hash = window.location.hash;
 const isInviteOrRecovery = hash.includes('type=invite') || hash.includes('type=recovery');
 
 if (isInviteOrRecovery) {
-  // Supabase client auto-processes the hash tokens via onAuthStateChange
-  supabase.auth.onAuthStateChange((event, session) => {
+  // Supabase client auto-processes the hash tokens via onAuthStateChange.
+  // Unsubscribe as soon as the password form is shown so re-entry via the
+  // same page instance (e.g. browser back) doesn't stack listeners.
+  const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
     if (session && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'PASSWORD_RECOVERY')) {
       showSetPasswordForm();
+      subscription.unsubscribe();
     }
   });
 } else {
