@@ -12,7 +12,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { getActiveLibrary } from './auth.js';
-import { updateState } from './state.js';
+import { updateState, getBestVersion } from './state.js';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -62,7 +62,10 @@ export async function createSplitFromAudio(parent, state, wordIndex) {
   const anchorTime = anchor.start;
   if (!(anchorTime >= 0)) throw new Error('Anchor word has no valid start timestamp');
 
-  const parentText = state.cleaning[parent.id]?.cleanedText || '';
+  // Reconciled alignment words are 1:1 with the edited version text — read
+  // from there. `state.cleaning` is empty after the cleaned→edited unification.
+  const best = getBestVersion(parent.id);
+  const parentText = best?.text || state.cleaning[parent.id]?.cleanedText || '';
   if (!parentText.trim()) throw new Error('Parent has no cleaned text to split');
   const tokens = parentText.trim().split(/\s+/).filter(t => t.length > 0);
   if (wordIndex >= tokens.length) {
