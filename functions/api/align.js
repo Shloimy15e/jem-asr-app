@@ -16,6 +16,8 @@ const ALIGN_ENDPOINT = 'https://align.kohnai.ai/api/align';
 const IVRIT_POLL_MAX = 60;
 const IVRIT_POLL_INTERVAL_MS = 5000;
 
+const ALLOWED_ALIGNERS = ['stable-ts', 'ivrit-iterative'];
+
 function getAllowedDomains(env) {
   if (env?.ALLOWED_R2_DOMAINS) {
     return env.ALLOWED_R2_DOMAINS.split(',').map(d => d.trim()).filter(Boolean);
@@ -220,6 +222,13 @@ function tocByteOffset(toc, fraction, totalBytes) {
 export async function onRequestPost(context) {
   try {
     const payload = await context.request.json();
+
+    if (payload.aligner != null && !ALLOWED_ALIGNERS.includes(payload.aligner)) {
+      return new Response(
+        JSON.stringify({ error: 'aligner not in allowed list' }),
+        { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
+      );
+    }
 
     // If the client sent audio_url, resolve it to base64 here in the Worker.
     // This keeps the browser→CF request tiny (just a URL string) while still
