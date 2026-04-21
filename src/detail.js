@@ -2837,121 +2837,25 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     editorWordCountEl.textContent = `Editor: ${countWords(t)} words`;
   }
 
-  // ── Text Editor: contenteditable div with timestamp anchors ──
+  // ── Text Editor: contenteditable div ──
   const editorDiv = document.createElement('div');
   editorDiv.className = 'text-editor-view';
   editorDiv.contentEditable = 'true';
   editorDiv.dir = 'rtl';
   editorDiv.spellcheck = false;
 
-  // Wire click/dblclick handlers onto every timestamp-anchor span.
-  function bindAnchor(anchor) {
-    anchor.title = anchor.classList.contains('timestamp-adjusted')
-      ? `📌 Adjusted to ${anchor.textContent.replace(/[\[\]]/g, '')}`
-      : 'Click to seek • Double-click to pin to playhead';
-    anchor.addEventListener('click', (e) => {
-      e.preventDefault();
-      if (playerEl) {
-        playerEl.currentTime = parseFloat(anchor.dataset.time);
-        playerEl.play().catch(() => {});
-      }
-      const segIdx = anchor.dataset.segIdx;
-      if (segIdx != null) {
-        const sidebarSeg = sidebar.querySelector(`[data-seg-idx="${segIdx}"]`);
-        if (sidebarSeg) sidebarSeg.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      }
-    });
-    anchor.addEventListener('dblclick', (e) => {
-      e.preventDefault();
-      if (!playerEl) return;
-      const newTime = playerEl.currentTime;
-      anchor.dataset.time = String(newTime);
-      anchor.textContent = `[${fmtSec(newTime)}]`;
-      anchor.classList.add('timestamp-adjusted');
-      anchor.title = `📌 Adjusted to ${fmtSec(newTime)}`;
-    });
-  }
-
   // Editor renders the user's edited text (what was sent to the aligner),
-  // unchanged by reconciliation. Blue [mm:ss] chips are placed at
-  // proportional positions derived from the RAW alignment's segment
-  // boundaries — the chip's time is exact, its position in the text is an
-  // estimate (ok for click-to-seek nudges).
+  // unchanged by reconciliation. Plain text only — no inline chips.
   function buildEditorContent() {
     editorDiv.innerHTML = '';
-
     const editedVersion = getVersions(audioId).find(v => v.type === 'edited');
     const alignmentJoined = segments.flat().map(w => w.word || w.text || '').join(' ');
     const editedText = (editedVersion?.text || alignmentJoined || '').trim();
-
-    // Tokenize preserving inter-token whitespace so newlines survive.
-    const TOKEN_RE = /\S+|\s+/g;
-    const pieces = editedText.match(TOKEN_RE) || [];
-    const tokenIndices = [];
-    pieces.forEach((p, i) => { if (/\S/.test(p)) tokenIndices.push(i); });
-    const totalTokens = tokenIndices.length;
-
-    const rawFlat = rawSegments.flat();
-    const insertAtToken = new Map(); // tokenIdx → { time, segIdx }
-    if (totalTokens > 0 && rawFlat.length > 0) {
-      let cumRawIdx = 0;
-      rawSegments.forEach((seg, segIdx) => {
-        const proportional = Math.min(
-          totalTokens - 1,
-          Math.round((cumRawIdx / rawFlat.length) * totalTokens),
-        );
-        // First segment always anchors at token 0 so the very start of the
-        // audio has a seek point; otherwise prefer the proportional slot but
-        // skip duplicates.
-        const slot = segIdx === 0 ? 0 : proportional;
-        if (!insertAtToken.has(slot)) {
-          insertAtToken.set(slot, { time: seg[0]?.start || 0, segIdx });
-        }
-        cumRawIdx += seg.length;
-      });
-    }
-
-    // Batch consecutive word + whitespace pieces into a single text node per
-    // run, flushing only when we hit an anchor or a newline. Per-piece text
-    // nodes (~8k for a long transcript) make Chrome's contentEditable hang on
-    // select-all / bulk delete and block backspace near chip boundaries.
-    let tokenIdx = 0;
-    let buffer = '';
-    const flushBuffer = () => {
-      if (buffer) {
-        editorDiv.appendChild(document.createTextNode(buffer));
-        buffer = '';
-      }
-    };
-    pieces.forEach((piece) => {
-      if (/\S/.test(piece)) {
-        const hit = insertAtToken.get(tokenIdx);
-        if (hit) {
-          flushBuffer();
-          const anchor = document.createElement('span');
-          anchor.className = 'timestamp-anchor';
-          anchor.contentEditable = 'false';
-          anchor.dataset.time = String(hit.time);
-          anchor.dataset.segIdx = String(hit.segIdx);
-          anchor.textContent = `[${fmtSec(hit.time)}]`;
-          bindAnchor(anchor);
-          // The .timestamp-anchor CSS adds its own margin for visual spacing,
-          // so we don't pad with extra text nodes — getEditorPlainText strips
-          // anchors and any padding we added would turn into stray double
-          // spaces in the text sent to the aligner.
-          editorDiv.appendChild(anchor);
-        }
-        buffer += piece;
-        tokenIdx++;
-      } else if (piece.includes('\n')) {
-        flushBuffer();
-        const brCount = (piece.match(/\n/g) || []).length;
-        for (let i = 0; i < brCount; i++) editorDiv.appendChild(document.createElement('br'));
-      } else {
-        buffer += piece;
-      }
+    const lines = editedText.split(/\n+/);
+    lines.forEach((line, idx) => {
+      if (line) editorDiv.appendChild(document.createTextNode(line));
+      if (idx < lines.length - 1) editorDiv.appendChild(document.createElement('br'));
     });
-    flushBuffer();
     refreshEditorWordCount(editedText);
   }
   buildEditorContent();
@@ -2959,11 +2863,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   // ── Auto-save: debounced 800ms ──
   let _editorSaveTimer = null;
   function getEditorPlainText() {
-    // Extract text, stripping timestamp anchors
-    const clone = editorDiv.cloneNode(true);
-    clone.querySelectorAll('.timestamp-anchor').forEach(a => a.remove());
-    // Replace <br> with newlines, then collapse
-    return clone.innerText.replace(/\n{3,}/g, '\n\n').trim();
+    return editorDiv.innerText.replace(/\n{3,}/g, '\n\n').trim();
   }
 
   let _ensuredEditedPost = false;
@@ -3127,7 +3027,6 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   // ── Karaoke highlighting — keep sidebar + editor in sync ──
   if (playerEl) {
     let prevActiveChip = null;
-    let prevActiveAnchor = null;
     const onTimeUpdate = () => {
       const t = playerEl.currentTime;
 
@@ -3148,18 +3047,6 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
         }
       }
 
-      // Highlight active timestamp anchor in editor
-      if (prevActiveAnchor) { prevActiveAnchor.classList.remove('timestamp-active'); prevActiveAnchor = null; }
-      const anchors = editorDiv.querySelectorAll('.timestamp-anchor');
-      for (let i = 0; i < anchors.length; i++) {
-        const aTime = parseFloat(anchors[i].dataset.time);
-        const nextTime = i < anchors.length - 1 ? parseFloat(anchors[i + 1].dataset.time) : Infinity;
-        if (t >= aTime && t < nextTime) {
-          anchors[i].classList.add('timestamp-active');
-          prevActiveAnchor = anchors[i];
-          break;
-        }
-      }
     };
     if (playerEl._wordViewTimeUpdate) playerEl.removeEventListener('timeupdate', playerEl._wordViewTimeUpdate);
     playerEl._wordViewTimeUpdate = onTimeUpdate;
