@@ -22,8 +22,13 @@ function lcsTable(a, b) {
 }
 
 /**
- * Backtrace the LCS table to produce a diff: each original word is tagged
- * as either 'kept' (present in cleaned) or 'removed'.
+ * Backtrace the LCS table to produce a diff over both sequences.
+ * Each entry carries one of three types:
+ *   - 'kept'    — word present in both original and cleaned
+ *   - 'removed' — word only in original (cleaning dropped it)
+ *   - 'added'   — word only in cleaned (cleaning inserted it)
+ *
+ * Callers that want only the original-side view should filter out 'added'.
  */
 function diffWords(original, cleaned) {
   const dp = lcsTable(original, cleaned);
@@ -36,8 +41,7 @@ function diffWords(original, cleaned) {
       i--;
       j--;
     } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      // Word in cleaned but not in original (insertion) — show as kept
-      result.unshift({ word: cleaned[j - 1], type: 'kept' });
+      result.unshift({ word: cleaned[j - 1], type: 'added' });
       j--;
     } else {
       result.unshift({ word: original[i - 1], type: 'removed' });
@@ -139,6 +143,7 @@ export function renderReviewPanel(container, audioId, state, callbacks) {
   const origContent = document.createElement('div');
   origContent.className = 'review-diff-content';
   diff.forEach(entry => {
+    if (entry.type === 'added') return; // insertions don't belong to the Original column
     const span = document.createElement('span');
     if (entry.type === 'removed') {
       span.className = 'diff-removed';
