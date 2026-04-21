@@ -63,32 +63,136 @@ function secretsNote(text) {
   return note;
 }
 
+// Gemini endpoints are a list — multiple fine-tuned models in the same GCP
+// project sharing one GEMINI_SA_JSON. Rendered in its own block with an
+// editable table and an "add endpoint" button.
+function renderGeminiEndpointsBlock(container) {
+  const block = document.createElement('div');
+  block.className = 'asr-provider-block';
+
+  const title = document.createElement('div');
+  title.className = 'asr-provider-title';
+  title.textContent = 'Gemini (fine-tuned via Vertex AI)';
+  const providers = getState().transcribeProviders || {};
+  const g = providers.gemini || { endpoints: [], selectedId: null };
+  const endpoints = Array.isArray(g.endpoints) ? g.endpoints : [];
+  const configured = endpoints.filter(e => e.projectId && e.endpointId).length;
+  const statusSpan = document.createElement('span');
+  statusSpan.textContent = configured > 0 ? ` ✓ ${configured} endpoint${configured === 1 ? '' : 's'}` : ' ○ No endpoints';
+  statusSpan.style.cssText = `font-size: 0.75rem; color: ${configured > 0 ? 'var(--green)' : 'var(--text-secondary)'}; margin-left: 8px;`;
+  title.appendChild(statusSpan);
+  block.appendChild(title);
+  block.appendChild(secretsNote('🔒 SA JSON stored as Cloudflare Worker secret GEMINI_SA_JSON — set via CLI, not here. All endpoints below share this one credential (same GCP project).'));
+
+  const list = document.createElement('div');
+  list.className = 'gemini-endpoint-list';
+  list.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:8px;';
+  block.appendChild(list);
+
+  const persist = () => {
+    const s = getState();
+    if (!s.transcribeProviders) s.transcribeProviders = {};
+    s.transcribeProviders.gemini = { endpoints, selectedId: g.selectedId };
+    updateState('transcribeProviders', null, s.transcribeProviders);
+  };
+
+  const redraw = () => {
+    list.innerHTML = '';
+    if (endpoints.length === 0) {
+      const empty = document.createElement('div');
+      empty.textContent = 'No endpoints yet — click "+ Add endpoint" below.';
+      empty.style.cssText = 'color:var(--text-secondary);font-size:0.82rem;padding:8px 0;';
+      list.appendChild(empty);
+    }
+    endpoints.forEach((ep, idx) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:grid;grid-template-columns:auto 1fr 140px 1fr 28px;gap:6px;align-items:center;padding:6px;border:1px solid var(--border,#ddd);border-radius:6px;background:#fafafa;';
+      const mk = (val, placeholder, field) => {
+        const i = document.createElement('input');
+        i.type = 'text';
+        i.className = 'asr-config-input';
+        i.placeholder = placeholder;
+        i.value = val || '';
+        i.style.fontSize = '0.82rem';
+        i.addEventListener('change', () => {
+          endpoints[idx][field] = i.value.trim();
+          persist();
+        });
+        return i;
+      };
+      // Radio = which endpoint is the "selected" default
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'gemini-selected';
+      radio.checked = g.selectedId === ep.id;
+      radio.title = 'Use this endpoint by default';
+      radio.addEventListener('change', () => {
+        g.selectedId = ep.id;
+        persist();
+      });
+      row.appendChild(radio);
+      row.appendChild(mk(ep.name, 'Name (e.g. Yiddish v3 large)', 'name'));
+      row.appendChild(mk(ep.region, 'us-central1', 'region'));
+      row.appendChild(mk(ep.endpointId, 'numeric endpoint ID', 'endpointId'));
+      // Project ID in a tooltip-style smaller field — most users reuse one project
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.textContent = '×';
+      del.title = 'Delete endpoint';
+      del.style.cssText = 'background:transparent;border:0;color:var(--red,#d00);cursor:pointer;font-size:1.1rem;padding:2px 6px;';
+      del.addEventListener('click', () => {
+        if (!confirm(`Delete endpoint "${ep.name || ep.endpointId || 'untitled'}"?`)) return;
+        endpoints.splice(idx, 1);
+        if (g.selectedId === ep.id) g.selectedId = endpoints[0]?.id || null;
+        persist();
+        redraw();
+      });
+      row.appendChild(del);
+
+      // Project ID in a second row (less-common field)
+      const projRow = document.createElement('div');
+      projRow.style.cssText = 'grid-column: 1 / -1; display:flex;align-items:center;gap:6px;font-size:0.78rem;';
+      const projLabel = document.createElement('span');
+      projLabel.textContent = 'GCP project:';
+      projLabel.style.color = 'var(--text-secondary)';
+      const projInput = mk(ep.projectId, 'jem-chabad', 'projectId');
+      projInput.style.flex = '1';
+      projRow.appendChild(projLabel);
+      projRow.appendChild(projInput);
+      row.appendChild(projRow);
+
+      list.appendChild(row);
+    });
+  };
+  redraw();
+
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'action-btn';
+  addBtn.textContent = '+ Add endpoint';
+  addBtn.style.cssText = 'margin-top:8px;font-size:0.82rem;';
+  addBtn.addEventListener('click', () => {
+    const id = `ep_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const last = endpoints[endpoints.length - 1];
+    endpoints.push({
+      id,
+      name: '',
+      projectId: last?.projectId || '',
+      region: last?.region || 'us-central1',
+      endpointId: '',
+    });
+    if (!g.selectedId) g.selectedId = id;
+    persist();
+    redraw();
+  });
+  block.appendChild(addBtn);
+
+  container.appendChild(block);
+}
+
 export function buildAsrConfigPanel(container) {
   // ── Gemini ──
-  const geminiBlock = document.createElement('div');
-  geminiBlock.className = 'asr-provider-block';
-  const geminiTitle = document.createElement('div');
-  geminiTitle.className = 'asr-provider-title';
-  geminiTitle.textContent = 'Gemini (fine-tuned via Vertex AI)';
-  {
-    const providers = getState().transcribeProviders || {};
-    const g = providers.gemini || {};
-    const isConfigured = !!(g.projectId && g.endpointId);
-    const statusSpan = document.createElement('span');
-    statusSpan.textContent = isConfigured ? ' ✓ Configured' : ' ○ Not configured';
-    statusSpan.style.cssText = `font-size: 0.75rem; color: ${isConfigured ? 'var(--green)' : 'var(--text-secondary)'}; margin-left: 8px;`;
-    geminiTitle.appendChild(statusSpan);
-  }
-  geminiBlock.appendChild(geminiTitle);
-  geminiBlock.appendChild(secretsNote('🔒 SA JSON stored as Cloudflare Worker secret GEMINI_SA_JSON — set via CLI, not here.'));
-  container.appendChild(geminiBlock);
-
-  // Non-secret Gemini config
-  container.appendChild(buildProviderBlock('Gemini — endpoint config', [
-    { stateKey: 'gemini', field: 'projectId',  label: 'GCP Project ID', placeholder: 'fink-partnership',    type: 'text' },
-    { stateKey: 'gemini', field: 'region',     label: 'Region',         placeholder: 'us-central1',         type: 'text' },
-    { stateKey: 'gemini', field: 'endpointId', label: 'Endpoint ID',    placeholder: '5718022314876993536', type: 'text' },
-  ]));
+  renderGeminiEndpointsBlock(container);
 
   // ── Whisper ──
   const whisperBlock = document.createElement('div');

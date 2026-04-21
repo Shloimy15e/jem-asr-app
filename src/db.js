@@ -615,15 +615,23 @@ export async function loadFromSupabase(libraryId = null) {
 export async function loadForDetailPage(audioId, libraryId = null) {
   const lib = libraryId || getActiveLibrary();
   try {
+    // Parent + siblings query: split IDs follow <parentId>_p<N> (see split.js).
+    // Fetch rows whose id starts with parentId; client-side filter below keeps
+    // only the exact parent and its _p<N> children. This lets renderDetailPage
+    // show split-relationship links without needing the full audio_files list.
+    const partMatch = /^(.+)_p(\d+)$/.exec(audioId);
+    const parentId = partMatch ? partMatch[1] : audioId;
+    const prefixPattern = parentId.replace(/[%_]/g, (c) => '\\' + c);
+
     const [
-      audioRow,
+      audioFamilyRes,
       transcriptData,
       mappingRow,
       alignmentRow,
       reviewRow,
       editsRows,
     ] = await Promise.all([
-      supabase.from('audio_files').select('*').eq('id', audioId).eq('library_id', lib).maybeSingle(),
+      supabase.from('audio_files').select('*').like('id', `${prefixPattern}%`).eq('library_id', lib),
       fetchAll('transcripts', 'id,name,year,month,day,first_line,drive_link,r2_transcript_link,source_transcript_id', lib),
       supabase.from('mappings').select('*').eq('audio_id', audioId).eq('library_id', lib).maybeSingle(),
       supabase.from('alignments').select('audio_id,avg_confidence,low_confidence_count,aligned_at').eq('audio_id', audioId).eq('library_id', lib).maybeSingle(),
@@ -637,13 +645,16 @@ export async function loadForDetailPage(audioId, libraryId = null) {
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     };
 
-    const a = audioRow.data;
-    const audio = a ? [{
+    // Keep only the exact parent and its _p<N> children — the LIKE query can
+    // match unrelated IDs like "a_10130" that share the same prefix.
+    const partRe = new RegExp('^' + prefixPattern.replace(/\\([%_])/g, '$1').replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(_p\\d+)?$');
+    const audioRows = (audioFamilyRes.data || []).filter(r => partRe.test(r.id)).sort(byId);
+    const audio = audioRows.map(a => ({
       id: a.id, name: a.name, year: a.year, month: a.month, day: a.day, type: a.type,
       estMinutes: a.duration_minutes, isSelected50hr: a.is_selected_50hr, isBenchmark: a.is_benchmark,
       comments: a.comments || '', r2Link: a.r2_link, driveLink: a.drive_link,
       trimStart: a.trim_start || 0, trimEnd: a.trim_end || 0,
-    }] : [];
+    }));
 
     const trims = {};
     audio.forEach(x => { if (x.trimStart || x.trimEnd) trims[x.id] = { start: x.trimStart, end: x.trimEnd }; });

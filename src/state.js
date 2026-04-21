@@ -36,9 +36,12 @@ export function initState(data) {
     segmentApprovals: {},
     asrModels: saved.asrModels || [],
     transcribeProviders: saved.transcribeProviders || {
-      // Secrets (SA JSON, API keys) are Cloudflare Worker secrets — not stored here.
-      // Only non-sensitive config lives in state.
-      gemini: { projectId: 'fink-partnership', region: 'us-central1', endpointId: '5718022314876993536' },
+      // Secrets (SA JSON, API keys) are Cloudflare Worker secrets — not stored
+      // here. Only non-sensitive config lives in state.
+      // Gemini supports multiple fine-tuned endpoints in the same GCP project,
+      // sharing the single GEMINI_SA_JSON credential. See migrateGeminiEndpoints
+      // for the shape and the legacy-to-list migration.
+      gemini: { endpoints: [], selectedId: null },
       whisper: {},
       mendel: { endpoint: '' },
     },
@@ -51,7 +54,32 @@ export function initState(data) {
   };
   // Migrate old format into transcriptVersions
   migrateToVersions();
+  migrateGeminiEndpoints();
   return state;
+}
+
+// Legacy Gemini config was { projectId, region, endpointId }. Convert to the
+// list shape { endpoints: [{id, name, projectId, region, endpointId}], selectedId }.
+// No-op if already migrated.
+function migrateGeminiEndpoints() {
+  const g = state.transcribeProviders?.gemini;
+  if (!g) return;
+  if (Array.isArray(g.endpoints)) return; // already list shape
+  if (g.projectId || g.region || g.endpointId) {
+    const id = `ep_${Date.now()}`;
+    state.transcribeProviders.gemini = {
+      endpoints: [{
+        id,
+        name: g.endpointId ? `Endpoint ${g.endpointId.slice(-6)}` : 'Default',
+        projectId: g.projectId || '',
+        region: g.region || 'us-central1',
+        endpointId: g.endpointId || '',
+      }],
+      selectedId: id,
+    };
+  } else {
+    state.transcribeProviders.gemini = { endpoints: [], selectedId: null };
+  }
 }
 
 function migrateToVersions() {
@@ -149,11 +177,13 @@ export function mergeSupabaseData(remote) {
   if (remote.reviews)    state.reviews = remote.reviews;
   if (remote.trims)      Object.assign(state.trims, remote.trims);
 
-  // Restore edited versions loaded from Supabase into transcriptVersions
+  // Restore edited versions loaded from Supabase into transcriptVersions.
+  // Seed a fresh versions array when none exists (audio-first training files
+  // carry no manual version — the edited row is the whole story).
   if (remote.edited) {
     for (const [audioId, editedData] of Object.entries(remote.edited)) {
+      if (!state.transcriptVersions[audioId]) state.transcriptVersions[audioId] = [];
       const versions = state.transcriptVersions[audioId];
-      if (!versions || versions.length === 0) continue;
       const existing = versions.find(v => v.type === 'edited');
       if (existing) {
         existing.text = editedData.text;
@@ -172,11 +202,12 @@ export function mergeSupabaseData(remote) {
     }
   }
 
-  // Restore asr versions loaded from Supabase — one version per model
+  // Restore asr versions loaded from Supabase — one version per model.
+  // Same seeding rationale as edited: training files may have only ASR rows.
   if (remote.asr) {
     for (const [audioId, asrArray] of Object.entries(remote.asr)) {
+      if (!state.transcriptVersions[audioId]) state.transcriptVersions[audioId] = [];
       const versions = state.transcriptVersions[audioId];
-      if (!versions || versions.length === 0) continue;
       for (const asrData of asrArray) {
         const existing = versions.find(v => v.type === 'asr' && v.model === asrData.model);
         if (existing) {
@@ -194,12 +225,15 @@ export function mergeSupabaseData(remote) {
     }
   }
 
-  // Reconstruct missing mappings from manual versions BEFORE migration —
-  // covers cases where work was done locally but the mapping wasn't synced
-  // to Supabase.  Must happen first so migrateToVersions sees all mappings
-  // and can deduplicate versions properly.
+  // Reconstruct missing mappings from versions BEFORE migration — covers
+  // two cases: (1) work done locally but the mapping wasn't synced to
+  // Supabase, and (2) audio-first training files whose synthetic mapping
+  // (transcriptId=null) was historically rejected by the NOT NULL constraint
+  // on mappings.transcript_id. Must happen first so migrateToVersions sees
+  // all mappings and can deduplicate versions properly.
   for (const [audioId, versions] of Object.entries(state.transcriptVersions)) {
     if (state.mappings[audioId]) continue; // already have a mapping
+    if (!versions || versions.length === 0) continue;
     const manual = versions.find(v => v.type === 'manual');
     if (manual?.sourceTranscriptId) {
       state.mappings[audioId] = {
@@ -208,6 +242,16 @@ export function mergeSupabaseData(remote) {
         matchReason: manual.matchReason || 'reconstructed from version',
         confirmedBy: manual.createdBy || 'system',
         confirmedAt: manual.createdAt || new Date().toISOString(),
+      };
+    } else {
+      // Audio-first file (training / ASR-generated) — synthesize a null-
+      // transcript mapping so the pipeline UI renders.
+      state.mappings[audioId] = {
+        transcriptId: null,
+        confidence: 1.0,
+        matchReason: 'reconstructed (no transcript)',
+        confirmedBy: 'system',
+        confirmedAt: new Date().toISOString(),
       };
     }
   }
@@ -345,12 +389,16 @@ export function getVersionsByType(audioId, type) {
 export function getBestVersion(audioId) {
   const versions = getVersions(audioId);
   if (versions.length === 0) return null;
-  // Priority: edited > cleaned > asr > manual
+  // Priority: edited > cleaned > asr > manual. A version with empty text is
+  // treated as absent — an empty 'edited' (often auto-created) must not
+  // eclipse a filled 'asr' or 'manual' version.
+  const hasText = (v) => typeof v.text === 'string' && v.text.trim().length > 0;
   const priority = ['edited', 'cleaned', 'asr', 'manual'];
   for (const type of priority) {
-    const v = versions.filter(v => v.type === type);
-    if (v.length > 0) return v[v.length - 1]; // latest of that type
+    const filled = versions.filter(v => v.type === type && hasText(v));
+    if (filled.length > 0) return filled[filled.length - 1]; // latest of that type
   }
+  // All empty — fall back to any version so callers still get *something*.
   return versions[versions.length - 1];
 }
 
@@ -377,24 +425,31 @@ export function addVersion(audioId, versionData) {
 }
 
 export function updateVersion(audioId, versionId, updates) {
-  if (!state) return;
+  if (!state) return null;
   const versions = state.transcriptVersions[audioId];
-  if (!versions) return;
+  if (!versions) return null;
   const v = versions.find(v => v.id === versionId);
-  if (v) {
-    Object.assign(v, updates);
-    syncLegacyKeys(audioId);
-    saveToStorage();
-    // Sync text changes for edited/asr versions to Supabase
-    if (v.type === 'edited' && updates.text != null) {
-      const audioEntry = state.audio?.find(a => a.id === audioId);
-      syncEdited(audioId, v.text, audioEntry).catch(console.warn);
-    }
-    if (v.type === 'asr' && updates.text != null) {
-      const audioEntry = state.audio?.find(a => a.id === audioId);
-      syncAsr(audioId, v.text, v.model, audioEntry).catch(console.warn);
-    }
+  if (!v) return null;
+  Object.assign(v, updates);
+  syncLegacyKeys(audioId);
+  saveToStorage();
+  // Sync text changes for edited/asr versions to Supabase.
+  // Return the promise so callers can surface cloud-ack state; attach an
+  // internal catch so callers that ignore the return don't get unhandled
+  // rejection warnings (preserves prior fire-and-forget behavior).
+  if (v.type === 'edited' && updates.text != null) {
+    const audioEntry = state.audio?.find(a => a.id === audioId);
+    const p = syncEdited(audioId, v.text, audioEntry);
+    p.catch(console.warn);
+    return p;
   }
+  if (v.type === 'asr' && updates.text != null) {
+    const audioEntry = state.audio?.find(a => a.id === audioId);
+    const p = syncAsr(audioId, v.text, v.model, audioEntry);
+    p.catch(console.warn);
+    return p;
+  }
+  return null;
 }
 
 // Store alignment data on a specific version object.

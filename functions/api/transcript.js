@@ -12,7 +12,7 @@ function getAllowedDomains(env) {
   if (env?.ALLOWED_R2_DOMAINS) {
     return env.ALLOWED_R2_DOMAINS.split(',').map(d => d.trim()).filter(Boolean);
   }
-  return ['audio.kohnai.ai'];
+  return ['audio.kohnai.ai', 'pub-c3d984b0acf3415ab61d979b1a4d9665.r2.dev'];
 }
 
 export async function onRequestOptions() {

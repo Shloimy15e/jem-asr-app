@@ -1,4 +1,4 @@
-import { initState, getState, getVersions, addVersion, updateVersion, mergeSupabaseData } from './state.js';
+import { initState, getState, getVersions, addVersion, updateVersion, mergeSupabaseData, updateState } from './state.js';
 import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, getActiveLibraryConfig } from './auth.js';
 import { transcribeAudio } from './alignment.js';
 import { loadFromSupabase } from './db.js';
@@ -153,11 +153,46 @@ function renderTranscribePage(audioId, audio, state, root) {
   resultArea.className = 'asr-result-area';
   resultArea.hidden = true;
 
+  // Local slug helper — matches detail.js' geminiSlug so version keys stay in sync.
+  const geminiSlug = (ep) => {
+    if (!ep) return 'unknown';
+    const base = (ep.name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (base) return base;
+    if (ep.endpointId) return `ep-${String(ep.endpointId).slice(-6)}`;
+    return 'unknown';
+  };
+
   for (const { key, label: btnLabel, providerArg } of PROVIDERS) {
     const btn = document.createElement('button');
     btn.className = 'asr-provider-btn';
     btn.textContent = btnLabel;
     btn.setAttribute('aria-label', `Generate transcript using ${btnLabel}`);
+
+    // Gemini endpoint picker — lets the user pick which fine-tuned model to
+    // use without leaving the page.
+    let geminiPicker = null;
+    if (key === 'gemini') {
+      const providers = getState().transcribeProviders || {};
+      const g = providers.gemini || { endpoints: [], selectedId: null };
+      const endpoints = Array.isArray(g.endpoints) ? g.endpoints : [];
+      if (endpoints.length > 0) {
+        geminiPicker = document.createElement('select');
+        geminiPicker.className = 'gemini-endpoint-picker';
+        geminiPicker.setAttribute('aria-label', 'Select Gemini endpoint');
+        endpoints.forEach((ep) => {
+          const opt = document.createElement('option');
+          opt.value = ep.id;
+          opt.textContent = ep.name || `Endpoint ${ep.endpointId?.slice(-6) || '?'}`;
+          if (ep.id === g.selectedId) opt.selected = true;
+          geminiPicker.appendChild(opt);
+        });
+        geminiPicker.addEventListener('change', (e) => {
+          const s = getState();
+          s.transcribeProviders.gemini.selectedId = e.target.value;
+          updateState('transcribeProviders', null, s.transcribeProviders);
+        });
+      }
+    }
 
     btn.addEventListener('click', async () => {
       if (!audioUrl) { alert('No audio URL for this file.'); return; }
@@ -167,18 +202,33 @@ function renderTranscribePage(audioId, audio, state, root) {
 
       try {
         const providers = getState().transcribeProviders || {};
-        const providerCfg = providers[key] || {};
+        let providerCfg = providers[key] || {};
+        let saveModel = key;
+        if (key === 'gemini') {
+          const g = providers.gemini || {};
+          const endpoints = Array.isArray(g.endpoints) ? g.endpoints : [];
+          const selected = endpoints.find(e => e.id === g.selectedId) || endpoints[0];
+          if (!selected || !selected.projectId || !selected.endpointId) {
+            alert('No Gemini endpoint configured. Open ASR Settings to add one.');
+            btn.disabled = false;
+            btn.textContent = btnLabel;
+            return;
+          }
+          providerCfg = { projectId: selected.projectId, region: selected.region, endpointId: selected.endpointId };
+          saveModel = `gemini-${geminiSlug(selected)}`;
+        }
         const config = { provider: providerArg, ...providerCfg };
         const text = await transcribeAudio(audioId, audioUrl, config);
         if (!text) throw new Error('Empty transcription returned');
 
-        // Save version
+        // Save version — keyed on saveModel so multiple Gemini endpoints
+        // produce distinct, coexisting ASR versions.
         const versions = getVersions(audioId);
-        const existingAsr = versions.find(v => v.type === 'asr' && v.model === key);
+        const existingAsr = versions.find(v => v.type === 'asr' && v.model === saveModel);
         if (existingAsr) {
           updateVersion(audioId, existingAsr.id, { text, createdAt: new Date().toISOString() });
         } else {
-          addVersion(audioId, { type: 'asr', text, model: key, createdAt: new Date().toISOString() });
+          addVersion(audioId, { type: 'asr', text, model: saveModel, createdAt: new Date().toISOString() });
         }
 
         btn.textContent = btnLabel;
@@ -214,6 +264,7 @@ function renderTranscribePage(audioId, audio, state, root) {
     });
 
     btnBar.appendChild(btn);
+    if (geminiPicker) btnBar.appendChild(geminiPicker);
   }
 
   asrCard.appendChild(btnBar);

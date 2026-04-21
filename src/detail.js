@@ -283,6 +283,12 @@ function renderTranscriptPage(transcriptId, transcript, state, container) {
   container.appendChild(textSection.el);
 }
 
+// In-memory override for the "active" version per audio, written by the
+// version picker. Survives renderDetailPage re-renders (which otherwise reset
+// activeVersionRef to getBestVersion) but resets on full page reload — that's
+// fine, we just need the user's choice to stick while they're on the page.
+const _pickedVersionByAudio = new Map();
+
 function renderDetailPage(audioId, audio, state, container) {
   container.innerHTML = '';
   const status = getStatus(audioId);
@@ -309,6 +315,41 @@ function renderDetailPage(audioId, audio, state, container) {
   // Pipeline progress indicator
   titleBar.appendChild(renderDetailPipeline(audioId));
   container.appendChild(titleBar);
+
+  // Split-relationship links — parent + sibling parts. Split IDs follow
+  // `<parentId>_p<n>` (see split.js:nextSplitId) so the whole hierarchy is
+  // derivable from `state.audio` without any schema change.
+  const partMatch = /^(.+)_p(\d+)$/.exec(audioId);
+  const parentId = partMatch ? partMatch[1] : audioId;
+  const siblingIds = (state.audio || [])
+    .map(a => a.id)
+    .filter(id => id !== audioId && (id === parentId || new RegExp('^' + parentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '_p\\d+$').test(id)))
+    .sort((a, b) => {
+      const ma = /_p(\d+)$/.exec(a); const mb = /_p(\d+)$/.exec(b);
+      return (ma ? +ma[1] : 1) - (mb ? +mb[1] : 1);
+    });
+  if (siblingIds.length > 0) {
+    const row = document.createElement('div');
+    row.className = 'split-links-row';
+    row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0 10px;font-size:0.82rem;color:var(--text-secondary,#666);';
+    const label = document.createElement('span');
+    label.textContent = partMatch ? 'Parts:' : 'Split parts:';
+    row.appendChild(label);
+    const linkFor = (id) => {
+      const a = (state.audio || []).find(x => x.id === id);
+      const link = document.createElement('a');
+      link.href = `/detail?id=${encodeURIComponent(id)}`;
+      link.style.cssText = 'color:var(--primary,#2962ff);text-decoration:none;padding:2px 8px;border:1px solid var(--border,#ddd);border-radius:10px;';
+      const m = /_p(\d+)$/.exec(id);
+      link.textContent = m ? `Part ${m[1]}` : 'Parent';
+      link.title = a?.name || id;
+      return link;
+    };
+    // For a part: show parent first, then siblings
+    if (partMatch) row.appendChild(linkFor(parentId));
+    siblingIds.filter(id => id !== parentId).forEach(id => row.appendChild(linkFor(id)));
+    container.appendChild(row);
+  }
 
   // Meta row
   const meta = document.createElement('div');
@@ -483,7 +524,10 @@ function renderDetailPage(audioId, audio, state, container) {
     const mappingSection = createSection('Transcript Mapping');
     // Collapse mapping on mobile if already mapped or further along
     addCollapseBehavior(mappingSection.el, mappingSection.header, status !== 'unmapped');
-    const activeVersionRef = { id: getBestVersion(audioId)?.id || null };
+    // Honor a version-picker override if the user selected one this session.
+    const pickedId = _pickedVersionByAudio.get(audioId);
+    const pickedValid = pickedId && (getVersions(audioId) || []).some(v => v.id === pickedId);
+    const activeVersionRef = { id: pickedValid ? pickedId : (getBestVersion(audioId)?.id || null) };
     renderMappingSection(audioId, state, mappingSection.content, container, activeVersionRef);
     container.appendChild(mappingSection.el);
 
@@ -598,6 +642,16 @@ function addCollapseBehavior(section, header, collapseByDefault) {
   }
 }
 
+// Turn an endpoint name into a model-key slug. Falls back to the endpoint's
+// trailing id digits if no name is set.
+function geminiSlug(ep) {
+  if (!ep) return 'unknown';
+  const base = (ep.name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (base) return base;
+  if (ep.endpointId) return `ep-${String(ep.endpointId).slice(-6)}`;
+  return 'unknown';
+}
+
 function buildAsrProviderBar(audioId, state, onComplete) {
   const audio = state.audio.find(a => a.id === audioId);
   const audioUrl = audio?.r2Link || audio?.driveLink || null;
@@ -623,6 +677,33 @@ function buildAsrProviderBar(audioId, state, onComplete) {
     btn.style.fontSize = '0.8rem';
     btn.textContent = btnLabel;
 
+    // For Gemini, a dropdown next to the button lets the user pick which
+    // tuned endpoint to use, out of the list configured in ASR Settings.
+    let geminiPicker = null;
+    if (key === 'gemini') {
+      const providers = getState().transcribeProviders || {};
+      const g = providers.gemini || { endpoints: [], selectedId: null };
+      const endpoints = Array.isArray(g.endpoints) ? g.endpoints : [];
+      if (endpoints.length > 0) {
+        geminiPicker = document.createElement('select');
+        geminiPicker.className = 'gemini-endpoint-picker';
+        geminiPicker.style.cssText = 'padding:3px 6px;border:1px solid var(--border,#ccc);border-radius:6px;font-size:0.8rem;background:#fff;';
+        geminiPicker.setAttribute('aria-label', 'Select Gemini endpoint');
+        endpoints.forEach((ep) => {
+          const opt = document.createElement('option');
+          opt.value = ep.id;
+          opt.textContent = ep.name || `Endpoint ${ep.endpointId?.slice(-6) || '?'}`;
+          if (ep.id === g.selectedId) opt.selected = true;
+          geminiPicker.appendChild(opt);
+        });
+        geminiPicker.addEventListener('change', (e) => {
+          const s = getState();
+          s.transcribeProviders.gemini.selectedId = e.target.value;
+          updateState('transcribeProviders', null, s.transcribeProviders);
+        });
+      }
+    }
+
     btn.addEventListener('click', async () => {
       if (!audioUrl) { alert('No audio URL for this file.'); return; }
       btn.disabled = true;
@@ -630,18 +711,33 @@ function buildAsrProviderBar(audioId, state, onComplete) {
 
       try {
         const providers = getState().transcribeProviders || {};
-        const providerCfg = providers[key] || {};
+        let providerCfg = providers[key] || {};
+        let saveModel = key;
+        if (key === 'gemini') {
+          const g = providers.gemini || {};
+          const endpoints = Array.isArray(g.endpoints) ? g.endpoints : [];
+          const selected = endpoints.find(e => e.id === g.selectedId) || endpoints[0];
+          if (!selected || !selected.projectId || !selected.endpointId) {
+            alert('No Gemini endpoint configured. Open ASR Settings to add one.');
+            btn.disabled = false;
+            btn.textContent = btnLabel;
+            return;
+          }
+          providerCfg = { projectId: selected.projectId, region: selected.region, endpointId: selected.endpointId };
+          saveModel = `gemini-${geminiSlug(selected)}`;
+        }
         const config = { provider: key, ...providerCfg };
         const text = await transcribeAudio(audioId, audioUrl, config);
         if (!text) throw new Error('Empty transcription returned');
 
-        // Save or update ASR version (same logic as transcribe.js)
+        // Save or update ASR version (keyed on model, so per-endpoint versions
+        // coexist rather than overwriting each other).
         const versions = getVersions(audioId);
-        const existing = versions.find(v => v.type === 'asr' && v.model === key);
+        const existing = versions.find(v => v.type === 'asr' && v.model === saveModel);
         if (existing) {
           updateVersion(audioId, existing.id, { text, createdAt: new Date().toISOString() });
         } else {
-          addVersion(audioId, { type: 'asr', text, model: key });
+          addVersion(audioId, { type: 'asr', text, model: saveModel });
         }
 
         btn.textContent = btnLabel;
@@ -655,6 +751,7 @@ function buildAsrProviderBar(audioId, state, onComplete) {
     });
 
     bar.appendChild(btn);
+    if (geminiPicker) bar.appendChild(geminiPicker);
   }
 
   return bar;
@@ -682,19 +779,65 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
 
     // Set active version ref to best version (edited > cleaned > manual)
     if (versions.length > 0) {
-      const activeVersionId = getBestVersion(audioId)?.id || versions[0].id;
+      const pickedId = _pickedVersionByAudio.get(audioId);
+      const pickedValid = pickedId && versions.some(v => v.id === pickedId);
+      const activeVersionId = pickedValid ? pickedId : (getBestVersion(audioId)?.id || versions[0].id);
       if (activeVersionRef) activeVersionRef.id = activeVersionId;
     }
 
-    // Compact info bar — version metadata only, no textarea (text editor is in the word view)
-    const bestVersion = getBestVersion(audioId);
+    // Compact info bar — version metadata only, no textarea (text editor is in the word view).
+    // Use the ACTIVE version (which honors the picker override) rather than
+    // always the best one, so metadata/controls reflect what the user picked.
+    const activeVersion = versions.find(v => v.id === activeVersionRef?.id) || getBestVersion(audioId);
+    const bestVersion = activeVersion;
     if (bestVersion) {
       const infoBar = document.createElement('div');
       infoBar.style.cssText = 'display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:4px;';
-      const typeLabel = document.createElement('span');
-      typeLabel.className = `version-type-badge version-type-${bestVersion.type}`;
-      typeLabel.textContent = bestVersion.type.charAt(0).toUpperCase() + bestVersion.type.slice(1);
-      infoBar.appendChild(typeLabel);
+      // Version picker — let the user switch between all saved versions for
+      // this audio (manual / edited / cleaned / asr-<model>) instead of being
+      // stuck on whatever getBestVersion picked. Empty versions are still
+      // listed so users can see they exist, but marked so they're obvious.
+      if (versions.length > 1) {
+        const picker = document.createElement('select');
+        picker.className = 'version-picker';
+        picker.style.cssText = 'padding:3px 8px;border:1px solid var(--border,#ccc);border-radius:6px;font-size:0.85rem;background:#fff;';
+        picker.setAttribute('aria-label', 'Select transcript version');
+        const byType = { edited: 'Edited', cleaned: 'Cleaned', asr: 'ASR', manual: 'Original' };
+        // Look up Gemini endpoint display names so "asr (gemini-yiddish-v3-large)"
+        // renders as "ASR (gemini: Yiddish v3 large)".
+        const geminiEndpoints = (getState().transcribeProviders?.gemini?.endpoints) || [];
+        const prettyAsr = (model) => {
+          if (!model) return 'ASR';
+          if (model === 'gemini') return 'ASR (gemini)';
+          if (model.startsWith('gemini-')) {
+            const slug = model.slice('gemini-'.length);
+            const ep = geminiEndpoints.find(e => geminiSlug(e) === slug);
+            return `ASR (gemini: ${ep?.name || slug})`;
+          }
+          return `ASR (${model})`;
+        };
+        versions.forEach((v) => {
+          const opt = document.createElement('option');
+          opt.value = v.id;
+          const label = v.type === 'asr' ? prettyAsr(v.model) : (byType[v.type] || v.type);
+          const empty = !(typeof v.text === 'string' && v.text.trim().length > 0);
+          opt.textContent = empty ? `${label} — (empty)` : label;
+          if (v.id === activeVersionRef?.id) opt.selected = true;
+          picker.appendChild(opt);
+        });
+        picker.addEventListener('change', (e) => {
+          _pickedVersionByAudio.set(audioId, e.target.value);
+          if (activeVersionRef) activeVersionRef.id = e.target.value;
+          const s = getState();
+          renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
+        });
+        infoBar.appendChild(picker);
+      } else {
+        const typeLabel = document.createElement('span');
+        typeLabel.className = `version-type-badge version-type-${bestVersion.type}`;
+        typeLabel.textContent = bestVersion.type.charAt(0).toUpperCase() + bestVersion.type.slice(1);
+        infoBar.appendChild(typeLabel);
+      }
       if (bestVersion.cleanRate) {
         const cr = document.createElement('span');
         cr.className = 'text-secondary';
@@ -1518,6 +1661,15 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
   // button can read/write the same anchor. `refresh` is overwritten by
   // buildAlignButton once the DOM bar exists.
   const splitState = { anchor: null, refresh: () => {} };
+
+  // Local fmtSec — buildAlignButton needs it for the split bar label and the
+  // confirm dialog, but renderWordView's fmtSec (line ~2601) is scoped to that
+  // function. Without this, the refresh callback and the Split button click
+  // both throw ReferenceError silently and the bar appears empty.
+  const fmtSec = (s) => {
+    if (s == null || isNaN(s)) return '?';
+    return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+  };
 
   function buildAlignButton(targetEl) {
     const alignBar = document.createElement('div');
@@ -2577,17 +2729,26 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
   // ── Two-column layout: Text Editor (main) + Karaoke Sidebar (right) ──
 
+  // Sidebar + chip placement use the RAW aligner output (no reconciliation
+  // placeholders) so the user sees exactly what the aligner timestamped.
+  // `words` stays reconciled — split-from-here, review-panel confidence lookup
+  // and DB sync still expect a 1:1 mapping with the edited text.
+  const rawWords = Array.isArray(alignment?.rawWords) ? alignment.rawWords : words;
+
   const GAP_THRESHOLD = 1.0;
-  const segments = (() => {
+  const segmentize = (arr) => {
+    if (!arr.length) return [];
     const segs = [];
-    let cur = [words[0]];
-    for (let i = 1; i < words.length; i++) {
-      if ((words[i].start - words[i - 1].end) > GAP_THRESHOLD) { segs.push(cur); cur = [words[i]]; }
-      else cur.push(words[i]);
+    let cur = [arr[0]];
+    for (let i = 1; i < arr.length; i++) {
+      if ((arr[i].start - arr[i - 1].end) > GAP_THRESHOLD) { segs.push(cur); cur = [arr[i]]; }
+      else cur.push(arr[i]);
     }
     segs.push(cur);
     return segs;
-  })();
+  };
+  const segments = segmentize(words);
+  const rawSegments = segmentize(rawWords);
 
   function fmtSec(s) {
     if (s == null || isNaN(s)) return '?';
@@ -2659,96 +2820,97 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   toolbar.appendChild(editedToggleBtn);
   toolbar.appendChild(manualToggleBtn);
 
+  const editorWordCountEl = document.createElement('span');
+  editorWordCountEl.className = 'text-secondary';
+  editorWordCountEl.style.cssText = 'font-size:0.8rem;margin-left:auto;';
+  toolbar.appendChild(editorWordCountEl);
+
   const saveStatus = document.createElement('span');
   saveStatus.className = 'text-secondary';
-  saveStatus.style.cssText = 'font-size:0.8rem;margin-left:auto;';
+  saveStatus.style.cssText = 'font-size:0.8rem;';
   toolbar.appendChild(saveStatus);
   leftPanel.appendChild(toolbar);
 
-  // ── Text Editor: contenteditable div with timestamp anchors ──
+  const countWords = (s) => (s || '').trim().split(/\s+/).filter(Boolean).length;
+  function refreshEditorWordCount(textMaybe) {
+    const t = textMaybe != null ? textMaybe : (getEditorPlainText ? getEditorPlainText() : '');
+    editorWordCountEl.textContent = `Editor: ${countWords(t)} words`;
+  }
+
+  // ── Text Editor: contenteditable div ──
   const editorDiv = document.createElement('div');
   editorDiv.className = 'text-editor-view';
   editorDiv.contentEditable = 'true';
   editorDiv.dir = 'rtl';
   editorDiv.spellcheck = false;
 
-  // Build editor content from alignment words with timestamp anchors at segment boundaries.
-  // Always shows the current alignment state. Edits save to the version text for the next alignment.
+  // Editor renders the user's edited text (what was sent to the aligner),
+  // unchanged by reconciliation. Plain text only — no inline chips.
   function buildEditorContent() {
     editorDiv.innerHTML = '';
-    segments.forEach((seg, segIdx) => {
-      const anchor = document.createElement('span');
-      anchor.className = 'timestamp-anchor';
-      anchor.contentEditable = 'false';
-      anchor.dataset.time = String(seg[0]?.start || 0);
-      anchor.textContent = `[${fmtSec(seg[0]?.start)}]`;
-      anchor.title = 'Click to seek • Double-click to pin to playhead';
-      anchor.dataset.segIdx = String(segIdx);
-      anchor.addEventListener('click', (e) => {
-        e.preventDefault();
-        if (playerEl) {
-          playerEl.currentTime = parseFloat(anchor.dataset.time);
-          playerEl.play().catch(() => {});
-        }
-        const sidebarSeg = sidebar.querySelector(`[data-seg-idx="${segIdx}"]`);
-        if (sidebarSeg) sidebarSeg.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      });
-      anchor.addEventListener('dblclick', (e) => {
-        e.preventDefault();
-        if (!playerEl) return;
-        const newTime = playerEl.currentTime;
-        anchor.dataset.time = String(newTime);
-        anchor.textContent = `[${fmtSec(newTime)}]`;
-        anchor.classList.add('timestamp-adjusted');
-        anchor.title = `📌 Adjusted to ${fmtSec(newTime)}`;
-      });
-      editorDiv.appendChild(anchor);
-
-      const text = seg.map(w => w.word || w.text || '').join(' ');
-      editorDiv.appendChild(document.createTextNode(' ' + text + ' '));
-
-      if (segIdx < segments.length - 1) {
-        editorDiv.appendChild(document.createElement('br'));
-      }
+    const editedVersion = getVersions(audioId).find(v => v.type === 'edited');
+    const alignmentJoined = segments.flat().map(w => w.word || w.text || '').join(' ');
+    const editedText = (editedVersion?.text || alignmentJoined || '').trim();
+    const lines = editedText.split(/\n+/);
+    lines.forEach((line, idx) => {
+      if (line) editorDiv.appendChild(document.createTextNode(line));
+      if (idx < lines.length - 1) editorDiv.appendChild(document.createElement('br'));
     });
+    refreshEditorWordCount(editedText);
   }
   buildEditorContent();
 
   // ── Auto-save: debounced 800ms ──
   let _editorSaveTimer = null;
   function getEditorPlainText() {
-    // Extract text, stripping timestamp anchors
-    const clone = editorDiv.cloneNode(true);
-    clone.querySelectorAll('.timestamp-anchor').forEach(a => a.remove());
-    // Replace <br> with newlines, then collapse
-    return clone.innerText.replace(/\n{3,}/g, '\n\n').trim();
+    return editorDiv.innerText.replace(/\n{3,}/g, '\n\n').trim();
   }
 
   let _ensuredEditedPost = false;
+  function flushEditorSave() {
+    if (_viewMode !== 'edited') return;
+    const text = getEditorPlainText();
+    if (!text) return;
+    const versions = getVersions(audioId);
+    let editedVersion = versions.find(v => v.type === 'edited');
+    if (!editedVersion && !_ensuredEditedPost) {
+      _ensuredEditedPost = true;
+      const mapping = getState().mappings[audioId];
+      addVersion(audioId, { type: 'edited', sourceTranscriptId: mapping?.transcriptId, text, createdBy: getCurrentUser() });
+      editedVersion = getVersions(audioId).find(v => v.type === 'edited');
+      if (activeVersionRef && editedVersion) activeVersionRef.id = editedVersion.id;
+    }
+    const versionId = editedVersion?.id || activeVersionRef?.id;
+    if (versionId && text) {
+      const syncPromise = updateVersion(audioId, versionId, { text, updatedAt: new Date().toISOString() });
+      const now = new Date();
+      const hhmm = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+      saveStatus.textContent = `Saved ${hhmm}`;
+      if (syncPromise && typeof syncPromise.then === 'function') {
+        syncPromise.then(
+          () => { saveStatus.textContent = `Saved ${hhmm} ✓`; },
+          () => { saveStatus.textContent = `Saved locally (offline)`; },
+        );
+      }
+    }
+  }
   editorDiv.addEventListener('input', () => {
     if (_viewMode !== 'edited') return;
     saveStatus.textContent = 'Unsaved...';
+    refreshEditorWordCount();
     clearTimeout(_editorSaveTimer);
     _editorSaveTimer = setTimeout(() => {
-      const text = getEditorPlainText();
-      if (!text) return;
-      // Ensure we save to an edited version, not manual
-      const versions = getVersions(audioId);
-      let editedVersion = versions.find(v => v.type === 'edited');
-      if (!editedVersion && !_ensuredEditedPost) {
-        _ensuredEditedPost = true;
-        const mapping = getState().mappings[audioId];
-        addVersion(audioId, { type: 'edited', sourceTranscriptId: mapping?.transcriptId, text, createdBy: getCurrentUser() });
-        editedVersion = getVersions(audioId).find(v => v.type === 'edited');
-        if (activeVersionRef && editedVersion) activeVersionRef.id = editedVersion.id;
-      }
-      const versionId = editedVersion?.id || activeVersionRef?.id;
-      if (versionId && text) {
-        updateVersion(audioId, versionId, { text, updatedAt: new Date().toISOString() });
-        const now = new Date();
-        saveStatus.textContent = `Saved ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
-      }
+      _editorSaveTimer = null;
+      flushEditorSave();
     }, 800);
+  });
+  // Flush pending save when the editor loses focus (e.g. user clicks Re-Align)
+  // so a sub-800ms edit-then-click doesn't lose the latest text.
+  editorDiv.addEventListener('blur', () => {
+    if (!_editorSaveTimer) return;
+    clearTimeout(_editorSaveTimer);
+    _editorSaveTimer = null;
+    flushEditorSave();
   });
 
   leftPanel.appendChild(editorDiv);
@@ -2758,19 +2920,59 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     sidebar.innerHTML = '';
     const sidebarLabel = document.createElement('div');
     sidebarLabel.style.cssText = 'font-size:0.75rem;color:var(--text-secondary);margin-bottom:6px;font-weight:600;';
-    const problemCount = segments.filter((seg) => {
+    const problemCount = rawSegments.filter((seg) => {
       let run = 0;
       for (const w of seg) { if ((w.confidence || 0) < 0.4) { run++; if (run >= 3) return true; } else run = 0; }
       return false;
     }).length;
-    sidebarLabel.textContent = `Alignment Quality • ${words.length} words • ${problemCount} problems`;
+    const unalignedList = words.filter(w => w.unaligned);
+    const unalignedCount = unalignedList.length;
+    sidebarLabel.textContent = `Aligned • ${rawWords.length} words • ${problemCount} problems`;
     sidebar.appendChild(sidebarLabel);
 
-    // Track the absolute word index across segments so shift-click can pass
-    // the correct index into createSplitFromAudio.
-    let cumulativeIdx = 0;
+    // Dropped-words panel — every input word that the aligner couldn't place.
+    // Reconciliation in alignment.js flags these with unaligned=true. Click to
+    // expand a chip grid so the user can see exactly which words got lost.
+    if (unalignedCount > 0) {
+      const droppedBar = document.createElement('div');
+      droppedBar.style.cssText = 'margin-bottom:8px;';
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.style.cssText = 'font-size:0.72rem;padding:2px 8px;border:1px solid var(--orange,#d97706);color:var(--orange,#d97706);background:transparent;border-radius:10px;cursor:pointer;';
+      toggle.textContent = `⚠ ${unalignedCount} dropped — click to show`;
+      droppedBar.appendChild(toggle);
+      const listEl = document.createElement('div');
+      listEl.style.cssText = 'display:none;flex-wrap:wrap;gap:2px;direction:rtl;margin-top:4px;padding:4px;border:1px dashed var(--orange,#d97706);border-radius:4px;background:rgba(217,119,6,0.05);';
+      unalignedList.forEach(w => {
+        const chip = document.createElement('span');
+        chip.style.cssText = 'font-size:0.72rem;padding:1px 4px;background:#fff;border:1px dashed var(--orange,#d97706);border-radius:3px;color:var(--text);';
+        chip.textContent = w.word || '';
+        chip.title = `Dropped by aligner — no timestamp. Approx near ${fmtSec(w.start)}`;
+        listEl.appendChild(chip);
+      });
+      droppedBar.appendChild(listEl);
+      toggle.addEventListener('click', () => {
+        const shown = listEl.style.display !== 'none';
+        listEl.style.display = shown ? 'none' : 'flex';
+        toggle.textContent = shown
+          ? `⚠ ${unalignedCount} dropped — click to show`
+          : `⚠ ${unalignedCount} dropped — click to hide`;
+      });
+      sidebar.appendChild(droppedBar);
+    }
 
-    segments.forEach((seg, segIdx) => {
+    // Shift-click-to-split expects an index into the reconciled `words` array
+    // (createSplitFromAudio assumes 1:1 mapping with edited text). Raw words
+    // appear in reconciled in order, skipping placeholders — so mapping the
+    // n-th raw word to the n-th non-unaligned reconciled word is exact.
+    const rawIdxToReconciledIdx = [];
+    for (let j = 0; j < words.length; j++) {
+      if (!words[j].unaligned) rawIdxToReconciledIdx.push(j);
+    }
+
+    let cumulativeRawIdx = 0;
+
+    rawSegments.forEach((seg, segIdx) => {
       // Segment header
       const segHeader = document.createElement('div');
       segHeader.dataset.segIdx = String(segIdx);
@@ -2788,7 +2990,8 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       const chipRow = document.createElement('div');
       chipRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:2px;direction:rtl;';
       seg.forEach(w => {
-        const myIdx = cumulativeIdx++;
+        const myRawIdx = cumulativeRawIdx++;
+        const reconciledIdx = rawIdxToReconciledIdx[myRawIdx] ?? myRawIdx;
         const conf = typeof w.confidence === 'number' ? w.confidence : 1;
         const chip = document.createElement('span');
         chip.className = `word-chip confidence-${getConfidenceLevel(conf)}`;
@@ -2797,17 +3000,17 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
         chip.title = `${(conf * 100).toFixed(0)}% | ${fmtSec(w.start)}\nClick: seek • Shift+click: set split point`;
         chip.dataset.start = String(w.start);
         chip.dataset.end = String(w.end);
-        chip.dataset.wordIdx = String(myIdx);
-        if (splitState.anchor && splitState.anchor.wordIndex === myIdx) chip.classList.add('split-anchor');
+        chip.dataset.wordIdx = String(reconciledIdx);
+        if (splitState.anchor && splitState.anchor.wordIndex === reconciledIdx) chip.classList.add('split-anchor');
         chip.addEventListener('click', (e) => {
           if (e.shiftKey) {
             sidebar.querySelectorAll('.word-chip.split-anchor').forEach(c => c.classList.remove('split-anchor'));
             chip.classList.add('split-anchor');
             splitState.anchor = {
-              wordIndex: myIdx,
+              wordIndex: reconciledIdx,
               word: w.word || w.text || '',
               time: w.start,
-              tailLen: words.length - myIdx,
+              tailLen: words.length - reconciledIdx,
             };
             splitState.refresh();
             return;
@@ -2824,7 +3027,6 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   // ── Karaoke highlighting — keep sidebar + editor in sync ──
   if (playerEl) {
     let prevActiveChip = null;
-    let prevActiveAnchor = null;
     const onTimeUpdate = () => {
       const t = playerEl.currentTime;
 
@@ -2845,18 +3047,6 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
         }
       }
 
-      // Highlight active timestamp anchor in editor
-      if (prevActiveAnchor) { prevActiveAnchor.classList.remove('timestamp-active'); prevActiveAnchor = null; }
-      const anchors = editorDiv.querySelectorAll('.timestamp-anchor');
-      for (let i = 0; i < anchors.length; i++) {
-        const aTime = parseFloat(anchors[i].dataset.time);
-        const nextTime = i < anchors.length - 1 ? parseFloat(anchors[i + 1].dataset.time) : Infinity;
-        if (t >= aTime && t < nextTime) {
-          anchors[i].classList.add('timestamp-active');
-          prevActiveAnchor = anchors[i];
-          break;
-        }
-      }
     };
     if (playerEl._wordViewTimeUpdate) playerEl.removeEventListener('timeupdate', playerEl._wordViewTimeUpdate);
     playerEl._wordViewTimeUpdate = onTimeUpdate;

@@ -398,195 +398,51 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const audioEntry = state.audio.find(a => a.id === audioId);
   const audioDuration = (audioEntry?.estMinutes || 0) * 60;
 
-  // ivrit-iterative pod downloads the audio on the VM and runs iterative alignment
-  // with confusion-zone recovery server-side, so we skip browser-side chunking and
-  // anchor calibration entirely — one request with the full URL + full text.
-  let chunks;
-  if (aligner === 'ivrit-iterative') {
-    chunks = [alignText];
-    console.log(`[Align] ivrit-iterative selected — single request, pod handles long audio internally`);
-  } else {
-    // Force multi-chunk for long audio to keep each CF Worker request under 128MB.
-    // Each chunk's audio slice is fetched and base64-encoded by the Worker —
-    // cap at ~15 min per chunk ≈ 14MB MP3 base64, safely under the limit.
-    const effectiveDurationSec = ((trimEnd > 0 ? trimEnd : audioDuration) - (trimStart || 0)) || audioDuration;
-    const maxAudioMinPerChunk = 15;
-    const minChunksByDuration = Math.max(1, Math.ceil(effectiveDurationSec / 60 / maxAudioMinPerChunk));
-    const maxChunkChars = Math.min(
-      audioDuration > 900 ? 8000 : CHUNK_LIMIT,
-      Math.max(500, Math.floor(alignText.length / minChunksByDuration)),
-    );
-    chunks = splitTextIntoChunks(alignText, maxChunkChars);
-
-    if (chunks.length > 1) {
-      console.log(`[Align] Text too long (${alignText.length} chars) — splitting into ${chunks.length} chunks (audio ~${Math.round(audioDuration)}s)`);
-    }
-  }
-
-  const effectiveEnd = trimEnd > 0 ? trimEnd : audioDuration;
-
-  // For multi-chunk alignment, VBR MP3 byte-seeking can be inaccurate mid-file.
+  // Single-request path for both aligners. Browser-side chunking + anchor-word
+  // calibration was removed because the calibration used end-of-chunk timestamps
+  // that are systematically inflated by the aligner, producing a uniform ~19s
+  // drift in every downstream chunk. The align.kohnai.ai pod (for stable-ts) and
+  // the ivrit-iterative pod both handle long audio internally — no chunking
+  // needed on the client.
   //
-  // Fix (two parts):
-  // 1. CF Worker detects corrupt (flat) XING TOC and falls back to byte-proportional,
-  //    giving an accurate short clip starting just before the chunk boundary.
-  // 2. The last ANCHOR_COUNT words of chunk N are prepended to chunk N+1's text.
-  //    RunPod aligns them first; comparing their timestamps against chunk N's known
-  //    timestamps gives the residual byte-seeking error (calibration), which is then
-  //    applied to all of chunk N+1's timestamps.
-  //
-  // The audio clip starts ANCHOR_PRE_BUFFER seconds before the first anchor word so
-  // the clip is short (~500s). A short clip prevents RunPod from false-matching to
-  // unrelated speech that appears earlier in the recording.
-  const ANCHOR_COUNT = 20;         // words to borrow from previous chunk
-  const ANCHOR_PRE_BUFFER = 20;    // seconds of audio before first anchor word
-  const BOUNDARY_GAP_THRESHOLD = 5; // seconds — inter-word gap larger than this = inflation artifact
-  const BOUNDARY_MAX_POPS = 3;     // cap pops at a boundary so real pauses don't eat legit words
+  // For R2 audio, the pod downloads directly (no size limit). For non-R2 audio,
+  // the CF Worker base64-encodes the whole file; 38 min of MP3 ≈ 35 MB base64,
+  // well under the 128 MB Worker body limit.
+  console.log(`[Align] ${aligner} — single-request; text=${alignText.length}c, audio=${Math.round(audioDuration)}s`);
 
-  // For multi-chunk alignment with non-R2 audio, decode the full audio once in the
-  // browser to produce frame-accurate WAV slices. For R2 audio, use the URL-based
-  // path (CF Worker fetches server-side) — WAV slices are too large for the CF proxy
-  // body limit (~25MB), and the anchor-word calibration handles byte-seeking drift.
-  let fullAudioBuffer = null;
-  if (chunks.length > 1 && !isLibraryR2Url(url)) {
-    console.log(`[Align] Multi-chunk (non-R2): decoding full audio in browser for frame-accurate slicing…`);
-    fullAudioBuffer = await fetchAndDecodeFullAudio(url);
+  // TODO (drift): For trimmed R2 alignments, the CF Worker's XING VBR TOC
+  // byte-seek is approximate and can land ~1–2s off the intended trim_start.
+  // We tried browser-side AudioContext decode + WAV slice to get frame-accurate
+  // output, but the resulting base64 WAV is 2.5× the MP3 size, pushing payloads
+  // past the pod's ~20 MB body limit on long audio and causing hard 400s.
+  // Proper fix: either an in-browser MP3 encoder (lamejs), or pod-side trim
+  // support. Until then we accept the sub-2s drift.
+  const audioResult = await fetchAudioForAlignment(url, trimStart, trimEnd, audioDuration);
+
+  const requestBody = buildRequestBody(audioResult, alignText, aligner);
+  const data = await doAlignRequest(requestBody, '', onProgress);
+
+  let rawWords = data.timestamps || [];
+  if (rawWords.length === 0 && data.segments) {
+    rawWords = data.segments.flatMap(seg => seg.words || []);
   }
 
-  let allWords = [];
-  let chunkAudioStart = trimStart;
-  let prevChunkWords = null;
+  console.log(`[Align] Pod returned ${rawWords.length} words; first=${JSON.stringify(rawWords[0])}, last=${JSON.stringify(rawWords[rawWords.length - 1])}`);
 
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    const isLast = i === chunks.length - 1;
-    const chunkLabel = chunks.length > 1 ? ` chunk ${i + 1}/${chunks.length}` : '';
+  // Shift pod-returned timestamps to absolute file time. Untrimmed full-file
+  // alignments have trimStart=0, so this is a no-op; trimmed paths (R2 WAV
+  // slice, non-R2 AudioContext slice, CF Worker XING slice) send clips where
+  // pod-time 0 corresponds to real-time trimStart, so we add trimStart back.
+  let allWords = rawWords.map(t => ({
+    word: t.word || t.text || '',
+    start: (t.start || 0) + trimStart,
+    end: (t.end || 0) + trimStart,
+    confidence: t.confidence ?? t.probability ?? t.score ?? 0,
+  }));
 
-    // For the last chunk, use the remaining audio. For intermediate chunks,
-    // estimate the end proportionally from the remaining text/audio with a 30% buffer.
-    let chunkAudioEnd;
-    if (isLast) {
-      chunkAudioEnd = trimEnd; // 0 = go to end of audio
-    } else {
-      const charsLeft = alignText.length - chunks.slice(0, i).reduce((s, c) => s + c.length + 1, 0);
-      const fraction = chunk.length / charsLeft;
-      const audioLeft = effectiveEnd - chunkAudioStart;
-      chunkAudioEnd = Math.min(chunkAudioStart + audioLeft * fraction * 1.3, effectiveEnd);
-    }
-
-    let requestText = chunk;
-    let anchorCount = 0;
-    let audioStart = chunkAudioStart;
-
-    if (i > 0 && prevChunkWords && prevChunkWords.length >= ANCHOR_COUNT) {
-      const anchors = prevChunkWords.slice(-ANCHOR_COUNT);
-      requestText = anchors.map(w => w.word).join(' ') + ' ' + chunk;
-      anchorCount = ANCHOR_COUNT;
-      // Start audio just before the anchor words so:
-      // - The clip is short (~500s) → RunPod can't false-match to unrelated early speech
-      // - Anchors appear near the beginning of the clip → accurate alignment
-      // The CF Worker uses byte-proportional for corrupt VBR TOCs, so this trim is reliable.
-      audioStart = Math.max(trimStart, anchors[0].start - ANCHOR_PRE_BUFFER);
-    }
-
-    console.log(`[Align${chunkLabel}] audioStart=${audioStart.toFixed(1)}s chunkAudioEnd=${chunkAudioEnd || 'eof'} anchorCount=${anchorCount}`);
-
-    let audioResult;
-    if (fullAudioBuffer) {
-      // Multi-chunk: slice a proper WAV from the decoded audio (frame-accurate)
-      const wavBase64 = await sliceToWavBase64(fullAudioBuffer, audioStart, chunkAudioEnd || fullAudioBuffer.duration);
-      audioResult = { base64: wavBase64, format: '.wav' };
-    } else {
-      // Single-chunk: use the existing CF Worker path
-      audioResult = await fetchAudioForAlignment(url, audioStart, chunkAudioEnd, audioDuration);
-    }
-    const requestBody = buildRequestBody(audioResult, requestText, aligner);
-    const data = await doAlignRequest(requestBody, chunkLabel, onProgress);
-
-    let rawWords = data.timestamps || [];
-    if (rawWords.length === 0 && data.segments) {
-      rawWords = data.segments.flatMap(seg => seg.words || []);
-    }
-
-    console.log(`[Align${chunkLabel}] RunPod returned ${rawWords.length} words; first=${JSON.stringify(rawWords[0])}, last=${JSON.stringify(rawWords[rawWords.length - 1])}`);
-
-    const chunkWords = rawWords.map(t => ({
-      word: t.word || t.text || '',
-      start: (t.start || 0) + audioStart,
-      end: (t.end || 0) + audioStart,
-      confidence: t.confidence ?? t.probability ?? t.score ?? 0,
-    }));
-
-    let wordsToAdd;
-
-    if (i > 0 && anchorCount > 0 && prevChunkWords && chunkWords.length > anchorCount) {
-      // Compute calibration: median of (chunk_N_anchor_time - chunk_N+1_anchor_time).
-      // Median resists outliers from boundary-inflated anchor words.
-      const anchors = prevChunkWords.slice(-anchorCount);
-      const diffs = anchors.map((a, k) => a.start - chunkWords[k].start);
-      const sorted = [...diffs].sort((a, b) => a - b);
-      const mid = Math.floor(sorted.length / 2);
-      const calibration = sorted.length % 2 !== 0
-        ? sorted[mid]
-        : (sorted[mid - 1] + sorted[mid]) / 2;
-
-      if (Math.abs(calibration) < 400) {
-        console.log(`[Align${chunkLabel}] Calibration: ${calibration.toFixed(2)}s`);
-        const calibrated = chunkWords.map(w => ({
-          ...w, start: w.start + calibration, end: w.end + calibration,
-        }));
-        // Replace the last anchorCount words in allWords with the calibrated chunk N+1
-        // versions (chunk N's boundary timestamps are inflated by the audio buffer;
-        // chunk N+1's calibrated versions are more accurate).
-        allWords = allWords.slice(0, allWords.length - anchorCount);
-        // Also trim any residual original words that are later than the first calibrated
-        // anchor — the cut point may have left an inflated word just before the boundary.
-        if (calibrated.length > 0) {
-          while (allWords.length > 0 && allWords[allWords.length - 1].start > calibrated[0].start) {
-            allWords.pop();
-          }
-        }
-        allWords = allWords.concat(calibrated.slice(0, anchorCount));
-        wordsToAdd = calibrated.slice(anchorCount);
-      } else {
-        console.warn(`[Align${chunkLabel}] Calibration out of range (${calibration.toFixed(2)}s) — keeping anchor words uncalibrated to avoid loss`);
-        // Drop the inflated tail of the previous chunk (those timestamps are wrong),
-        // but KEEP the current chunk's re-aligned anchor words — they may be off by
-        // the uncalibrated drift, but the words themselves must not be lost.
-        allWords = allWords.slice(0, allWords.length - anchorCount);
-        let popped = 0;
-        while (allWords.length >= 2 && popped < BOUNDARY_MAX_POPS) {
-          const last = allWords[allWords.length - 1];
-          const prev = allWords[allWords.length - 2];
-          if (last.start - prev.start > BOUNDARY_GAP_THRESHOLD) { allWords.pop(); popped++; }
-          else break;
-        }
-        wordsToAdd = chunkWords;
-      }
-    } else {
-      // No anchors: trim inflated boundary words using gap detection before merging.
-      if (i > 0 && allWords.length >= 2) {
-        let popped = 0;
-        while (allWords.length >= 2 && popped < BOUNDARY_MAX_POPS) {
-          const last = allWords[allWords.length - 1];
-          const prev = allWords[allWords.length - 2];
-          if (last.start - prev.start > BOUNDARY_GAP_THRESHOLD) { allWords.pop(); popped++; }
-          else break;
-        }
-      }
-      wordsToAdd = chunkWords;
-    }
-
-    allWords = allWords.concat(wordsToAdd);
-    prevChunkWords = wordsToAdd;
-
-    if (allWords.length > 0) {
-      chunkAudioStart = allWords[allWords.length - 1].end;
-    } else {
-      chunkAudioStart = chunkAudioEnd || effectiveEnd;
-    }
-  }
-
+  // Snapshot the raw aligner output *before* reconciliation so the review UI
+  // can show exactly what the aligner timestamped vs. what was backfilled.
+  const rawAlignerWords = allWords.slice();
   // Reconcile aligner output against the original input text. Any input word
   // the aligner dropped gets re-inserted as a zero-confidence placeholder so
   // it stays in the editor's plain text and survives future realigns.
@@ -613,8 +469,14 @@ export async function alignRow(audioId, state, textOverride = null, versionId = 
   const lowConfidenceCount = finalWords.filter(w => (w.confidence || 0) < 0.4).length;
 
   const priorAlignment = state.alignments?.[audioId];
+  // For a partial merge, keep the prior rawWords intact — the partial only
+  // re-aligns the tail and we don't want to drop prior raw data.
+  const rawWordsForAlignment = (opts.mergeFromIndex != null && Array.isArray(priorAlignment?.rawWords))
+    ? priorAlignment.rawWords.slice(0, opts.mergeFromIndex).concat(rawAlignerWords)
+    : rawAlignerWords;
   const alignment = {
     words: finalWords,
+    rawWords: rawWordsForAlignment,
     avgConfidence,
     lowConfidenceCount,
     alignedAt: new Date().toISOString(),

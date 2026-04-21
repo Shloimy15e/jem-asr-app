@@ -485,18 +485,38 @@ function renderUploadPanel(container, adminLibs) {
     statusEl.textContent = 'Uploading to R2…';
 
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('key', key);
+      // Upload goes browser → R2 directly via a presigned PUT URL. We avoid
+      // the Worker path entirely because CF Pages caps both the inbound
+      // request body (~100 MB) and the Worker wall time (~30s), which
+      // blew up large MP3 uploads with "closing because of goaway or
+      // rst_stream" even after switching to streaming request.body.
 
-      const res = await fetch('/api/upload', {
+      const signRes = await fetch('/api/upload-url', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${session.access_token}` },
-        body: fd,
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ key, contentType: file.type || 'application/octet-stream' }),
       });
+      const signText = await signRes.text();
+      let signed;
+      try { signed = JSON.parse(signText); } catch {
+        throw new Error(`sign URL HTTP ${signRes.status}: ${signText.slice(0, 200)}`);
+      }
+      if (!signRes.ok) throw new Error(signed.error || `sign URL HTTP ${signRes.status}`);
 
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || `HTTP ${res.status}`);
+      statusEl.textContent = `Uploading ${(file.size / 1024 / 1024).toFixed(1)} MB directly to R2…`;
+      const putRes = await fetch(signed.url, {
+        method: 'PUT',
+        headers: { 'Content-Type': signed.contentType },
+        body: file,
+      });
+      if (!putRes.ok) {
+        const body = await putRes.text().catch(() => '');
+        throw new Error(`R2 PUT failed HTTP ${putRes.status}: ${body.slice(0, 200)}`);
+      }
+      const result = { url: signed.publicUrl, key: signed.key };
 
       const { url } = result;
       statusEl.textContent = 'Saving to database…';
