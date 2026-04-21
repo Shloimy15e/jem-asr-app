@@ -198,6 +198,20 @@ export async function onRequestPost(context) {
     }
   }
 
+  // ── Re-verify admin immediately before mutation to shrink the TOCTOU
+  //     window between the initial check and the library_members insert.
+  try {
+    const rows = await sbFetch(
+      env,
+      `library_members?user_id=eq.${caller.id}&library_id=eq.${library_id}&role=eq.admin&select=user_id`,
+    );
+    if (!rows || rows.length === 0) {
+      return json({ error: 'Admin privileges were revoked during the request', user_id: userId, invited }, 403);
+    }
+  } catch (err) {
+    return json({ error: 'Failed to re-verify admin status: ' + err.message, user_id: userId, invited }, 500);
+  }
+
   // ── Add to library_members (upsert) ────────────────────────────────
   try {
     await sbFetch(env, 'library_members', {
