@@ -1,6 +1,6 @@
 import { getState, updateState } from './state.js';
 import { calculateWER, normalizeYiddish, levenshtein } from './utils.js';
-import { isLibraryR2Url } from './auth.js';
+import { isLibraryR2Url, getAccessToken } from './auth.js';
 
 // ── ASR Config Modal ────────────────────────────────────────────────
 
@@ -200,6 +200,8 @@ async function sendToAsrModel(audioBlob, model) {
   if (model.apiKey) {
     headers['Authorization'] = `Bearer ${model.apiKey}`;
   }
+  const sbToken = await getAccessToken();
+  if (sbToken) headers['X-Supabase-Auth'] = `Bearer ${sbToken}`;
 
   const resp = await fetch('/api/asr', {
     method: 'POST',
