@@ -354,12 +354,16 @@ export function getBestVersion(audioId) {
   return versions[versions.length - 1];
 }
 
+let _versionIdCounter = 0;
+
 export function addVersion(audioId, versionData) {
   if (!state) return null;
   if (!state.transcriptVersions[audioId]) {
     state.transcriptVersions[audioId] = [];
   }
-  const id = `tv_${audioId}_${versionData.type}_${Date.now()}`;
+  // Date.now() alone collides when two versions are added in the same ms.
+  // A monotonically incrementing counter guarantees uniqueness within a tab.
+  const id = `tv_${audioId}_${versionData.type}_${Date.now()}_${(++_versionIdCounter).toString(36)}`;
   const version = { id, ...versionData, createdAt: versionData.createdAt || new Date().toISOString() };
   state.transcriptVersions[audioId].push(version);
   syncLegacyKeys(audioId);
