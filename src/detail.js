@@ -2672,41 +2672,11 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   editorDiv.dir = 'rtl';
   editorDiv.spellcheck = false;
 
-  // Build editor content from alignment words with timestamp anchors at segment boundaries.
-  // Always shows the current alignment state. Edits save to the version text for the next alignment.
   function buildEditorContent() {
     editorDiv.innerHTML = '';
     segments.forEach((seg, segIdx) => {
-      const anchor = document.createElement('span');
-      anchor.className = 'timestamp-anchor';
-      anchor.contentEditable = 'false';
-      anchor.dataset.time = String(seg[0]?.start || 0);
-      anchor.textContent = `[${fmtSec(seg[0]?.start)}]`;
-      anchor.title = 'Click to seek • Double-click to pin to playhead';
-      anchor.dataset.segIdx = String(segIdx);
-      anchor.addEventListener('click', (e) => {
-        e.preventDefault();
-        if (playerEl) {
-          playerEl.currentTime = parseFloat(anchor.dataset.time);
-          playerEl.play().catch(() => {});
-        }
-        const sidebarSeg = sidebar.querySelector(`[data-seg-idx="${segIdx}"]`);
-        if (sidebarSeg) sidebarSeg.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      });
-      anchor.addEventListener('dblclick', (e) => {
-        e.preventDefault();
-        if (!playerEl) return;
-        const newTime = playerEl.currentTime;
-        anchor.dataset.time = String(newTime);
-        anchor.textContent = `[${fmtSec(newTime)}]`;
-        anchor.classList.add('timestamp-adjusted');
-        anchor.title = `📌 Adjusted to ${fmtSec(newTime)}`;
-      });
-      editorDiv.appendChild(anchor);
-
       const text = seg.map(w => w.word || w.text || '').join(' ');
-      editorDiv.appendChild(document.createTextNode(' ' + text + ' '));
-
+      editorDiv.appendChild(document.createTextNode(text));
       if (segIdx < segments.length - 1) {
         editorDiv.appendChild(document.createElement('br'));
       }
@@ -2717,11 +2687,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   // ── Auto-save: debounced 800ms ──
   let _editorSaveTimer = null;
   function getEditorPlainText() {
-    // Extract text, stripping timestamp anchors
-    const clone = editorDiv.cloneNode(true);
-    clone.querySelectorAll('.timestamp-anchor').forEach(a => a.remove());
-    // Replace <br> with newlines, then collapse
-    return clone.innerText.replace(/\n{3,}/g, '\n\n').trim();
+    return editorDiv.innerText.replace(/\n{3,}/g, '\n\n').trim();
   }
 
   let _ensuredEditedPost = false;
@@ -2824,7 +2790,6 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   // ── Karaoke highlighting — keep sidebar + editor in sync ──
   if (playerEl) {
     let prevActiveChip = null;
-    let prevActiveAnchor = null;
     const onTimeUpdate = () => {
       const t = playerEl.currentTime;
 
@@ -2845,18 +2810,6 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
         }
       }
 
-      // Highlight active timestamp anchor in editor
-      if (prevActiveAnchor) { prevActiveAnchor.classList.remove('timestamp-active'); prevActiveAnchor = null; }
-      const anchors = editorDiv.querySelectorAll('.timestamp-anchor');
-      for (let i = 0; i < anchors.length; i++) {
-        const aTime = parseFloat(anchors[i].dataset.time);
-        const nextTime = i < anchors.length - 1 ? parseFloat(anchors[i + 1].dataset.time) : Infinity;
-        if (t >= aTime && t < nextTime) {
-          anchors[i].classList.add('timestamp-active');
-          prevActiveAnchor = anchors[i];
-          break;
-        }
-      }
     };
     if (playerEl._wordViewTimeUpdate) playerEl.removeEventListener('timeupdate', playerEl._wordViewTimeUpdate);
     playerEl._wordViewTimeUpdate = onTimeUpdate;

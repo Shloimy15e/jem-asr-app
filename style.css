@@ -3690,38 +3690,6 @@ details[open] > .pipeline-tools-summary::before {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
 }
-.timestamp-anchor {
-  display: inline-block;
-  direction: ltr;
-  unicode-bidi: isolate;
-  background: var(--accent);
-  color: white;
-  font-size: 0.7rem;
-  font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 10px;
-  margin: 0 4px;
-  cursor: pointer;
-  user-select: none;
-  vertical-align: middle;
-  transition: background 0.15s, transform 0.15s;
-}
-.timestamp-anchor:hover {
-  background: #1d4ed8;
-  transform: scale(1.08);
-}
-.timestamp-anchor.timestamp-active {
-  background: #16a34a;
-  transform: scale(1.12);
-}
-.timestamp-anchor.timestamp-adjusted {
-  background: #ea580c;
-  outline: 2px solid #ea580c;
-  outline-offset: 1px;
-}
-.timestamp-anchor.timestamp-dragging {
-  opacity: 0.5;
-}
 /* Karaoke sidebar */
 .karaoke-sidebar .word-chip {
   font-size: 0.75rem !important;
