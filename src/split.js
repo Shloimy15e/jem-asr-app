@@ -3,7 +3,9 @@
 // Creates a brand-new audio_files row (standalone — no parent_id, no FK). The
 // new record shares the parent's r2Link / driveLink / year / month / type, but
 // has its own trim_start (= anchor word's timestamp) and its own cleanedText
-// (= words from the anchor onwards). The parent is untouched.
+// (= words from the anchor onwards). The parent's trim_end is capped at the
+// anchor so its audio range no longer overlaps the tail now owned by the
+// child record.
 //
 // Purpose: when the tail of a long alignment is noisy, you split at a good
 // word and treat the tail as its own standalone file with a fresh lifecycle
@@ -147,6 +149,17 @@ export async function createSplitFromAudio(parent, state, wordIndex) {
   });
   if (cleanErr) console.warn('[split] cleaning insert:', cleanErr.message);
 
+  // Parent trim — cap its audio range at the anchor so it no longer overlaps
+  // the tail that now lives in the child record.
+  const parentTrim = state.trims?.[parent.id] || {};
+  const parentTrimStart = parentTrim.start || 0;
+  const { error: parentTrimErr } = await supabase
+    .from('audio_files')
+    .update({ trim_start: parentTrimStart, trim_end: anchorTime })
+    .eq('id', parent.id)
+    .eq('library_id', lib);
+  if (parentTrimErr) console.warn('[split] parent trim update:', parentTrimErr.message);
+
   // ── Local state writes ──────────────────────────────────────────────
   if (!state.audio) state.audio = [];
   state.audio.push(newAudio);
@@ -167,6 +180,7 @@ export async function createSplitFromAudio(parent, state, wordIndex) {
   state.cleaning[newId] = { cleanedText: tailText, cleanedAt: new Date().toISOString() };
   if (!state.trims) state.trims = {};
   state.trims[newId] = { start: anchorTime, end: 0 };
+  state.trims[parent.id] = { start: parentTrimStart, end: anchorTime };
 
   // Persist the mutated state.audio via updateState (audio array is keyed null)
   updateState('audio', null, state.audio);
