@@ -90,7 +90,7 @@ export async function deleteAllWorkData(audioId) {
     supabase.from('transcript_edits').delete().eq('audio_id', audioId).eq('library_id', lib),
     supabase.from('alignments').delete().eq('audio_id', audioId).eq('library_id', lib),
     supabase.from('reviews').delete().eq('audio_id', audioId).eq('library_id', lib),
-    supabase.from('segment_approvals').delete().eq('audio_id', audioId),
+    supabase.from('segment_approvals').delete().eq('audio_id', audioId).eq('library_id', lib),
   ];
   const results = await Promise.allSettled(deletes);
   results.forEach((r, i) => {
@@ -382,7 +382,8 @@ export async function syncSegmentApproval(audioId, segHash, approved, approvedBy
     const { error } = await supabase.from('segment_approvals')
       .delete()
       .eq('audio_id', audioId)
-      .eq('segment_hash', segHash);
+      .eq('segment_hash', segHash)
+      .eq('library_id', getActiveLibrary() || 'jemedia');
     if (error) console.warn('[DB] syncSegmentApproval (unapprove):', error.message);
     else logActivity('segment_unapproved', audioId, null, { segmentHash: segHash });
   }
