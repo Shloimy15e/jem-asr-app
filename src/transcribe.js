@@ -1,6 +1,7 @@
 import { initState, getState, getVersions, addVersion, updateVersion, mergeSupabaseData, updateState } from './state.js';
 import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, getActiveLibraryConfig } from './auth.js';
 import { transcribeAudio } from './alignment.js';
+import { ensureAudioMapped } from './mapping.js';
 import { loadFromSupabase } from './db.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -217,6 +218,8 @@ function renderTranscribePage(audioId, audio, state, root) {
           providerCfg = { projectId: selected.projectId, region: selected.region, endpointId: selected.endpointId };
           saveModel = `gemini-${geminiSlug(selected)}`;
         }
+        // Guarantee every audio has a mapping before transcription runs.
+        await ensureAudioMapped(audioId);
         const config = { provider: providerArg, ...providerCfg };
         const text = await transcribeAudio(audioId, audioUrl, config);
         if (!text) throw new Error('Empty transcription returned');

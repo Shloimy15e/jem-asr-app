@@ -434,6 +434,39 @@ export async function splitTranscript(originalId) {
   };
 }
 
+// Creates an empty placeholder transcript row. Used when the user runs ASR on
+// an unmapped audio — we synthesize a transcript so every audio has a mapping
+// (data consistency: ASR versions are never orphaned).
+export async function createEmptyTranscript(audio) {
+  const newId = `t_${Date.now()}`;
+  const { data: created, error } = await supabase
+    .from('transcripts')
+    .insert({
+      id: newId,
+      name: `Auto-generated for ${audio.id}`,
+      year: audio.year || null,
+      month: audio.month || null,
+      day: audio.day || null,
+      text: '',
+      library_id: getActiveLibrary() || 'jemedia',
+    })
+    .select()
+    .single();
+  if (error) throw new Error('createEmptyTranscript: ' + error.message);
+  logActivity('transcript_auto_created', created.id, created.name, { audioId: audio.id });
+  return {
+    id: created.id,
+    name: created.name,
+    year: created.year,
+    month: created.month,
+    day: created.day,
+    firstLine: created.first_line,
+    driveLink: created.drive_link,
+    r2TranscriptLink: created.r2_transcript_link,
+    text: created.text,
+  };
+}
+
 // Must be called AFTER bulkSyncAudioFiles (FK constraint on audio_id).
 export async function bulkSyncMappings(mappingsObj) {
   const rows = Object.entries(mappingsObj).map(([audioId, m]) => ({

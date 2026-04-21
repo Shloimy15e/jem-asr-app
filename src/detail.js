@@ -1,6 +1,6 @@
 import { initState, getState, getStatus, getCompletedStages, PIPELINE_STAGES, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions, getPipelineStep, getIterationCount, setSegmentApprovals, getApprovedSegments, toggleSegmentApproval } from './state.js';
 import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, setActiveLibrary, getActiveLibraryConfig, isLibraryR2Url, getAccessToken } from './auth.js';
-import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
+import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal, ensureAudioMapped } from './mapping.js';
 import { batchClean, cleanSectionMarkers, cleanMinor, cleanIntroText, cleanWhitespace, findBracketMatches, findParenMatches, findMinorMatches, applyMatchActions, calculateCleanRate } from './cleaning.js';
 import { alignRow, transcribeAudio, ALIGNER_OPTIONS, getAlignerChoice, setAlignerChoice } from './alignment.js';
 import { createSplitFromAudio } from './split.js';
@@ -726,6 +726,8 @@ function buildAsrProviderBar(audioId, state, onComplete) {
           providerCfg = { projectId: selected.projectId, region: selected.region, endpointId: selected.endpointId };
           saveModel = `gemini-${geminiSlug(selected)}`;
         }
+        // Guarantee every audio has a mapping before transcription runs.
+        await ensureAudioMapped(audioId);
         const config = { provider: key, ...providerCfg };
         const text = await transcribeAudio(audioId, audioUrl, config);
         if (!text) throw new Error('Empty transcription returned');

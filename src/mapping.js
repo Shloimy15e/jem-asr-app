@@ -1,5 +1,5 @@
-import { getState, updateState, saveToStorage } from './state.js';
-import { deleteMapping, deleteAllWorkData, searchTranscriptText } from './db.js';
+import { getState, updateState, saveToStorage, addTranscript } from './state.js';
+import { deleteMapping, deleteAllWorkData, searchTranscriptText, createEmptyTranscript } from './db.js';
 import { getCurrentUser } from './auth.js';
 import { truncateWords, formatConfidence, debounce } from './utils.js';
 
@@ -136,6 +136,25 @@ export function linkMatch(audioId, transcriptId, score, reason) {
     confirmedBy: getCurrentUser(),
     confirmedAt: new Date().toISOString(),
   });
+}
+
+// Ensures the audio has a valid transcript mapping. If already mapped to an
+// existing transcript, returns its ID. Otherwise creates an empty placeholder
+// transcript and links it. Used before ASR transcription so every audio enters
+// the pipeline with a mapping in place.
+export async function ensureAudioMapped(audioId) {
+  const state = getState();
+  if (!state) throw new Error('State not initialized');
+  const existing = state.mappings?.[audioId];
+  if (existing && (state.transcripts || []).some(t => t.id === existing.transcriptId)) {
+    return existing.transcriptId;
+  }
+  const audio = state.audio.find(a => a.id === audioId);
+  if (!audio) throw new Error(`Audio ${audioId} not found in state`);
+  const transcript = await createEmptyTranscript(audio);
+  addTranscript(transcript);
+  linkMatch(audioId, transcript.id, 1.0, 'auto-created for transcription');
+  return transcript.id;
 }
 
 export function unlinkMatch(audioId) {
