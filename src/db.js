@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { getActiveLibrary, getCurrentUser } from './auth.js';
+import { getActiveLibrary, getCurrentUser, getCurrentUserId } from './auth.js';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -195,6 +195,39 @@ export async function syncReview(audioId, reviewData, audioEntry) {
 // ── Dispatch helper used by state.js ────────────────────────────────
 // Called fire-and-forget after every updateState() call.
 
+export async function syncFavorite(audioId, isFavorite) {
+  const userId = getCurrentUserId();
+  if (!userId) return;
+  const lib = getActiveLibrary() || 'jemedia';
+  if (isFavorite) {
+    const { error } = await supabase.from('user_favorites').upsert(
+      { user_id: userId, audio_id: audioId, library_id: lib },
+      { onConflict: 'user_id,audio_id,library_id' },
+    );
+    if (error) console.warn('[DB] syncFavorite (add):', error.message);
+  } else {
+    const { error } = await supabase.from('user_favorites').delete()
+      .eq('user_id', userId)
+      .eq('audio_id', audioId)
+      .eq('library_id', lib);
+    if (error) console.warn('[DB] syncFavorite (remove):', error.message);
+  }
+}
+
+export async function loadFavorites(libraryId = null) {
+  const userId = getCurrentUserId();
+  if (!userId) return {};
+  const lib = libraryId || getActiveLibrary() || 'jemedia';
+  const { data, error } = await supabase.from('user_favorites')
+    .select('audio_id')
+    .eq('user_id', userId)
+    .eq('library_id', lib);
+  if (error) { console.warn('[DB] loadFavorites:', error.message); return {}; }
+  const favs = {};
+  (data || []).forEach(r => { favs[r.audio_id] = true; });
+  return favs;
+}
+
 export async function syncAudioField(audioId, column, value) {
   const { error } = await supabase
     .from('audio_files')
@@ -267,6 +300,9 @@ export function syncStateKey(key, audioId, value, audioEntry) {
       break;
     case 'reviews':
       syncReview(audioId, value, audioEntry).catch(console.warn);
+      break;
+    case 'favorites':
+      syncFavorite(audioId, !!value).catch(console.warn);
       break;
     default:
       break;
@@ -489,6 +525,7 @@ export async function loadFromSupabase(libraryId = null) {
       alignmentsData,
       reviewsData,
       editsData,
+      favoritesData,
     ] = await Promise.all([
       fetchAll('audio_files', '*', lib),
       fetchAll('transcripts', 'id,name,year,month,day,first_line,drive_link,r2_transcript_link,source_transcript_id', lib),
@@ -496,6 +533,7 @@ export async function loadFromSupabase(libraryId = null) {
       fetchAll('alignments', 'audio_id,avg_confidence,low_confidence_count,aligned_at', lib),
       fetchAll('reviews', '*', lib),
       fetchAll('transcript_edits', '*', lib),
+      loadFavorites(lib),
     ]);
 
     // errors are logged inside fetchAll
@@ -603,7 +641,9 @@ export async function loadFromSupabase(libraryId = null) {
       });
     });
 
-    return { audio, transcripts, mappings, alignments, reviews, cleaning, trims, edited, asr };
+    const favorites = favoritesData || {};
+
+    return { audio, transcripts, mappings, alignments, reviews, cleaning, trims, edited, asr, favorites };
   } catch (err) {
     console.warn('[DB] loadFromSupabase failed:', err.message);
     return null;

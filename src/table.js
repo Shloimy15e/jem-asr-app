@@ -56,6 +56,7 @@ function toggleInlinePlay(btn, audioUrl, audioId) {
 
 // ── Internal state ──────────────────────────────────────────────────
 let fiftyFilter = '';  // '' = all, 'yes' = 50hr only, 'no' = not in 50hr
+let favoritesFilter = ''; // '' = all, 'yes' = favorites only
 let statusFilter = [];  // array of selected statuses, empty = all
 let currentSort = { column: null, dir: 'asc' };
 let currentPage = 1;
@@ -90,6 +91,7 @@ function getSelectedRows() {
 function updateURL() {
   const params = new URLSearchParams();
   if (fiftyFilter) params.set('fifty', fiftyFilter);
+  if (favoritesFilter) params.set('fav', favoritesFilter);
   if (statusFilter.length) params.set('status', statusFilter.join(','));
   if (currentPage > 1) params.set('page', String(currentPage));
   if (searchTerm) params.set('q', searchTerm);
@@ -108,6 +110,8 @@ let _onRowExpand = null;
 const COLUMNS = [
   { key: 'checkbox',      label: '',                  sortable: false, showWhen: () => true },
   { key: 'rowNum',        label: '#',                 sortable: false, showWhen: () => true },
+  { key: 'favorite',      label: '\u2605',            sortable: false, showWhen: () => true },
+  { key: 'id',            label: 'ID',                sortable: true,  showWhen: () => true },
   { key: 'name',          label: 'Audio Name',        sortable: true,  showWhen: () => true },
   { key: 'year',          label: 'Year',              sortable: true,  showWhen: () => true },
   { key: 'month',         label: 'Month',             sortable: true,  showWhen: () => true },
@@ -187,6 +191,7 @@ function matchesSearch(row) {
   if (!searchTerm) return true;
   const term = searchTerm.toLowerCase();
   return (
+    String(row.id).toLowerCase().includes(term) ||
     row.name.toLowerCase().includes(term) ||
     row.transcript.toLowerCase().includes(term) ||
     row.firstLine.toLowerCase().includes(term)
@@ -499,6 +504,8 @@ function buildTable(rows) {
       th.appendChild(cb);
     } else {
       th.textContent = col.label;
+      if (col.key === 'favorite') th.classList.add('cell-favorite');
+      if (col.key === 'id') th.classList.add('cell-id');
       if (col.sortable) {
         th.classList.add('sortable');
         if (currentSort.column === col.key) {
@@ -560,6 +567,28 @@ function buildTable(rows) {
         }
         case 'rowNum':
           td.textContent = startIdx + i + 1;
+          break;
+        case 'favorite': {
+          td.classList.add('cell-favorite');
+          const favBtn = document.createElement('button');
+          const isFav = !!(getState().favorites && getState().favorites[row.id]);
+          favBtn.className = 'fav-toggle-btn' + (isFav ? ' fav-active' : '');
+          favBtn.textContent = isFav ? '\u2605' : '\u2606';
+          favBtn.title = isFav ? 'Remove from favorites' : 'Add to favorites';
+          favBtn.setAttribute('aria-label', favBtn.title);
+          favBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const nowFav = !isFav;
+            updateState('favorites', row.id, nowFav ? true : null);
+            updateTable();
+          });
+          td.appendChild(favBtn);
+          break;
+        }
+        case 'id':
+          td.classList.add('cell-id');
+          td.textContent = row.id;
+          td.title = 'Audio ID — use the search box to find by ID';
           break;
         case 'name': {
           const nameSpan = document.createElement('span');
@@ -1136,6 +1165,7 @@ function renderTable(container, options = {}) {
   // Read initial state from URL query params
   const initParams = new URLSearchParams(window.location.search);
   if (initParams.has('fifty')) fiftyFilter = initParams.get('fifty') || '';
+  if (initParams.has('fav')) favoritesFilter = initParams.get('fav') || '';
   if (initParams.has('status')) statusFilter = initParams.get('status').split(',').filter(Boolean);
   // Legacy: support old ?filter= param
   if (initParams.has('filter')) {
@@ -1163,6 +1193,19 @@ function renderTable(container, options = {}) {
     fiftySelect.addEventListener('change', () => {
       fiftyFilter = fiftySelect.value;
       // buildFilter() computed on demand — no cached currentFilter needed
+      currentPage = 1;
+      selectedIds.clear();
+      updateURL();
+      updateTable();
+    });
+  }
+
+  // Wire favorites filter
+  const favSelect = document.getElementById('filter-favorites');
+  if (favSelect) {
+    favSelect.value = favoritesFilter;
+    favSelect.addEventListener('change', () => {
+      favoritesFilter = favSelect.value;
       currentPage = 1;
       selectedIds.clear();
       updateURL();
@@ -1261,6 +1304,7 @@ function renderTable(container, options = {}) {
   if (resetBtn) {
     resetBtn.addEventListener('click', () => {
       fiftyFilter = '';
+      favoritesFilter = '';
       statusFilter = [];
       filterYear = '';
       filterMonth = '';
@@ -1270,6 +1314,7 @@ function renderTable(container, options = {}) {
       currentPage = 1;
       selectedIds.clear();
       if (fiftySelect) fiftySelect.value = '';
+      if (favSelect) favSelect.value = '';
       if (statusContainer) {
         statusContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
         const btn = statusContainer.querySelector('.multi-select-btn');
@@ -1320,6 +1365,12 @@ function updateTable() {
     }
   } else {
     filteredAudio = getFilteredRows(buildFilter());
+  }
+
+  // Apply favorites filter
+  if (favoritesFilter === 'yes') {
+    const favs = getState().favorites || {};
+    filteredAudio = filteredAudio.filter(a => !!favs[a.id]);
   }
 
   // Apply confidence filter

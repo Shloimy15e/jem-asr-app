@@ -29,6 +29,11 @@ export function getCurrentUser() {
   return _currentUser?.email || _currentUser?.id || 'user';
 }
 
+// Returns the UUID of the currently authenticated user, or null if unauthed.
+export function getCurrentUserId() {
+  return _currentUser?.id || null;
+}
+
 export async function signIn(email, password) {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw error;
