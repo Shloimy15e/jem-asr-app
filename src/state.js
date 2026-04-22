@@ -55,6 +55,8 @@ export function initState(data) {
   // Migrate old format into transcriptVersions
   migrateToVersions();
   migrateGeminiEndpoints();
+  // Persist migrations immediately so upgraded users don't lose them on refresh
+  saveToStorage();
   return state;
 }
 

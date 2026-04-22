@@ -38,8 +38,33 @@ export function parseHebrewDate(filename) {
     }
   }
 
-  const dayMatch = base.match(/(?:^|[-_ ])(\d{1,2})(?:$|[-_ .])/);
-  const day = dayMatch ? parseInt(dayMatch[1], 10) : null;
+  // Day is intentionally conservative: only infer it when a month token is present,
+  // to avoid mis-reading track numbers like "sicha-03" as day-of-month.
+  let day = null;
+  if (month) {
+    const tokens = lowerBase.split(/\s+/).filter(Boolean);
+    const monthIdx = tokens.findIndex(t => t === month.toLowerCase());
+    const candidates = [];
+    if (monthIdx >= 0) {
+      // Prefer numbers near the month token
+      for (const idx of [monthIdx - 2, monthIdx - 1, monthIdx + 1, monthIdx + 2]) {
+        const t = tokens[idx];
+        if (!t) continue;
+        const m = t.match(/^(\d{1,2})$/);
+        if (m) candidates.push(parseInt(m[1], 10));
+      }
+    }
+    // Fallback: first standalone 1-2 digit token within a reasonable day range
+    if (candidates.length === 0) {
+      for (const t of tokens) {
+        const m = t.match(/^(\d{1,2})$/);
+        if (!m) continue;
+        const n = parseInt(m[1], 10);
+        if (n >= 1 && n <= 30) { candidates.push(n); break; }
+      }
+    }
+    day = candidates.length > 0 ? candidates[0] : null;
+  }
 
   return { year, month, day };
 }
