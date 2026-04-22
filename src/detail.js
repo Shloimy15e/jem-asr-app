@@ -2815,10 +2815,58 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     editorDiv.innerHTML = '';
     editorDiv.textContent = 'Loading original...';
     const text = await getManualText();
-    editorDiv.textContent = text || '(No original transcript available)';
+    editorDiv.innerHTML = '';
+    const manualText = text || '(No original transcript available)';
+    const manualLines = manualText
+      .split(/\n+/)
+      .flatMap(line => {
+        const parts = line.split(/(?<=\.)\s+/).map(p => p.trim()).filter(Boolean);
+        return parts.length > 0 ? parts : [line];
+      });
+    manualLines.forEach((line, idx) => {
+      if (line) editorDiv.appendChild(document.createTextNode(line));
+      if (idx < manualLines.length - 1) editorDiv.appendChild(document.createElement('br'));
+    });
   });
   toolbar.appendChild(editedToggleBtn);
   toolbar.appendChild(manualToggleBtn);
+
+  // Font size control — persists in localStorage
+  const FONT_SIZE_KEY = 'editor-font-size';
+  const FONT_MIN = 12;
+  const FONT_MAX = 36;
+  let _editorFontSize = parseInt(localStorage.getItem(FONT_SIZE_KEY), 10);
+  if (!Number.isFinite(_editorFontSize)) _editorFontSize = 16;
+  _editorFontSize = Math.min(FONT_MAX, Math.max(FONT_MIN, _editorFontSize));
+  function applyEditorFontSize() {
+    editorDiv.style.fontSize = _editorFontSize + 'px';
+    localStorage.setItem(FONT_SIZE_KEY, String(_editorFontSize));
+    fontSizeLabel.textContent = _editorFontSize + 'px';
+  }
+  const fontDecBtn = document.createElement('button');
+  fontDecBtn.type = 'button';
+  fontDecBtn.className = 'action-btn';
+  fontDecBtn.textContent = 'A−';
+  fontDecBtn.title = 'Decrease editor font size';
+  fontDecBtn.addEventListener('click', () => {
+    _editorFontSize = Math.max(FONT_MIN, _editorFontSize - 2);
+    applyEditorFontSize();
+  });
+  const fontIncBtn = document.createElement('button');
+  fontIncBtn.type = 'button';
+  fontIncBtn.className = 'action-btn';
+  fontIncBtn.textContent = 'A+';
+  fontIncBtn.title = 'Increase editor font size';
+  fontIncBtn.addEventListener('click', () => {
+    _editorFontSize = Math.min(FONT_MAX, _editorFontSize + 2);
+    applyEditorFontSize();
+  });
+  const fontSizeLabel = document.createElement('span');
+  fontSizeLabel.className = 'text-secondary';
+  fontSizeLabel.style.cssText = 'font-size:0.75rem;min-width:36px;text-align:center;';
+  toolbar.appendChild(fontDecBtn);
+  toolbar.appendChild(fontSizeLabel);
+  toolbar.appendChild(fontIncBtn);
 
   const editorWordCountEl = document.createElement('span');
   editorWordCountEl.className = 'text-secondary';
@@ -2846,12 +2894,18 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
 
   // Editor renders the user's edited text (what was sent to the aligner),
   // unchanged by reconciliation. Plain text only — no inline chips.
+  // Each sentence (period-terminated) renders on its own line for readability.
   function buildEditorContent() {
     editorDiv.innerHTML = '';
     const editedVersion = getVersions(audioId).find(v => v.type === 'edited');
     const alignmentJoined = segments.flat().map(w => w.word || w.text || '').join(' ');
     const editedText = (editedVersion?.text || alignmentJoined || '').trim();
-    const lines = editedText.split(/\n+/);
+    const lines = editedText
+      .split(/\n+/)
+      .flatMap(line => {
+        const parts = line.split(/(?<=\.)\s+/).map(p => p.trim()).filter(Boolean);
+        return parts.length > 0 ? parts : [line];
+      });
     lines.forEach((line, idx) => {
       if (line) editorDiv.appendChild(document.createTextNode(line));
       if (idx < lines.length - 1) editorDiv.appendChild(document.createElement('br'));
@@ -2859,6 +2913,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
     refreshEditorWordCount(editedText);
   }
   buildEditorContent();
+  applyEditorFontSize();
 
   // ── Auto-save: debounced 800ms ──
   let _editorSaveTimer = null;
