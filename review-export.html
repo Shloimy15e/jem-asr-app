@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Export Review — JEM ASR</title>
+  <link rel="stylesheet" href="./style.css">
+  <style>
+    body { padding: 24px; }
+
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 16px;
+    }
+    .page-header h1 { margin: 0; font-size: 20px; }
+    .page-header .hint { color: var(--text-secondary); font-size: 13px; }
+
+    #drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius-lg);
+      padding: 64px 24px;
+      text-align: center;
+      cursor: pointer;
+      background: var(--surface);
+      transition: background 0.15s, border-color 0.15s;
+    }
+    #drop-zone:hover,
+    #drop-zone.dragover {
+      background: var(--surface-hover);
+      border-color: var(--accent);
+    }
+    #drop-zone .dz-big { font-size: 18px; margin-bottom: 8px; }
+    #drop-zone .dz-hint { color: var(--text-secondary); font-size: 13px; }
+
+    #viewer { display: none; }
+    #viewer.show { display: block; }
+
+    .export-info {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .export-info .file-name { font-weight: 600; margin-bottom: 4px; }
+    .export-info .stats { color: var(--text-secondary); font-size: 13px; }
+    .export-info .stats span { margin-right: 16px; }
+
+    .player-row {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      box-shadow: var(--shadow);
+    }
+    .player-row audio { flex: 1; min-width: 300px; }
+
+    .speed-bar { display: flex; gap: 4px; }
+    .speed-bar .speed-btn {
+      padding: 4px 10px;
+      font-size: 12px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .speed-bar .speed-btn.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    .segment {
+      direction: rtl;
+      text-align: right;
+      padding: 10px 14px;
+      margin-bottom: 6px;
+      border-radius: var(--radius);
+      background: var(--surface);
+      border: 1px solid var(--border);
+    }
+    .segment .seg-meta {
+      direction: ltr;
+      text-align: left;
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+      font-family: ui-monospace, 'Courier New', monospace;
+    }
+
+    .word-chip {
+      display: inline-block;
+      margin: 2px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 15px;
+      unicode-bidi: isolate;
+      transition: transform 0.08s, box-shadow 0.08s;
+    }
+    .word-chip.confidence-high { background: var(--green-dim); color: var(--green); }
+    .word-chip.confidence-mid  { background: var(--orange-dim); color: var(--orange); }
+    .word-chip.confidence-low  { background: var(--red-dim); color: var(--red); }
+    .word-chip.active {
+      box-shadow: 0 0 0 2px var(--accent);
+      transform: scale(1.05);
+    }
+
+    .slice-divider {
+      display: flex;
+      align-items: center;
+      margin: 16px 0 8px;
+      gap: 12px;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 600;
+      font-family: ui-monospace, 'Courier New', monospace;
+    }
+    .slice-divider::before,
+    .slice-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--accent);
+      opacity: 0.3;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .toolbar button {
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .toolbar button:hover { background: var(--surface-hover); }
+
+    .approval-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .approval-bar .btn-approve {
+      background: var(--green);
+      color: #fff;
+      border: none;
+      padding: 8px 18px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .approval-bar .btn-approve:hover { filter: brightness(1.08); }
+    .approval-bar .btn-approve.approved {
+      background: var(--green-dim);
+      color: var(--green);
+      cursor: default;
+    }
+    .approval-bar .btn-reject {
+      background: transparent;
+      color: var(--red);
+      border: 1px solid var(--red);
+      padding: 6px 12px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .approval-bar .count { color: var(--text-secondary); font-size: 13px; }
+
+    .manifest-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      padding: 8px 12px;
+      background: var(--bg);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      font-size: 12px;
+      color: var(--text-secondary);
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .manifest-bar .count-big { font-weight: 600; color: var(--text); margin-right: 8px; }
+    .manifest-bar button {
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .manifest-bar button:hover { background: var(--surface-hover); }
+    .manifest-bar button.danger {
+      color: var(--red);
+      border-color: var(--red);
+    }
+  </style>
+</head>
+<body>
+  <header class="page-header">
+    <div>
+      <h1>Export Review</h1>
+      <div class="hint">Drop a Stage-1 export folder's files to spot-check alignment before training.</div>
+    </div>
+    <div>
+      <button id="btn-reset" style="display:none">Load different file</button>
+    </div>
+  </header>
+
+  <div id="drop-zone">
+    <div class="dz-big">Drop <code>audio.mp3</code> + <code>transcript.aligned.json</code> here</div>
+    <div class="dz-hint">or click to pick files (<code>metadata.json</code> optional)</div>
+    <input type="file" id="file-input" multiple accept=".mp3,.json,audio/mpeg,application/json" hidden>
+  </div>
+
+  <div id="viewer">
+    <div class="manifest-bar" id="manifest-bar">
+      <span><span class="count-big" id="manifest-count">0</span> approved in this browser</span>
+      <button id="btn-manifest-download">⬇ Download manifest JSON</button>
+      <button id="btn-manifest-import">⬆ Import manifest</button>
+      <button id="btn-manifest-clear" class="danger">Clear all</button>
+      <input type="file" id="manifest-input" accept=".json,application/json" hidden>
+    </div>
+
+    <div class="export-info" id="export-info"></div>
+
+    <div class="approval-bar">
+      <button class="btn-approve" id="btn-approve">✓ Approve for training</button>
+      <button class="btn-reject" id="btn-reject">Reject (remove from approved)</button>
+      <textarea id="approval-notes" placeholder="Optional notes…" maxlength="2000" style="flex:1; min-width:180px; padding:6px 8px; border:1px solid var(--border); border-radius:4px; font:inherit; font-size:13px;"></textarea>
+      <span class="count" id="approval-status"></span>
+    </div>
+
+    <div class="player-row">
+      <audio id="player" controls preload="metadata"></audio>
+      <div class="speed-bar" id="speed-bar"></div>
+    </div>
+
+    <div class="toolbar">
+      <button id="btn-jump-first">⏮ First word</button>
+      <button id="btn-toggle-slices">Hide 30s slice boundaries</button>
+      <button id="btn-only-problems">Only low-confidence</button>
+    </div>
+
+    <div id="word-grid" class="hebrew-text"></div>
+  </div>
+
+  <script type="module" src="./src/review-export.js"></script>
+</body>
+</html>

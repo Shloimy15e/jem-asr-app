@@ -44,6 +44,7 @@ export default defineConfig({
         admin: resolve(__dirname, 'admin.html'),
         transcribe: resolve(__dirname, 'transcribe.html'),
         dashboard: resolve(__dirname, 'dashboard.html'),
+        reviewExport: resolve(__dirname, 'review-export.html'),
       },
     },
   },

@@ -4,4 +4,7 @@ dist/
 tmp-audio/
 .wrangler/
 training/
+dist-training/
+dist-training-slices/
+.claude/
 supabase/.temp/
