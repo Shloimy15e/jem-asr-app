@@ -51,6 +51,7 @@ export function initState(data) {
     audioMonths: saved.audioMonths || {},
     audioDays: saved.audioDays || {},
     audioTypes: saved.audioTypes || {},
+    favorites: {}, // populated from Supabase via mergeSupabaseData
   };
   // Migrate old format into transcriptVersions
   migrateToVersions();
@@ -176,6 +177,7 @@ export function mergeSupabaseData(remote) {
   if (remote.alignments) state.alignments = remote.alignments;
   if (remote.reviews)    state.reviews = remote.reviews;
   if (remote.trims)      Object.assign(state.trims, remote.trims);
+  if (remote.favorites)  state.favorites = remote.favorites;
 
   // Restore edited versions loaded from Supabase into transcriptVersions.
   // Seed a fresh versions array when none exists (audio-first training files

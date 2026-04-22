@@ -1976,6 +1976,41 @@ input {
   border-color: var(--accent);
 }
 
+.data-table td.cell-favorite,
+.data-table th.cell-favorite {
+  width: 32px;
+  text-align: center;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.fav-toggle-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 2px 4px;
+  color: var(--text-muted, #b0b4bb);
+  transition: color 0.15s, transform 0.1s;
+}
+
+.fav-toggle-btn:hover {
+  color: #f59e0b;
+  transform: scale(1.15);
+}
+
+.fav-toggle-btn.fav-active {
+  color: #f59e0b;
+}
+
+.data-table td.cell-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
 .bulk-action-bar {
   position: sticky;
   bottom: 0;
