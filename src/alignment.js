@@ -9,14 +9,15 @@ const ALIGN_ENDPOINT = '/api/align';
 const CHUNK_LIMIT = 15000;
 
 // ── Aligner selection ────────────────────────────────────────────────────
-// 'stable-ts'        → legacy align.kohnai.ai pod. Browser chunks + anchor calibration.
-// 'ivrit-iterative'  → new RunPod pod (chevreman/ivrit-iterative-aligner). Pod downloads
-//                      audio itself and runs iterative alignment with confusion recovery.
-//                      No browser-side chunking — the pod handles long audio internally.
+// 'stable-ts'        → align.kohnai.ai pod for untrimmed; RunPod trim pod
+//                      (STABLE_TS_TRIM_ENDPOINT_ID) for trimmed. Single request,
+//                      no browser-side chunking.
+// 'ivrit-iterative'  → RunPod pod (chevreman/ivrit-iterative-aligner). Runs
+//                      iterative alignment with confusion recovery.
 
 export const ALIGNER_OPTIONS = [
-  { value: 'stable-ts',       label: 'stable-ts (legacy, chunked)' },
-  { value: 'ivrit-iterative', label: 'ivrit-iterative (long audio)' },
+  { value: 'stable-ts',       label: 'stable-ts' },
+  { value: 'ivrit-iterative', label: 'ivrit-iterative' },
 ];
 const ALIGNER_STORAGE_KEY = 'jem-aligner-choice';
 
