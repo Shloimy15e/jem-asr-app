@@ -519,28 +519,29 @@ function renderDetailPage(audioId, audio, state, container) {
   }
   container.appendChild(playerSection.el);
 
-  // === Section: Mapping ===
-  if (!audio.isBenchmark) {
-    const mappingSection = createSection('Transcript Mapping');
-    // Collapse mapping on mobile if already mapped or further along
-    addCollapseBehavior(mappingSection.el, mappingSection.header, status !== 'unmapped');
-    // Honor a version-picker override if the user selected one this session.
-    const pickedId = _pickedVersionByAudio.get(audioId);
-    const pickedValid = pickedId && (getVersions(audioId) || []).some(v => v.id === pickedId);
-    const activeVersionRef = { id: pickedValid ? pickedId : (getBestVersion(audioId)?.id || null) };
-    renderMappingSection(audioId, state, mappingSection.content, container, activeVersionRef);
-    container.appendChild(mappingSection.el);
+  // === Section: Mapping (always shown, including benchmark files) ===
+  const mappingSection = createSection('Transcript Mapping');
+  // Collapse mapping on mobile if already mapped or further along
+  addCollapseBehavior(mappingSection.el, mappingSection.header, status !== 'unmapped');
+  // Honor a version-picker override if the user selected one this session.
+  const pickedId = _pickedVersionByAudio.get(audioId);
+  const pickedValid = pickedId && (getVersions(audioId) || []).some(v => v.id === pickedId);
+  const activeVersionRef = { id: pickedValid ? pickedId : (getBestVersion(audioId)?.id || null) };
+  renderMappingSection(audioId, state, mappingSection.content, container, activeVersionRef);
+  container.appendChild(mappingSection.el);
 
-    // === Section: Cleaning + Alignment + Word View (unified) ===
-    if (state.mappings[audioId]) {
-      const workSection = createSection('Processing');
-      // Collapse processing on mobile only when fully approved
-      addCollapseBehavior(workSection.el, workSection.header, status === 'approved');
-      const playerEl = container.querySelector('.audio-player');
-      renderUnifiedWorkSection(audioId, state, workSection.content, container, playerEl, activeVersionRef);
-      container.appendChild(workSection.el);
-    }
-  } else {
+  // === Section: Cleaning + Alignment + Word View (unified) ===
+  if (state.mappings[audioId]) {
+    const workSection = createSection('Processing');
+    // Collapse processing on mobile only when fully approved
+    addCollapseBehavior(workSection.el, workSection.header, status === 'approved');
+    const playerEl = container.querySelector('.audio-player');
+    renderUnifiedWorkSection(audioId, state, workSection.content, container, playerEl, activeVersionRef);
+    container.appendChild(workSection.el);
+  }
+
+  // === Benchmark section — only for benchmark files ===
+  if (audio.isBenchmark) {
     // === Benchmark file: ASR config + Run Benchmark + results ===
     const benchSection = createSection('Benchmark');
     addCollapseBehavior(benchSection.el, benchSection.header, false);
@@ -2145,6 +2146,15 @@ function renderIterationHistory(audioId, container, pageContainer, playerEl) {
 }
 
 function renderApproveBar(audioId, container, pageContainer) {
+  const audioEntry = getState().audio.find(a => a.id === audioId);
+  if (audioEntry?.isBenchmark) {
+    const note = document.createElement('div');
+    note.className = 'seg-approve-bar text-secondary';
+    note.style.fontSize = '0.85rem';
+    note.textContent = 'Benchmark file — approval disabled (never enters the training set).';
+    container.appendChild(note);
+    return;
+  }
   const approveBar = document.createElement('div');
   approveBar.className = 'seg-approve-bar';
   const approveBtn = document.createElement('button');
