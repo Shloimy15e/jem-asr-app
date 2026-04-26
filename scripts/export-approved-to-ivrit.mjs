@@ -5,15 +5,16 @@
 //   - transcript.aligned.json (stable_whisper WhisperResult shape)
 //   - metadata.json           (ivrit-ai NormalizedEntryMetadata shape, language=yi)
 //
-// Next step (run yourself after this script succeeds):
-//   git clone https://github.com/ivrit-ai/asr-training /tmp/asr-training
-//   cd /tmp/asr-training && pip install -r requirements.txt
-//   python create_dataset.py <out>/<library> \
+// For end-to-end Stage 1 + Stage 2 (auto-clones ivrit-ai, sets up venv):
+//   bash scripts/build-training-dataset.sh --id a_1013
+//
+// Manual Stage 2 equivalent after this script runs:
+//   python vendor/asr-training/create_dataset.py <out>/<library> \
 //     --segments_filename_glob 'transcript.aligned.json' \
-//     --output_folder <out>/parquet
+//     --output_dataset_name <out>/parquet/<library>
 //
 // Reads SUPABASE_URL + SUPABASE_SERVICE_KEY from .env to bypass RLS.
-// No ffmpeg needed — trimming is done in pure JS via scripts/lib/mp3-frame-walker.mjs.
+// No ffmpeg needed for this stage — trimming is pure JS (mp3-frame-walker.mjs).
 //
 // Usage:
 //   node scripts/export-approved-to-ivrit.mjs --out ./dist-training
@@ -369,12 +370,12 @@ async function main() {
     for (const f of failures) console.log(`  ${f.library}/${f.id}  —  ${f.reason}`);
   }
   if (!DRY_RUN && ok > 0) {
-    console.log('\nNext step:');
-    console.log(`  git clone https://github.com/ivrit-ai/asr-training /tmp/asr-training`);
-    console.log(`  cd /tmp/asr-training && pip install -r requirements.txt`);
-    console.log(`  python create_dataset.py ${path.resolve(OUT_ROOT)}/${LIBRARY_FILTER || '<library>'} \\`);
+    console.log('\nNext step (convert to trainable HuggingFace dataset):');
+    console.log(`  bash scripts/build-training-dataset.sh --stage 2 --out ${OUT_ROOT}`);
+    console.log('\nOr call ivrit-ai directly:');
+    console.log(`  python vendor/asr-training/create_dataset.py ${path.resolve(OUT_ROOT)}/${LIBRARY_FILTER || '<library>'} \\`);
     console.log(`    --segments_filename_glob 'transcript.aligned.json' \\`);
-    console.log(`    --output_folder ${path.resolve(OUT_ROOT)}/parquet`);
+    console.log(`    --output_dataset_name ${path.resolve(OUT_ROOT)}/parquet/${LIBRARY_FILTER || '<library>'}`);
   }
 }
 

@@ -1,0 +1,38 @@
+name: Build jem-trainer Docker image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'runpod/jem-trainer/**'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/jem-trainer
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v5
+        with:
+          # Build context = the worker dir itself. Matches what RunPod's GitHub
+          # integration does with Dockerfile path = runpod/jem-trainer/Dockerfile.
+          context: runpod/jem-trainer
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}

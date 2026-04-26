@@ -700,7 +700,23 @@ jem-asr-app/
 │   └── upload.js               # CF Worker: POST — upload audio/transcript to R2 bucket (requires R2_BUCKET binding + SUPABASE_URL/SUPABASE_ANON_KEY secrets)
 ├── scripts/
 │   ├── seed-transcripts.mjs    # One-off: seed all transcripts + fetch 50hr text from R2
-│   └── measure-audio-duration.mjs  # One-off: measure real MP3 duration, update est_minutes
+│   ├── measure-audio-duration.mjs  # One-off: measure real MP3 duration, update est_minutes
+│   ├── export-approved-to-ivrit.mjs  # Stage 1: pull approved audio → ivrit-ai folder layout
+│   ├── build-training-dataset.sh     # Stage 1 + Stage 2 wrapper (clones ivrit-ai, creates venv). Adds --push-to-hub for Stage 3.
+│   └── lib/
+│       ├── segment-words.mjs         # Group alignment words into stable_whisper-compatible segments
+│       └── mp3-frame-walker.mjs      # Frame-accurate MP3 trim (no ffmpeg subprocess)
+├── training/                    # Fine-tuning helpers (thin wrapper around ivrit-ai/asr-training)
+│   ├── README.md                # How to push dataset + launch a RunPod training run
+│   ├── pod/bootstrap.sh         # Run on persistent pod — clones ivrit-ai, installs, calls train-whisper.py
+│   ├── pod/smoke.sh             # 10-step integration test on persistent pod
+│   └── push-dataset.sh          # Push dist-training/parquet/<library> to HF Hub
+├── runpod/                      # RunPod serverless worker images (self-contained per dir)
+│   ├── stable-ts-aligner/       # Alignment worker (stable-whisper)
+│   ├── stable-ts-aligner-trim/  # Alignment worker with server-side trim
+│   ├── ivrit-iterative-aligner/ # Iterative aligner (ivrit-ai Yiddish Whisper)
+│   └── jem-trainer/             # Training worker — ivrit-ai's train-whisper.py via job input
+│       └── configs/*.env        # Training configs — canonical home (sourced by both serverless + persistent-pod)
 ├── supabase/migrations/        # All schema changes tracked here
 ├── public/data.json            # Legacy catalog (~246KB) — used only by seed scripts, NOT by app
 ├── wrangler.toml
