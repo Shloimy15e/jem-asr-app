@@ -144,13 +144,18 @@ echo ""
 python train-whisper.py "${ARGS[@]}"
 
 # ── Optional: merge LoRA adapter into base weights for easy deployment ──
+# ivrit-ai's merge-lora-whisper.py uses underscore-flags (--base_model_name,
+# --lora_model_name, --output_dir) — not dash-flags. Push the merged model
+# to HF Hub so it's deployable from anywhere.
 if [[ "${USE_QLORA:-0}" == "1" && -z "${SKIP_MERGE:-}" ]]; then
   echo ""
   echo "── Merging LoRA adapter → ${OUTPUT_MODEL_NAME}-merged ──"
   python merge-lora-whisper.py \
-    --base-model "$BASE_MODEL" \
-    --adapter    "$HF_MODEL_ORG/$OUTPUT_MODEL_NAME" \
-    --output     "${OUTPUT_MODEL_NAME}-merged" || \
+    --base_model_name "$BASE_MODEL" \
+    --lora_model_name "$HF_MODEL_ORG/$OUTPUT_MODEL_NAME" \
+    --output_dir      "/workspace/${OUTPUT_MODEL_NAME}-merged" \
+    --push_to_hub \
+    --hub_model_id    "$HF_MODEL_ORG/${OUTPUT_MODEL_NAME}-merged" || \
     echo "⚠  merge-lora-whisper.py failed — adapter is still usable standalone"
 fi
 
