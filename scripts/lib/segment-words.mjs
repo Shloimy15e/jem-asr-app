@@ -2,8 +2,12 @@
 // with stable_whisper's WhisperResult JSON schema. No I/O, no Supabase.
 //
 // JEM's alignment stores words as a flat array: [{word, start, end, confidence}, ...].
-// ivrit-ai's Stage 2 (create_dataset.py) expects segment-grouped data:
-// [{start, end, text, probability, words: [{word, start, end, probability}]}, ...].
+// ivrit-ai's Stage 2 (create_dataset.py) expects segment-grouped data matching
+// stable_whisper's WhisperResult schema:
+// [{id, seek, start, end, text, words: [{word, start, end, probability}]}, ...].
+// Each word.word carries a LEADING SPACE (Whisper tokenizer convention) so
+// stable_whisper can rebuild segment text by simple concatenation. No
+// segment-level probability field — Segment.__init__ rejects unknown kwargs.
 //
 // Segmentation rule: start a new segment whenever the gap between consecutive
 // words exceeds `gapThreshold` seconds, OR the current segment would exceed
@@ -48,17 +52,14 @@ export function segmentWords(words, opts = {}) {
   if (current) segments.push(current);
 
   return segments.map((s, i) => {
-    const probs = s.words.map(w => w.probability);
-    const meanProb = probs.length ? probs.reduce((a, b) => a + b, 0) / probs.length : 0.5;
     return {
       id: i,
       seek: 0,
       start: round3(s.start),
       end: round3(s.end),
       text: s.words.map(w => w.word).join(' '),
-      probability: round3(meanProb),
       words: s.words.map(w => ({
-        word: w.word,
+        word: ' ' + w.word,
         start: round3(w.start),
         end: round3(w.end),
         probability: round3(w.probability),

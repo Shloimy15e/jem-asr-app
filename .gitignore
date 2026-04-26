@@ -3,8 +3,13 @@ dist/
 .env
 tmp-audio/
 .wrangler/
-training/
+training/checkpoints/
+training/wandb/
+training/logs/
+training/.venv/
+training/output/
 dist-training/
 dist-training-slices/
+vendor/
 .claude/
 supabase/.temp/
