@@ -1,0 +1,13 @@
+-- Drop the unique constraint on audio_files.name. IDs are the real primary
+-- keys; names are display-only and may repeat (e.g. when the same audio is
+-- uploaded to multiple libraries, or re-uploaded after a name collision in
+-- the admin upload form, which auto-randomizes the ID but not the name).
+--
+-- Mirrors the equivalent fix on transcripts.name applied in
+-- 20260320023643_drop_transcript_name_unique.sql — same reasoning, same fix.
+--
+-- Reproducer for the bug: try uploading any file twice via the admin Upload
+-- panel. The Worker presigned-URL flow succeeds, the R2 PUT succeeds, then
+-- the audio_files INSERT fails with:
+--   duplicate key value violates unique constraint "audio_files_name_key"
+ALTER TABLE public.audio_files DROP CONSTRAINT IF EXISTS audio_files_name_key;
