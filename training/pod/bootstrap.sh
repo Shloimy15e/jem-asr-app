@@ -60,21 +60,53 @@ fi
 
 cd "$IVRIT_DIR"
 
-# ── Python deps (full training stack this time — includes torch, peft, W&B) ─
+# ── Patch train-whisper.py (idempotent) ─────────────────────────────────
+# Disable HF Trainer's best-model metric lookup. The script defaults to
+# metric_for_best_model="loss" (or "wer" with --predict_wer), which causes
+# the trainer to look up eval_loss / eval_wer at every eval step — but
+# QLoRA + Whisper eval doesn't return those keys, so the trainer crashes
+# with KeyError: 'eval_loss' after the first eval boundary.
+# load_best_model_at_end is already False in train-whisper.py, so disabling
+# the metric is safe (no model-loading behavior depends on it).
+if grep -q 'metric_for_best_model="wer" if args.predict_wer else "loss"' train-whisper.py; then
+  sed -i 's|metric_for_best_model="wer" if args.predict_wer else "loss"|metric_for_best_model=None|' train-whisper.py
+  echo "✓ Patched metric_for_best_model → None"
+fi
+
+# ── Python deps (full training stack — torch, peft, transformers, etc.) ─
 echo "📦 Installing Python deps…"
-pip install -q -r requirements.txt
-pip install -q wandb
+# Pin setuptools<81 in pip's isolated build env so packages with legacy
+# setup.py (openai-whisper) can still import pkg_resources. Setuptools 81
+# removed pkg_resources; the constraint propagates into pip-build-env-*.
+PIP_CONSTRAINT_FILE=$(mktemp)
+trap 'rm -f "$_OVERRIDE_FILE" "$PIP_CONSTRAINT_FILE"' EXIT
+echo "setuptools<81" > "$PIP_CONSTRAINT_FILE"
+PIP_CONSTRAINT="$PIP_CONSTRAINT_FILE" pip install -q -r requirements.txt
+PIP_CONSTRAINT="$PIP_CONSTRAINT_FILE" pip install -q wandb
 
 # ── Auth ────────────────────────────────────────────────────────────────
 python -c "from huggingface_hub import login; login('$HF_TOKEN', add_to_git_credential=True)"
 if [[ -n "${WANDB_API_KEY:-}" ]]; then
   wandb login "$WANDB_API_KEY"
   export WANDB_PROJECT="${WANDB_PROJECT:-jem-whisper-finetune}"
+else
+  # transformers Trainer auto-imports wandb when the package is installed,
+  # then crashes if no API key is configured. Disable explicitly.
+  export WANDB_DISABLED=true
 fi
 
 # ── Assemble train-whisper.py args ──────────────────────────────────────
+# We use --train_datasets (raw audio + text) NOT --use_preprocessed (already
+# feature-extracted). Our Stage 2 (create_dataset.py) outputs raw audio that
+# train-whisper.py extracts features from on the fly.
+# --eval_datasets defaults to the same repo's "eval" split — push-dataset.sh
+# splits 90/10 before pushing.
+TRAIN_DS="${TRAIN_DATASETS:-${HF_DATASET_REPO}:train}"
+EVAL_DS="${EVAL_DATASETS:-${HF_DATASET_REPO}:eval}"
+
 ARGS=(
-  --use_preprocessed "$HF_DATASET_REPO"
+  --train_datasets   "$TRAIN_DS"
+  --eval_datasets    "$EVAL_DS"
   --model_name       "$BASE_MODEL"
   --target_language  "$TARGET_LANGUAGE"
   --output_model_name "$OUTPUT_MODEL_NAME"
@@ -100,7 +132,6 @@ ARGS=(
 [[ "${PREDICT_WER:-0}" == "1" ]]  && ARGS+=(--predict_wer)
 [[ -n "${MAX_CHECKPOINTS_TO_KEEP:-}" ]] && ARGS+=(--max_checkpoints_to_keep "$MAX_CHECKPOINTS_TO_KEEP")
 [[ -n "${MAX_STEPS:-}" ]]         && ARGS+=(--max_steps "$MAX_STEPS")
-[[ -n "${EVAL_DATASETS:-}" ]]     && ARGS+=(--eval_datasets $EVAL_DATASETS)
 
 echo ""
 echo "── Launching train-whisper.py ────────────────────────────────"
