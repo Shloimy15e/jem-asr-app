@@ -58,7 +58,21 @@ function toggleInlinePlay(btn, audioUrl, audioId) {
 let fiftyFilter = '';  // '' = all, 'yes' = 50hr only, 'no' = not in 50hr
 let favoritesFilter = ''; // '' = all, 'yes' = favorites only
 let statusFilter = [];  // array of selected statuses, empty = all
-let currentSort = { column: null, dir: 'asc' };
+// ── Sort state (persisted) ─────────────────────────────────────────
+const SORT_KEY = 'jem-asr-sort-v1';
+function loadSort() {
+  try {
+    const raw = localStorage.getItem(SORT_KEY);
+    if (!raw) return { column: null, dir: 'asc' };
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === 'object') return { column: obj.column || null, dir: obj.dir === 'desc' ? 'desc' : 'asc' };
+  } catch {}
+  return { column: null, dir: 'asc' };
+}
+function saveSort(s) {
+  try { localStorage.setItem(SORT_KEY, JSON.stringify(s)); } catch {}
+}
+let currentSort = loadSort();
 let currentPage = 1;
 let searchTerm = '';
 let filterYear = '';
@@ -81,7 +95,19 @@ function updateMultiSelectLabel(btn, selected, allLabel) {
   else if (selected.length <= 2) btn.textContent = selected.map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(', ');
   else btn.textContent = selected.length + ' selected';
 }
-const PAGE_SIZE = 50;
+// Page size — user-adjustable via the pagination size selector.
+const PAGE_SIZE_KEY = 'jem-asr-page-size-v1';
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
+function loadPageSize() {
+  try {
+    const v = parseInt(localStorage.getItem(PAGE_SIZE_KEY) || '50', 10);
+    return PAGE_SIZE_OPTIONS.includes(v) ? v : 50;
+  } catch { return 50; }
+}
+function savePageSize(v) {
+  try { localStorage.setItem(PAGE_SIZE_KEY, String(v)); } catch {}
+}
+let PAGE_SIZE = loadPageSize();
 const selectedIds = new Set();
 
 function getSelectedRows() {
@@ -1260,6 +1286,7 @@ function buildTable(rows) {
             currentSort.column = col.key;
             currentSort.dir = 'asc';
           }
+          saveSort(currentSort);
           currentPage = 1;
           updateTable();
         });
@@ -1890,33 +1917,101 @@ function buildCardView(rows) {
 function buildPagination(totalRows) {
   const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
   if (currentPage > totalPages) currentPage = totalPages;
+  const goTo = (n) => {
+    const next = Math.max(1, Math.min(totalPages, n | 0));
+    if (next !== currentPage) {
+      currentPage = next; selectedIds.clear(); updateURL(); updateTable();
+    }
+  };
 
   const nav = document.createElement('div');
   nav.className = 'pagination';
+
+  // First / Prev
+  const firstBtn = document.createElement('button');
+  firstBtn.className = 'pagination-btn';
+  firstBtn.title = 'First page';
+  firstBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg>';
+  firstBtn.disabled = currentPage <= 1;
+  firstBtn.addEventListener('click', () => goTo(1));
+  nav.appendChild(firstBtn);
 
   const prevBtn = document.createElement('button');
   prevBtn.className = 'pagination-btn';
   prevBtn.textContent = 'Prev';
   prevBtn.disabled = currentPage <= 1;
-  prevBtn.addEventListener('click', () => {
-    if (currentPage > 1) { currentPage--; selectedIds.clear(); updateURL(); updateTable(); }
+  prevBtn.addEventListener('click', () => goTo(currentPage - 1));
+  nav.appendChild(prevBtn);
+
+  // Jump-to-page input
+  const jump = document.createElement('span');
+  jump.className = 'pagination-jump';
+  const jumpInput = document.createElement('input');
+  jumpInput.type = 'number';
+  jumpInput.className = 'pagination-jump__input';
+  jumpInput.min = '1';
+  jumpInput.max = String(totalPages);
+  jumpInput.value = String(currentPage);
+  jumpInput.title = 'Type a page number and press Enter';
+  jumpInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); goTo(parseInt(jumpInput.value, 10) || 1); }
   });
+  jumpInput.addEventListener('blur', () => goTo(parseInt(jumpInput.value, 10) || 1));
+  const jumpSep = document.createElement('span');
+  jumpSep.className = 'pagination-jump__sep';
+  jumpSep.textContent = ' / ' + totalPages;
+  jump.appendChild(jumpInput);
+  jump.appendChild(jumpSep);
+  nav.appendChild(jump);
 
-  const pageInfo = document.createElement('span');
-  pageInfo.className = 'pagination-info';
-  pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
-
+  // Next / Last
   const nextBtn = document.createElement('button');
   nextBtn.className = 'pagination-btn';
   nextBtn.textContent = 'Next';
   nextBtn.disabled = currentPage >= totalPages;
-  nextBtn.addEventListener('click', () => {
-    if (currentPage < totalPages) { currentPage++; selectedIds.clear(); updateURL(); updateTable(); }
-  });
-
-  nav.appendChild(prevBtn);
-  nav.appendChild(pageInfo);
+  nextBtn.addEventListener('click', () => goTo(currentPage + 1));
   nav.appendChild(nextBtn);
+
+  const lastBtn = document.createElement('button');
+  lastBtn.className = 'pagination-btn';
+  lastBtn.title = 'Last page';
+  lastBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>';
+  lastBtn.disabled = currentPage >= totalPages;
+  lastBtn.addEventListener('click', () => goTo(totalPages));
+  nav.appendChild(lastBtn);
+
+  // Page-size selector
+  const sizeWrap = document.createElement('span');
+  sizeWrap.className = 'pagination-size';
+  const sizeLbl = document.createElement('label');
+  sizeLbl.className = 'pagination-size__label';
+  sizeLbl.textContent = 'Rows';
+  const sizeSel = document.createElement('select');
+  sizeSel.className = 'pagination-size__select';
+  for (const opt of PAGE_SIZE_OPTIONS) {
+    const o = document.createElement('option');
+    o.value = String(opt);
+    o.textContent = String(opt);
+    if (opt === PAGE_SIZE) o.selected = true;
+    sizeSel.appendChild(o);
+  }
+  sizeSel.addEventListener('change', () => {
+    const next = parseInt(sizeSel.value, 10) || 50;
+    PAGE_SIZE = next;
+    savePageSize(next);
+    currentPage = 1;
+    updateTable();
+  });
+  sizeLbl.appendChild(sizeSel);
+  sizeWrap.appendChild(sizeLbl);
+  nav.appendChild(sizeWrap);
+
+  // Total label (right aligned via CSS)
+  const total = document.createElement('span');
+  total.className = 'pagination-total';
+  total.textContent = totalRows.toLocaleString() + ' rows';
+  nav.appendChild(total);
+
   return nav;
 }
 

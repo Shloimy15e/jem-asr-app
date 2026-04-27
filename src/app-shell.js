@@ -148,6 +148,31 @@ function decorateToolbarButtons() {
   }
 }
 
+function mountScrollTopBtn() {
+  if (document.querySelector('.scroll-top-btn')) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'scroll-top-btn';
+  btn.title = 'Back to top';
+  btn.setAttribute('aria-label', 'Scroll to top');
+  btn.innerHTML = icons.up ? icons.up() :
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>';
+  btn.addEventListener('click', () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+  document.body.appendChild(btn);
+
+  let raf = 0;
+  function onScroll() {
+    if (raf) return;
+    raf = requestAnimationFrame(() => {
+      btn.classList.toggle('is-visible', window.scrollY > 400);
+      raf = 0;
+    });
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+}
+
 function mountSkipLink() {
   if (document.querySelector('.skip-link')) return;
   // Find a sensible main landmark to jump to
@@ -210,6 +235,7 @@ export function initAppShell() {
   if (_initialised) return;
   _initialised = true;
   mountSkipLink();
+  mountScrollTopBtn();
   const header = document.querySelector('.app-header');
   if (!header) return;
   // Hamburger drawer toggle removed per UX feedback — the persistent

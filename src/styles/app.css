@@ -2286,6 +2286,111 @@ body.density-spacious .data-table tbody td { padding: 13px 14px; font-size: 13px
 }
 
 /* =================================================================
+   23b. Scroll-to-top floating button
+   ================================================================= */
+.scroll-top-btn {
+  position: fixed;
+  bottom: 80px;
+  right: 24px;
+  z-index: 200;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: var(--surface-elevated);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  display: inline-grid;
+  place-items: center;
+  opacity: 0;
+  transform: translateY(8px) scale(0.95);
+  pointer-events: none;
+  transition: opacity 180ms var(--ease), transform 180ms var(--ease),
+              background 120ms var(--ease);
+}
+.scroll-top-btn.is-visible {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+.scroll-top-btn:hover {
+  background: var(--surface-hover);
+  color: var(--accent);
+}
+.scroll-top-btn svg { width: 16px; height: 16px; }
+
+/* =================================================================
+   23c. Pagination — jump-to-page + first/last + size selector
+   ================================================================= */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding: var(--sp-3) var(--sp-4);
+}
+.pagination-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.pagination-jump__input {
+  width: 56px;
+  height: 28px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+.pagination-jump__input::-webkit-inner-spin-button { display: none; }
+.pagination-jump__input { -moz-appearance: textfield; appearance: textfield; }
+.pagination-jump__sep {
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.pagination-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-inline-start: var(--sp-3);
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+.pagination-size__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .04em;
+}
+.pagination-size__select {
+  height: 28px;
+  padding: 0 22px 0 8px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+.pagination-total {
+  margin-inline-start: auto;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.pagination-btn svg { color: currentColor; }
+
+/* =================================================================
    24-pre. Theme toggle button in topbar
    ================================================================= */
 .theme-toggle {
