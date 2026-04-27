@@ -132,6 +132,21 @@ async function forwardToStableTsTrimPod(payload, env, corsHeaders) {
   return forwardToRunPodAsync(payload, { endpointId, apiKey, label: 'stable-ts-trim' }, corsHeaders);
 }
 
+// Default stable-ts pod (no trim). Same image as the trim pod minus ffmpeg
+// pre-trim. Async polling -> avoids the synchronous align.kohnai.ai chain
+// blowing the 100s CF wall-clock cap on cold starts.
+async function forwardToStableTsPod(payload, env, corsHeaders) {
+  const endpointId = env?.STABLE_TS_ENDPOINT_ID;
+  const apiKey = env?.RUNPOD_API_KEY;
+  if (!endpointId || !apiKey) {
+    return new Response(
+      JSON.stringify({ error: 'stable-ts not configured: set STABLE_TS_ENDPOINT_ID and RUNPOD_API_KEY in Pages env' }),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
+    );
+  }
+  return forwardToRunPodAsync(payload, { endpointId, apiKey, label: 'stable-ts' }, corsHeaders);
+}
+
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -275,6 +290,15 @@ export async function onRequestPost(context) {
         const resp = await forwardToStableTsTrimPod(payload, context.env, CORS_HEADERS);
         return wrapWithMetering(resp, { env: context.env, billing, payload, providerLabel: 'stable-ts' });
       }
+      // Prefer async polling against the stable-ts pod when configured —
+      // avoids the synchronous align.kohnai.ai chain that hits the 100s
+      // CF wall-clock cap on cold starts.
+      if (context.env?.STABLE_TS_ENDPOINT_ID) {
+        const resp = await forwardToStableTsPod(payload, context.env, CORS_HEADERS);
+        return wrapWithMetering(resp, { env: context.env, billing, payload, providerLabel: 'stable-ts' });
+      }
+      // Legacy fallback: synchronous chain via align.kohnai.ai. Kept for
+      // backward compatibility when STABLE_TS_ENDPOINT_ID isn't set.
       const forwardPayload = { ...payload };
       delete forwardPayload.audio_duration; // pod doesn't use this
       const resp = await fetch(ALIGN_ENDPOINT, {
