@@ -414,6 +414,67 @@ body {
   user-select: none;
 }
 
+/* Sticky actions column — keeps Play / Open / Unlink reachable without scroll */
+.data-table th.cell-actions,
+.data-table td.cell-actions {
+  position: sticky;
+  left: 0;
+  z-index: 30;
+  background: var(--surface);
+  box-shadow: 1px 0 0 var(--border-light);
+  white-space: nowrap;
+  padding-right: 14px;
+}
+.data-table tbody tr:hover td.cell-actions { background: var(--surface-2); }
+.data-table tbody tr.selected td.cell-actions { background: color-mix(in srgb, var(--accent-dim) 80%, var(--surface)); }
+.data-table tbody tr.expanded td.cell-actions { background: color-mix(in srgb, var(--accent-dim) 80%, var(--surface)); }
+.data-table th.cell-actions { z-index: 60; background: var(--surface); }
+
+/* Column-visibility menu */
+.col-vis-btn {
+  height: 34px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.col-vis-btn:hover { background: var(--surface); border-color: var(--border-strong); color: var(--text); }
+.col-vis-btn[aria-expanded="true"] { background: var(--surface); border-color: var(--accent); color: var(--accent); }
+
+.col-vis-pop {
+  position: absolute;
+  margin-top: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  min-width: 220px;
+  padding: 8px;
+  z-index: 200;
+  display: none;
+}
+.col-vis-pop.is-open { display: block; }
+.col-vis-pop label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 0.84rem;
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.col-vis-pop label:hover { background: var(--surface-hover); }
+.col-vis-pop input[type="checkbox"] { accent-color: var(--accent); }
+
 /* Hebrew cell more breathing room */
 .data-table td.cell-hebrew {
   font-size: 0.95rem;

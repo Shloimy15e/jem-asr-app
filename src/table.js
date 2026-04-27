@@ -107,24 +107,121 @@ let _container = null;
 let _onRowExpand = null;
 
 // ── Column definitions ─────────────────────────────────────────────
+// Column order tuned so the most-used cells (Open, Comments, First 15 words,
+// Status) are visible without horizontal scroll. Additional columns can be
+// hidden via the column-visibility menu (filter bar → "Columns").
+//
+// `defaultHidden: true` columns start hidden but can be re-enabled.
 const COLUMNS = [
-  { key: 'checkbox',      label: '',                  sortable: false, showWhen: () => true },
-  { key: 'rowNum',        label: '#',                 sortable: false, showWhen: () => true },
-  { key: 'favorite',      label: '\u2605',            sortable: false, showWhen: () => true },
-  { key: 'id',            label: 'ID',                sortable: true,  showWhen: () => true },
-  { key: 'name',          label: 'Audio Name',        sortable: true,  showWhen: () => true },
-  { key: 'year',          label: 'Year',              sortable: true,  showWhen: () => true },
-  { key: 'month',         label: 'Month',             sortable: true,  showWhen: () => true },
-  { key: 'day',           label: 'Day',               sortable: true,  showWhen: () => true },
-  { key: 'type',          label: 'Type',              sortable: true,  showWhen: () => true },
-  { key: 'sichaNum',      label: 'No.',               sortable: true,  showWhen: () => true },
-  { key: 'estMinutes',    label: 'Duration',          sortable: true,  showWhen: () => true },
-  { key: 'firstLine',     label: 'First 15 Words',    sortable: false, showWhen: () => true },
-  { key: 'transcript',    label: 'Transcript Name',   sortable: true,  showWhen: () => true },
-  { key: 'comments',      label: 'Comments',          sortable: false, showWhen: () => true },
-  { key: 'status',        label: 'Status',            sortable: true,  showWhen: () => true },
-  { key: 'actions',       label: 'Actions',           sortable: false, showWhen: () => true },
+  { key: 'checkbox',      label: '',                  sortable: false, showWhen: () => true,  optional: false },
+  { key: 'rowNum',        label: '#',                 sortable: false, showWhen: () => true,  optional: false },
+  { key: 'favorite',      label: '\u2605',            sortable: false, showWhen: () => true,  optional: true },
+  { key: 'actions',       label: 'Actions',           sortable: false, showWhen: () => true,  optional: false, sticky: true },
+  { key: 'name',          label: 'Audio Name',        sortable: true,  showWhen: () => true,  optional: false },
+  { key: 'status',        label: 'Status',            sortable: true,  showWhen: () => true,  optional: true },
+  { key: 'comments',      label: 'Comments',          sortable: false, showWhen: () => true,  optional: true },
+  { key: 'firstLine',     label: 'First 15 Words',    sortable: false, showWhen: () => true,  optional: true },
+  { key: 'estMinutes',    label: 'Duration',          sortable: true,  showWhen: () => true,  optional: true },
+  { key: 'exported',      label: 'Exported',          sortable: true,  showWhen: () => true,  optional: true },
+  { key: 'transcript',    label: 'Transcript Name',   sortable: true,  showWhen: () => true,  optional: true },
+  { key: 'id',            label: 'ID',                sortable: true,  showWhen: () => true,  optional: true, defaultHidden: true },
+  { key: 'year',          label: 'Year',              sortable: true,  showWhen: () => true,  optional: true },
+  { key: 'month',         label: 'Month',             sortable: true,  showWhen: () => true,  optional: true, defaultHidden: true },
+  { key: 'day',           label: 'Day',               sortable: true,  showWhen: () => true,  optional: true, defaultHidden: true },
+  { key: 'type',          label: 'Type',              sortable: true,  showWhen: () => true,  optional: true },
+  { key: 'sichaNum',      label: 'No.',               sortable: true,  showWhen: () => true,  optional: true, defaultHidden: true },
 ];
+
+// ── Column visibility (persisted in localStorage) ──────────────────
+const COL_VIS_KEY = 'jem-asr-col-visibility-v1';
+function loadColVisibility() {
+  try {
+    const raw = localStorage.getItem(COL_VIS_KEY);
+    if (!raw) {
+      // First visit — apply defaults from column defs
+      const def = {};
+      for (const c of COLUMNS) if (c.optional) def[c.key] = c.defaultHidden ? false : true;
+      return def;
+    }
+    return JSON.parse(raw);
+  } catch { return {}; }
+}
+function saveColVisibility(vis) {
+  try { localStorage.setItem(COL_VIS_KEY, JSON.stringify(vis)); } catch {}
+}
+let _colVisibility = loadColVisibility();
+function isColVisible(c) {
+  if (!c.optional) return true;
+  if (Object.prototype.hasOwnProperty.call(_colVisibility, c.key)) return !!_colVisibility[c.key];
+  return !c.defaultHidden;
+}
+function setColVisibility(key, v) {
+  _colVisibility[key] = !!v;
+  saveColVisibility(_colVisibility);
+}
+
+function mountColVisibilityMenu() {
+  if (document.getElementById('btn-col-vis')) return; // already mounted
+  const resetBtn = document.getElementById('btn-reset-filters');
+  if (!resetBtn || !resetBtn.parentElement) return;
+
+  const wrap = document.createElement('span');
+  wrap.style.position = 'relative';
+  wrap.style.display = 'inline-block';
+
+  const btn = document.createElement('button');
+  btn.id = 'btn-col-vis';
+  btn.type = 'button';
+  btn.className = 'col-vis-btn';
+  btn.setAttribute('aria-haspopup', 'true');
+  btn.setAttribute('aria-expanded', 'false');
+  btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg><span>Columns</span>';
+
+  const pop = document.createElement('div');
+  pop.className = 'col-vis-pop';
+  pop.setAttribute('role', 'menu');
+
+  function rebuild() {
+    pop.innerHTML = '';
+    for (const c of COLUMNS) {
+      if (!c.optional) continue;
+      const lbl = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = isColVisible(c);
+      cb.addEventListener('change', () => {
+        setColVisibility(c.key, cb.checked);
+        updateTable();
+      });
+      const span = document.createElement('span');
+      span.textContent = c.label || c.key;
+      lbl.appendChild(cb);
+      lbl.appendChild(span);
+      pop.appendChild(lbl);
+    }
+  }
+  rebuild();
+
+  function open() {
+    rebuild();
+    pop.classList.add('is-open');
+    btn.setAttribute('aria-expanded', 'true');
+    setTimeout(() => document.addEventListener('click', onDocClick), 0);
+  }
+  function close() {
+    pop.classList.remove('is-open');
+    btn.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', onDocClick);
+  }
+  function onDocClick(e) { if (!wrap.contains(e.target)) close(); }
+  btn.addEventListener('click', () => {
+    if (pop.classList.contains('is-open')) close(); else open();
+  });
+
+  wrap.appendChild(btn);
+  wrap.appendChild(pop);
+  resetBtn.parentElement.insertBefore(wrap, resetBtn);
+}
 
 // Filter keys from HTML data-filter attributes are passed directly to state.js
 // since getFilteredRows now accepts both 'fifty-*' and '50hr-*' variants.
@@ -142,7 +239,7 @@ function filterMatchesStatus(filter, statuses) {
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function getVisibleColumns() {
-  return COLUMNS.filter(c => c.showWhen(buildFilter()));
+  return COLUMNS.filter(c => c.showWhen(buildFilter()) && isColVisible(c));
 }
 
 function getTranscriptForAudio(audioId) {
@@ -162,6 +259,30 @@ function getRowData(audio) {
   const alignment = state.alignments && state.alignments[id];
   const transcript = getTranscriptForAudio(id);
 
+  // Compute effective duration honoring trim_start / trim_end (both stored in seconds).
+  // If trimmed, the displayed duration is trim_end-trim_start (or remaining-after-start).
+  const trim = state.trims?.[id] || null;
+  const totalSec = (audio.estMinutes || 0) * 60;
+  let effectiveSec = totalSec;
+  let isTrimmed = false;
+  if (trim && (trim.start || trim.end)) {
+    const start = trim.start || 0;
+    const end = trim.end && trim.end > 0 ? trim.end : totalSec;
+    if (end > start) {
+      effectiveSec = end - start;
+      isTrimmed = effectiveSec !== totalSec;
+    }
+  }
+  const effectiveMin = effectiveSec / 60;
+  const durationText = audio.estMinutes != null
+    ? (isTrimmed
+        ? `${effectiveMin.toFixed(1)} min ✂`
+        : `${(audio.estMinutes).toFixed ? audio.estMinutes.toFixed(1) : audio.estMinutes} min`)
+    : '';
+  const durationTitle = isTrimmed
+    ? `Trimmed ${effectiveMin.toFixed(1)} min · original ${audio.estMinutes} min`
+    : '';
+
   return {
     id,
     name: (state.audioNames && state.audioNames[id]) || audio.name || '',
@@ -170,7 +291,10 @@ function getRowData(audio) {
     day: (state.audioDays && state.audioDays[id]) || audio.day || '',
     type: (state.audioTypes && state.audioTypes[id]) || audio.type || '',
     sichaNum: parseSichaNum(audio.name) || '',
-    estMinutes: audio.estMinutes != null ? audio.estMinutes + ' min' : '',
+    estMinutes: durationText,
+    estMinutesNumeric: effectiveMin,
+    estMinutesTitle: durationTitle,
+    isTrimmed,
     firstLine: transcript ? truncateWords(transcript.firstLine || '', 15) : '',
     transcript: transcript ? transcript.name : '',
     matchConf: mapping ? formatConfidence(mapping.confidence) : '',
@@ -181,6 +305,8 @@ function getRowData(audio) {
     status,
     isBenchmark: !!audio.isBenchmark,
     isSelected50hr: !!audio.isSelected50hr,
+    trainingExportedAt: audio.trainingExportedAt || null,
+    trainingExportedBy: audio.trainingExportedBy || null,
   };
 }
 
@@ -249,6 +375,18 @@ function sortRows(rows) {
   const key = currentSort.column;
   const dir = currentSort.dir === 'asc' ? 1 : -1;
   return [...rows].sort((a, b) => {
+    // Special-case numeric-trimmed duration so we sort by minutes, not by
+    // the formatted text (which has a non-numeric scissors emoji).
+    if (key === 'estMinutes') {
+      const av = a.estMinutesNumeric ?? -1;
+      const bv = b.estMinutesNumeric ?? -1;
+      return (av - bv) * dir;
+    }
+    if (key === 'exported') {
+      const av = a.trainingExportedAt ? new Date(a.trainingExportedAt).getTime() : 0;
+      const bv = b.trainingExportedAt ? new Date(b.trainingExportedAt).getTime() : 0;
+      return (av - bv) * dir;
+    }
     let va = a[key];
     let vb = b[key];
     // Parse numeric-looking values
@@ -287,6 +425,7 @@ function renderPipelineIndicator(audioId, detail) {
     const badge = document.createElement('span');
     badge.className = 'status-badge status-unmapped';
     badge.textContent = 'unmapped';
+    badge.title = 'No transcript linked yet — open the file and link / paste / generate one.';
     return badge;
   }
 
@@ -305,18 +444,24 @@ function renderPipelineIndicator(audioId, detail) {
     const isDone = stages[name];
     const isRejected = name === 'approved' && stages.rejected && !stages.approved;
 
+    const STAGE_TIPS = {
+      mapped:   'Mapped — transcript text is linked to this audio (manual paste, ASR, or matched)',
+      cleaned:  'Cleaned — transcript was edited / cleaned (brackets, parentheses, intro/outro, whitespace removed)',
+      aligned:  'Aligned — words have timestamps from a forced-alignment run',
+      approved: 'Approved — reviewed and ready for training export',
+    };
     if (isRejected) {
       dot.className = 'pipeline-stage done-rejected';
       dot.textContent = '✗';
-      dot.title = 'rejected';
+      dot.title = 'Rejected — review marked this transcript as not usable';
     } else if (isDone) {
       dot.className = `pipeline-stage done-${name}`;
       dot.textContent = '✓';
-      dot.title = name;
+      dot.title = STAGE_TIPS[name] || name;
     } else {
       dot.className = 'pipeline-stage pending';
       dot.textContent = '○';
-      dot.title = name;
+      dot.title = (STAGE_TIPS[name] ? 'Pending: ' + STAGE_TIPS[name] : 'Pending: ' + name);
     }
     container.appendChild(dot);
   }
@@ -487,6 +632,7 @@ function buildTable(rows) {
   const headerRow = document.createElement('tr');
   cols.forEach(col => {
     const th = document.createElement('th');
+    th.classList.add('cell-' + col.key);
     if (col.key === 'checkbox') {
       th.classList.add('cell-checkbox');
       const cb = document.createElement('input');
@@ -541,6 +687,8 @@ function buildTable(rows) {
 
     cols.forEach(col => {
       const td = document.createElement('td');
+      // Stable per-cell class so refresh.css can sticky / style by column
+      td.classList.add('cell-' + col.key);
 
       switch (col.key) {
         case 'checkbox': {
@@ -865,6 +1013,29 @@ function buildTable(rows) {
             fiftyBadge.style.marginLeft = '4px';
             td.appendChild(fiftyBadge);
           }
+          break;
+        }
+        case 'exported': {
+          if (row.trainingExportedAt) {
+            const badge = document.createElement('span');
+            badge.className = 'status-badge status-exported';
+            const d = new Date(row.trainingExportedAt);
+            badge.textContent = d.toLocaleDateString();
+            badge.title = `Exported for training on ${d.toLocaleString()}`
+              + (row.trainingExportedBy ? ` by ${row.trainingExportedBy}` : '');
+            td.appendChild(badge);
+          } else {
+            const dash = document.createElement('span');
+            dash.style.color = 'var(--text-muted)';
+            dash.textContent = '—';
+            td.appendChild(dash);
+          }
+          break;
+        }
+        case 'estMinutes': {
+          td.textContent = row.estMinutes || '';
+          if (row.estMinutesTitle) td.title = row.estMinutesTitle;
+          if (row.isTrimmed) td.style.fontVariantNumeric = 'tabular-nums';
           break;
         }
         case 'actions': {
@@ -1330,6 +1501,11 @@ function renderTable(container, options = {}) {
       updateTable();
     });
   }
+
+  // ── Column visibility menu ──────────────────────────────────────
+  // Lives inline next to "Reset"; clicking it pops a checkbox list of
+  // optional columns. Selections persist in localStorage.
+  mountColVisibilityMenu();
 
   // Populate dropdown filters from data
   populateDropdownFilters();

@@ -326,6 +326,58 @@ export async function onRequestPost(context) {
   }
 }
 
+/**
+ * GET /api/transcribe?health=1
+ * Reports which transcription providers are configured (and, for Vertex,
+ * verifies that the service-account JSON can actually mint an OAuth token).
+ *
+ * Response shape:
+ *   {
+ *     gemini:  { configured: true, mode: 'vertex', tokenOk: true, project: '...' },
+ *     mendel:  { configured: true },
+ *     whisper: { configured: true }
+ *   }
+ *
+ * No secrets are returned — only booleans + the Vertex project ID (which
+ * is already visible in the front-end ASR settings panel).
+ */
+export async function onRequestGet(context) {
+  const env = context.env;
+  const result = { gemini: {}, mendel: {}, whisper: {} };
+
+  // Gemini
+  if (env.GEMINI_SA_JSON) {
+    result.gemini.configured = true;
+    result.gemini.mode = 'vertex';
+    try {
+      const sa = typeof env.GEMINI_SA_JSON === 'string' ? JSON.parse(env.GEMINI_SA_JSON) : env.GEMINI_SA_JSON;
+      result.gemini.project = sa.project_id || null;
+      // Mint a token end-to-end; this is the actual smoke test.
+      await getVertexAccessToken(env.GEMINI_SA_JSON);
+      result.gemini.tokenOk = true;
+    } catch (err) {
+      result.gemini.tokenOk = false;
+      result.gemini.error = (err && err.message) || String(err);
+    }
+  } else if (env.GEMINI_API_KEY) {
+    result.gemini.configured = true;
+    result.gemini.mode = 'api-key';
+  } else {
+    result.gemini.configured = false;
+  }
+
+  // Mendel
+  result.mendel.configured = !!env.YL_API_KEY;
+
+  // Whisper (RunPod) — uses align.kohnai.ai which doesn't need a key here
+  result.whisper.configured = true;
+
+  return new Response(JSON.stringify(result), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+  });
+}
+
 export async function onRequestOptions() {
   return new Response(null, { headers: CORS_HEADERS });
 }

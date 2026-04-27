@@ -698,15 +698,76 @@ function buildAsrProviderBar(audioId, state, onComplete) {
   label.textContent = 'Generate transcript:';
   bar.appendChild(label);
 
-  // Per-call Gemini prompt — Whisper and Mendel ignore it. Lives on the same
-  // bar so users can edit and rerun without leaving the detail view.
+  // Per-call Gemini prompt — Whisper / Mendel ignore. Compact on the detail
+  // bar; an "Edit fullscreen" link opens an overlay for longer prompts.
+  // Last value persists across pages via the same localStorage key as the
+  // dedicated Transcribe page.
+  const promptWrap = document.createElement('div');
+  promptWrap.style.cssText = 'flex:1;min-width:240px;display:flex;flex-direction:column;gap:4px;';
   const promptInput = document.createElement('textarea');
   promptInput.className = 'gemini-prompt-input';
-  promptInput.rows = 1;
-  promptInput.placeholder = 'Optional Gemini prompt (Whisper/Mendel ignore)';
+  promptInput.rows = 2;
+  promptInput.placeholder = 'Optional Gemini prompt — leave blank for default. (Whisper / Mendel ignore.)';
   promptInput.title = 'Custom prompt for Gemini/Vertex; appended as a separate version per run';
-  promptInput.style.cssText = 'flex:1;min-width:200px;padding:5px 8px;border:1px solid var(--border,#ccc);border-radius:6px;font-size:0.82rem;resize:vertical;font-family:inherit;';
-  bar.appendChild(promptInput);
+  promptInput.style.cssText = 'width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:0.85rem;line-height:1.45;resize:vertical;font-family:inherit;background:var(--surface);color:var(--text);outline:none;transition:border-color 150ms, box-shadow 150ms;';
+  promptInput.addEventListener('focus', () => { promptInput.style.borderColor = 'var(--accent)'; promptInput.style.boxShadow = '0 0 0 3px var(--accent-dim)'; });
+  promptInput.addEventListener('blur',  () => { promptInput.style.borderColor = 'var(--border)'; promptInput.style.boxShadow = 'none'; });
+  try {
+    const saved = localStorage.getItem('jem-asr-last-gemini-prompt');
+    if (saved) promptInput.value = saved;
+  } catch {}
+  promptInput.addEventListener('input', () => {
+    try { localStorage.setItem('jem-asr-last-gemini-prompt', promptInput.value); } catch {}
+  });
+  promptWrap.appendChild(promptInput);
+  // Subtle hint row
+  const promptHint = document.createElement('div');
+  promptHint.style.cssText = 'font-size:0.72rem;color:var(--text-muted);display:flex;justify-content:space-between;gap:6px;';
+  const promptHintText = document.createElement('span');
+  promptHintText.textContent = 'Each Gemini run is saved as a new version with a timestamp.';
+  promptHint.appendChild(promptHintText);
+  const fullscreenLink = document.createElement('a');
+  fullscreenLink.href = '#';
+  fullscreenLink.textContent = 'Expand';
+  fullscreenLink.style.cssText = 'color:var(--accent);text-decoration:none;font-weight:600;';
+  fullscreenLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.45);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:1000;padding:24px;';
+    const dlg = document.createElement('div');
+    dlg.style.cssText = 'background:var(--surface);border-radius:var(--radius-2xl);box-shadow:var(--shadow-lg);width:min(900px,92vw);max-height:88vh;display:flex;flex-direction:column;padding:22px;';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;';
+    const title = document.createElement('h3');
+    title.textContent = 'Edit Gemini prompt';
+    title.style.cssText = 'margin:0;font-size:1rem;font-weight:700;letter-spacing:-0.01em;';
+    const done = document.createElement('button');
+    done.type = 'button';
+    done.className = 'action-btn';
+    done.textContent = 'Done';
+    head.appendChild(title);
+    head.appendChild(done);
+    const area = document.createElement('textarea');
+    area.value = promptInput.value;
+    area.style.cssText = 'flex:1;width:100%;min-height:50vh;padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius);font-size:0.95rem;line-height:1.6;font-family:inherit;resize:vertical;outline:none;';
+    area.addEventListener('focus', () => { area.style.borderColor = 'var(--accent)'; area.style.boxShadow = '0 0 0 3px var(--accent-dim)'; });
+    area.addEventListener('blur',  () => { area.style.borderColor = 'var(--border)'; area.style.boxShadow = 'none'; });
+    dlg.appendChild(head);
+    dlg.appendChild(area);
+    overlay.appendChild(dlg);
+    document.body.appendChild(overlay);
+    area.focus();
+    const close = () => {
+      promptInput.value = area.value;
+      try { localStorage.setItem('jem-asr-last-gemini-prompt', area.value); } catch {}
+      document.body.removeChild(overlay);
+    };
+    done.addEventListener('click', close);
+    overlay.addEventListener('click', (e2) => { if (e2.target === overlay) close(); });
+  });
+  promptHint.appendChild(fullscreenLink);
+  promptWrap.appendChild(promptHint);
+  bar.appendChild(promptWrap);
 
   for (const { key, label: btnLabel } of PROVIDERS) {
     const btn = document.createElement('button');
@@ -917,18 +978,42 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
         const compareTargetId = _compareVersionByAudio.get(audioId) || null;
         versions.forEach((v) => {
           if (v.id === activeVersionRef?.id) return; // can't compare to itself
+          // Include all versions even if text isn't loaded — manual versions
+          // often start empty until first opened; we lazy-load on pick.
           const empty = !(typeof v.text === 'string' && v.text.trim().length > 0);
-          if (empty) return;
           const opt = document.createElement('option');
           opt.value = v.id;
-          opt.textContent = labelFor(v);
+          opt.textContent = empty ? `${labelFor(v)} \u2014 (load on pick)` : labelFor(v);
           if (v.id === compareTargetId) opt.selected = true;
           comparePicker.appendChild(opt);
         });
-        comparePicker.addEventListener('change', (e) => {
+        comparePicker.addEventListener('change', async (e) => {
           const val = e.target.value || null;
-          if (val) _compareVersionByAudio.set(audioId, val);
-          else _compareVersionByAudio.delete(audioId);
+          if (val) {
+            // Lazy-load text for the picked version (especially manual / cleaned
+            // imported from Supabase metadata where text is fetched on demand).
+            const target = versions.find(v => v.id === val);
+            const isEmpty = target && !(typeof target.text === 'string' && target.text.trim().length > 0);
+            if (isEmpty) {
+              try {
+                if (target.type === 'manual' && transcript) {
+                  const text = await loadFullText(transcript);
+                  if (text) target.text = text;
+                } else if (target.type === 'cleaned' || target.type === 'edited' || target.type === 'asr') {
+                  // text may live in supabase under transcript_edits — fall back
+                  // to loadTranscriptText which the caller of detail page uses
+                  const { loadTranscriptText } = await import('./db.js');
+                  const text = await loadTranscriptText(audioId, target.id);
+                  if (text) target.text = text;
+                }
+              } catch (err) {
+                console.warn('Failed to load comparison version text:', err);
+              }
+            }
+            _compareVersionByAudio.set(audioId, val);
+          } else {
+            _compareVersionByAudio.delete(audioId);
+          }
           const s = getState();
           renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
         });
@@ -1705,10 +1790,9 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     container.appendChild(hint);
   }
 
-  // ── Progress card (when alignment exists) ──
-  if (alignment) {
-    container.appendChild(renderProgressCard(alignment));
-  }
+  // (Progress card with high-confidence % + low-confidence red bar removed
+  // per user feedback — alignment confidence now lives only on the version
+  // info bar / iteration history.)
 
   // ── Step panels ──
   function buildPassButtons(targetEl) {
@@ -1996,7 +2080,12 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
   const cleanLabel = document.createElement('div');
   cleanLabel.className = 'section-sublabel';
   cleanLabel.textContent = 'Cleaning — click a pass to preview changes line by line';
+  cleanLabel.title = 'Cleaning prepares the raw transcript for word-level alignment by removing things the audio does not contain (e.g. bracketed editor notes, parenthetical asides, section markers, leading/trailing intro text, double spaces).';
   cleanSection.appendChild(cleanLabel);
+  const cleanHelp = document.createElement('div');
+  cleanHelp.style.cssText = 'font-size:0.78rem;color:var(--text-secondary);margin:-2px 0 8px;line-height:1.5;';
+  cleanHelp.textContent = 'What is "cleaned"? Removes editor-only text that\'s not actually spoken (e.g. [bracketed notes], (parentheticals), section markers, intro/outro, double spaces) so the transcript matches what the speaker said. Required before alignment.';
+  cleanSection.appendChild(cleanHelp);
   buildPassButtons(cleanSection);
 
   // Revert button — undo last cleaning operation
