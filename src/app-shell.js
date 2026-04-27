@@ -7,10 +7,20 @@
 import { icons, iconEl } from './icons.js';
 import { mountDrawerToggle, setShellSections } from './layout-shell.js';
 import * as authMod from './auth.js';
+import './toast.js';
+import './command-palette.js';
 
 // Expose auth on window so layout-shell can read user info without a
 // circular import (it looks at window.__jemAuthMod).
 if (typeof window !== 'undefined') window.__jemAuthMod = authMod;
+
+// Pages can register additional rail sections (per-page contextual nav)
+// via setContextualSections(). They get appended below the global nav.
+let _contextualSections = [];
+export function setContextualSections(sections) {
+  _contextualSections = Array.isArray(sections) ? sections : [];
+  refreshShell();
+}
 
 const NAV = [
   { label: 'Audio',         icon: 'audio',    href: '/index.html',         match: ['/', '/index.html'] },
@@ -76,6 +86,17 @@ function buildContextualNav() {
   }
   if (actions.length) sections.push({ heading: 'Quick actions', items: actions });
 
+  // Help (cheatsheet + command palette) above account
+  sections.push({
+    heading: 'Help',
+    items: [
+      { label: 'Command palette', icon: 'command',
+        onClick: () => window.__jemCmdK && window.__jemCmdK.open() },
+      { label: 'Keyboard shortcuts', icon: 'keyboard',
+        onClick: () => window.__jemCmdK && window.__jemCmdK.openCheatsheet() },
+    ],
+  });
+
   // Sign out always last
   if (document.getElementById('btn-logout')) {
     sections.push({
@@ -135,8 +156,25 @@ function mountSkipLink() {
   document.body.insertBefore(link, document.body.firstChild);
 }
 
+function mountCmdkHint(header) {
+  if (header.querySelector('.cmdk-hint')) return;
+  const hint = document.createElement('button');
+  hint.type = 'button';
+  hint.className = 'cmdk-hint toolbar-btn';
+  hint.title = 'Quick search & actions (Ctrl/Cmd+K)';
+  const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+  const keyLabel = isMac ? '⌘K' : 'Ctrl K';
+  hint.innerHTML = `${icons.search()}<span class="cmdk-hint__label">Search…</span><kbd>${keyLabel}</kbd>`;
+  hint.addEventListener('click', () => window.__jemCmdK && window.__jemCmdK.open());
+  // Insert it before the existing toolbar so the toolbar (right-aligned) stays last
+  const toolbar = header.querySelector('.toolbar');
+  if (toolbar) header.insertBefore(hint, toolbar);
+  else header.appendChild(hint);
+}
+
 function refreshShell() {
-  setShellSections(buildContextualNav());
+  const merged = [...buildContextualNav(), ..._contextualSections];
+  setShellSections(merged);
   decorateToolbarButtons();
 }
 
@@ -150,6 +188,7 @@ export function initAppShell() {
   // Hamburger drawer toggle removed per UX feedback — the persistent
   // left rail covers nav on tablet+ and is the intended primary surface.
   // (Was: mountDrawerToggle(header, 'Open navigation'))
+  mountCmdkHint(header);
   refreshShell();
 
   // If admin button becomes visible later (after auth), refresh nav

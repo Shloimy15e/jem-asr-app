@@ -636,11 +636,18 @@ function renderDetailPage(audioId, audio, state, container) {
 
     container.appendChild(benchSection.el);
   }
+  // Publish rail nav after sections are mounted
+  setTimeout(publishDetailRailSections, 0);
 }
 
 function createSection(title) {
   const el = document.createElement('section');
   el.className = 'detail-section';
+  // Slug for in-page jump from rail / cmdk
+  const slug = String(title || '').toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (slug) el.id = `section-${slug}`;
+  el.dataset.sectionTitle = title;
   const header = document.createElement('h3');
   header.className = 'detail-section-title';
   header.textContent = title;
@@ -649,6 +656,29 @@ function createSection(title) {
   content.className = 'detail-section-content';
   el.appendChild(content);
   return { el, header, content };
+}
+
+// Walk the rendered detail page and publish a "Sections" rail block so
+// the user can jump between Audio Player / Mapping / Versions / etc.
+function publishDetailRailSections() {
+  try {
+    const sections = Array.from(document.querySelectorAll('.detail-section'));
+    if (sections.length === 0) return;
+    const items = sections.map(sec => ({
+      label: sec.dataset.sectionTitle || sec.id || 'Section',
+      icon: 'layoutGrid',
+      onClick: (e) => {
+        if (e) e.preventDefault();
+        sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return false;
+      },
+    }));
+    import('./app-shell.js').then(mod => {
+      if (typeof mod.setContextualSections === 'function') {
+        mod.setContextualSections([{ heading: 'On this page', items }]);
+      }
+    });
+  } catch (e) { /* no-op */ }
 }
 
 function addCollapseBehavior(section, header, collapseByDefault) {
