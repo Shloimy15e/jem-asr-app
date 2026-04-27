@@ -917,12 +917,21 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       // this audio (manual / edited / cleaned / asr-<model>) instead of being
       // stuck on whatever getBestVersion picked. Empty versions are still
       // listed so users can see they exist, but marked so they're obvious.
-      if (versions.length > 1) {
+      // Render whenever there is at least one comparable surface — i.e.
+      // multiple versions OR a single version + a mapped transcript (so the
+      // user can compare ASR vs. the manual / original transcript).
+      const SYN_MANUAL_ID = '__synthetic_manual__';
+      const hasManualVersion = versions.some(v => v.type === 'manual');
+      const canSynthesizeManual = !!transcript && !hasManualVersion;
+      const showPickers = versions.length > 1 || canSynthesizeManual;
+      if (showPickers) {
         const picker = document.createElement('select');
         picker.className = 'version-picker';
         picker.style.cssText = 'padding:3px 8px;border:1px solid var(--border,#ccc);border-radius:6px;font-size:0.85rem;background:#fff;';
         picker.setAttribute('aria-label', 'Select transcript version');
-        const byType = { edited: 'Edited', cleaned: 'Cleaned', asr: 'ASR', manual: 'Original' };
+        // 'Manual (original)' is clearer than just 'Original' since users
+        // type the word "manual" when they mean the typed/imported text.
+        const byType = { edited: 'Edited', cleaned: 'Cleaned', asr: 'ASR', manual: 'Manual (original)' };
         // Look up Gemini endpoint display names so "asr (gemini-yiddish-v3-large)"
         // renders as "ASR (gemini: Yiddish v3 large)".
         const geminiEndpoints = (getState().transcribeProviders?.gemini?.endpoints) || [];
@@ -987,30 +996,59 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
           if (v.id === compareTargetId) opt.selected = true;
           comparePicker.appendChild(opt);
         });
+        // Synthetic "Manual (original transcript)" option — appears when no
+        // manual version record exists yet (e.g. ASR-only run with mapped
+        // transcript, or migration glitch). Picking it lazy-loads the
+        // transcript text and creates a real manual version.
+        if (canSynthesizeManual) {
+          const opt = document.createElement('option');
+          opt.value = SYN_MANUAL_ID;
+          opt.textContent = 'Manual (original transcript) — (load on pick)';
+          if (compareTargetId === SYN_MANUAL_ID) opt.selected = true;
+          comparePicker.appendChild(opt);
+        }
         comparePicker.addEventListener('change', async (e) => {
           const val = e.target.value || null;
           if (val) {
-            // Lazy-load text for the picked version (especially manual / cleaned
-            // imported from Supabase metadata where text is fetched on demand).
-            const target = versions.find(v => v.id === val);
-            const isEmpty = target && !(typeof target.text === 'string' && target.text.trim().length > 0);
-            if (isEmpty) {
+            if (val === SYN_MANUAL_ID && transcript) {
+              // Lazy-create a real manual version from the mapped transcript
               try {
-                if (target.type === 'manual' && transcript) {
-                  const text = await loadFullText(transcript);
-                  if (text) target.text = text;
-                } else if (target.type === 'cleaned' || target.type === 'edited' || target.type === 'asr') {
-                  // text may live in supabase under transcript_edits — fall back
-                  // to loadTranscriptText which the caller of detail page uses
-                  const { loadTranscriptText } = await import('./db.js');
-                  const text = await loadTranscriptText(audioId, target.id);
-                  if (text) target.text = text;
-                }
+                const text = await loadFullText(transcript);
+                addVersion(audioId, {
+                  type: 'manual',
+                  sourceTranscriptId: transcript.id,
+                  text: text || '',
+                  createdAt: new Date().toISOString(),
+                  createdBy: 'detail-page-synthesized',
+                });
+                const newVersions = getVersions(audioId);
+                const created = newVersions.find(v => v.type === 'manual');
+                if (created) _compareVersionByAudio.set(audioId, created.id);
               } catch (err) {
-                console.warn('Failed to load comparison version text:', err);
+                console.warn('Failed to load original transcript for compare:', err);
               }
+            } else {
+              // Lazy-load text for the picked version (especially manual /
+              // cleaned imported from Supabase metadata where text is fetched
+              // on demand).
+              const target = versions.find(v => v.id === val);
+              const isEmpty = target && !(typeof target.text === 'string' && target.text.trim().length > 0);
+              if (isEmpty) {
+                try {
+                  if (target.type === 'manual' && transcript) {
+                    const text = await loadFullText(transcript);
+                    if (text) target.text = text;
+                  } else if (target.type === 'cleaned' || target.type === 'edited' || target.type === 'asr') {
+                    const { loadTranscriptText } = await import('./db.js');
+                    const text = await loadTranscriptText(audioId, target.id);
+                    if (text) target.text = text;
+                  }
+                } catch (err) {
+                  console.warn('Failed to load comparison version text:', err);
+                }
+              }
+              _compareVersionByAudio.set(audioId, val);
             }
-            _compareVersionByAudio.set(audioId, val);
           } else {
             _compareVersionByAudio.delete(audioId);
           }

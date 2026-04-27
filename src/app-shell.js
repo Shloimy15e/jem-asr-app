@@ -117,10 +117,24 @@ function decorateToolbarButtons() {
   }
 }
 
+function mountSkipLink() {
+  if (document.querySelector('.skip-link')) return;
+  // Find a sensible main landmark to jump to
+  const main = document.querySelector('main, .app-main, #app, body > div');
+  if (!main) return;
+  if (!main.id) main.id = 'main-content';
+  const link = document.createElement('a');
+  link.className = 'skip-link';
+  link.href = `#${main.id}`;
+  link.textContent = 'Skip to main content';
+  document.body.insertBefore(link, document.body.firstChild);
+}
+
 let _initialised = false;
 export function initAppShell() {
   if (_initialised) return;
   _initialised = true;
+  mountSkipLink();
   const header = document.querySelector('.app-header');
   if (!header) return;
   mountDrawerToggle(header, 'Open navigation');

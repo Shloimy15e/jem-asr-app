@@ -1191,3 +1191,53 @@ kbd {
   .editable-title { font-size: 1.2rem; }
   .credits-number { font-size: 2.4rem; }
 }
+
+/* ───────────────── A11y: focus rings (skill checklist) ──────────── */
+/* Default browser :focus is hidden by many components — restore an
+ * explicit, visible focus ring using the Apple-blue accent so keyboard
+ * users always see where they are. Per ui-ux-pro-max anti-pattern list. */
+:where(button, [role="button"], a, .btn, .icon-btn, .toolbar-btn,
+       .nav-link, .pill, .row-action, .col-vis-btn, .menu-item,
+       input, textarea, select, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-dim-strong, rgba(0, 102, 255, 0.16));
+  border-color: var(--accent);
+}
+
+/* Inputs that already have a border get the ring INSIDE so layout doesn't
+ * jump — combine the existing border with the ring. */
+:where(input, textarea, select):focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim, rgba(0, 102, 255, 0.10));
+}
+
+/* Skip link for keyboard users (mounted by app-shell.js) */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 8px;
+  padding: 8px 14px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  z-index: 9999;
+  font-weight: 600;
+}
+.skip-link:focus { left: 12px; }
+
+/* ───────────────── A11y: prefers-reduced-motion ─────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Cancel layout-shifting hovers entirely */
+  *:hover { transform: none !important; }
+}
