@@ -49,7 +49,7 @@ async function stripeGet(env, path) {
   const res = await fetch(`https://api.stripe.com/v1${path}`, {
     headers: {
       Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
-      'Stripe-Version': '2025-09-30.basil',
+      'Stripe-Version': '2024-09-30.acacia',
     },
   });
   if (!res.ok) throw new Error(`Stripe GET ${path}: ${res.status}`);

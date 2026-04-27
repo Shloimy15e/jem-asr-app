@@ -266,7 +266,8 @@ export async function stripeRequest(env, path, { method = 'POST', form = null, q
     method,
     headers: {
       Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
-      'Stripe-Version': '2025-09-30.basil',
+      // Pin to a known-good version. Bump when adopting new Stripe features.
+      'Stripe-Version': '2024-09-30.acacia',
     },
   };
   if (form) {
