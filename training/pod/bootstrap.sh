@@ -101,12 +101,19 @@ fi
 # train-whisper.py extracts features from on the fly.
 # --eval_datasets defaults to the same repo's "eval" split — push-dataset.sh
 # splits 90/10 before pushing.
-TRAIN_DS="${TRAIN_DATASETS:-${HF_DATASET_REPO}:train}"
-EVAL_DS="${EVAL_DATASETS:-${HF_DATASET_REPO}:eval}"
+#
+# train-whisper.py declares --train_datasets / --eval_datasets with nargs="*",
+# so multiple HF datasets pool into one concatenated stream. Format per arg is
+# "<repo>[:<split>]". Configs that pool sources space-separate them in the env
+# var, e.g.  TRAIN_DATASETS="ivrit-ai/foo:train ivrit-ai/bar:train other:train".
+# `read -ra` splits on whitespace into a bash array so each entry passes as its
+# own argv element.
+read -ra TRAIN_DS <<< "${TRAIN_DATASETS:-${HF_DATASET_REPO}:train}"
+read -ra EVAL_DS  <<< "${EVAL_DATASETS:-${HF_DATASET_REPO}:eval}"
 
 ARGS=(
-  --train_datasets   "$TRAIN_DS"
-  --eval_datasets    "$EVAL_DS"
+  --train_datasets   "${TRAIN_DS[@]}"
+  --eval_datasets    "${EVAL_DS[@]}"
   --model_name       "$BASE_MODEL"
   --target_language  "$TARGET_LANGUAGE"
   --output_model_name "$OUTPUT_MODEL_NAME"

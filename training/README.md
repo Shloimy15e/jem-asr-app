@@ -64,14 +64,29 @@ python vendor/asr-training/train-whisper.py --help
 ```
 
 ### Included configs
-- **`jem_lora_v1.env`** — QLoRA on Whisper-large-v3-turbo. Default. Small-data friendly.
-- **`jem_full_v1.env`** — full-parameter fine-tune. Use with >50h of approved training data.
+- **`jem_lora_v1.env`** — QLoRA on `ivrit-ai/yi-whisper-large-v3-turbo`. Small-data friendly. Use as a Rebbe-specialty adapter on top of a strong Yiddish base.
+- **`jem_full_v1.env`** — full-parameter fine-tune of `ivrit-ai/yi-whisper-large-v3-turbo` on approved JEM data only. Use with >50h of approved data.
+- **`jem_base_v2.env`** — full-parameter fine-tune of `openai/whisper-large-v3-turbo` from scratch on the **pooled** Yiddish corpus (ivrit-ai recital + ivrit-ai whatsapp + Facebook omnilingual ydd_Hebr). ~110h training, ~1.5h disjoint-speaker eval. Mirrors ivrit-ai's published yi-whisper recipe. Run **before** `jem_lora_v1.env` to build a stronger base, then fine-tune the Rebbe LoRA on top.
+
+> **Multi-dataset pooling.** ivrit-ai's `train-whisper.py` accepts `--train_datasets` as `nargs="*"` and runs `concatenate_datasets()` across them (in `preprocess/preperator.py:process_datasets`). Pooling is proportional to row counts — it does NOT interleave with weights. Bootstrap.sh splits the env var on whitespace via `read -ra` so a config can list multiple datasets like:
+> ```
+> TRAIN_DATASETS="ivrit-ai/foo:train ivrit-ai/bar:train ABE101/baz:train"
+> EVAL_DATASETS="ABE101/baz:dev"
+> ```
 
 ### Tuning
 To experiment, copy a config and edit. Common overrides:
 - `BASE_MODEL` — try `openai/whisper-large-v3` for a clean baseline (not ivrit-tuned)
 - `NUM_TRAIN_EPOCHS`, `LEARNING_RATE`, `WARMUP_STEPS` — the usual knobs
 - `EVAL_DATASETS` — add a held-out dataset for WER-based best-model selection (then set `PREDICT_WER=1`)
+
+### Pre-training step for jem_base_v2.env
+The omnilingual dataset needs schema conversion (omnilingual uses `raw_text`, ivrit-ai's preparator requires `transcript`). Run once:
+```bash
+python scripts/convert-omnilingual-to-ivrit-format.py \
+    --target-repo ABE101/omnilingual-ydd-Hebr-ivrit-format
+```
+The script also strips `<hesitation>` markup and lone surrogates from the source text, then pushes train/dev/test splits to HF Hub.
 
 ## Known limitations (v1)
 
