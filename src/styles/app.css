@@ -146,6 +146,109 @@
 }
 
 /* =================================================================
+   1b. Dark theme — toggled via [data-theme="dark"] on <html>
+   Token overrides only; structure stays identical.
+   ================================================================= */
+:root[data-theme="dark"] {
+  --bg:                 #0c0e12;
+  --bg-rail:            #0f1217;
+  --surface:            #14171d;
+  --surface-2:          #181c23;
+  --surface-3:          #1f242c;
+  --surface-hover:      #1d2128;
+  --surface-pressed:    #232831;
+  --surface-alt:        #181c23;
+  --surface-elevated:   #1a1e25;
+
+  --text:               #e7eaf0;
+  --text-secondary:     #b6bdc9;
+  --text-tertiary:      #8b94a3;
+  --text-muted:         #6b7383;
+  --text-disabled:      #4b5260;
+  --text-inverse:       #0f172a;
+
+  --border:             rgba(255, 255, 255, 0.08);
+  --border-strong:      rgba(255, 255, 255, 0.16);
+  --border-light:       rgba(255, 255, 255, 0.04);
+  --border-focus:       rgba(86, 156, 255, 0.65);
+
+  --accent:             #4d92ff;
+  --accent-hover:       #76aaff;
+  --accent-press:       #97c0ff;
+  --accent-soft:        rgba(77, 146, 255, 0.16);
+  --accent-dim:         rgba(77, 146, 255, 0.10);
+  --accent-dim-strong:  rgba(77, 146, 255, 0.24);
+  --accent-text:        #b8d3ff;
+
+  --green:        #4ade80;
+  --green-dark:   #22c55e;
+  --green-soft:   rgba(74, 222, 128, 0.14);
+  --green-dim:    rgba(74, 222, 128, 0.10);
+
+  --orange:       #fbbf24;
+  --orange-dark:  #f59e0b;
+  --orange-soft:  rgba(251, 191, 36, 0.14);
+  --orange-dim:   rgba(251, 191, 36, 0.10);
+
+  --red:          #f87171;
+  --red-dark:     #ef4444;
+  --red-soft:     rgba(248, 113, 113, 0.16);
+  --red-dim:      rgba(248, 113, 113, 0.10);
+
+  --purple:       #a78bfa;
+  --purple-soft:  rgba(167, 139, 250, 0.14);
+  --purple-dim:   rgba(167, 139, 250, 0.10);
+
+  --gold:         #facc15;
+  --gold-soft:    rgba(250, 204, 21, 0.14);
+  --gold-dim:     rgba(250, 204, 21, 0.14);
+
+  --gray:         #94a3b8;
+  --gray-soft:    rgba(148, 163, 184, 0.10);
+  --gray-dim:     rgba(148, 163, 184, 0.10);
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, .35);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, .40), 0 1px 2px rgba(0, 0, 0, .30);
+  --shadow:    0 2px 6px rgba(0, 0, 0, .40), 0 4px 12px rgba(0, 0, 0, .30);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, .45), 0 8px 24px rgba(0, 0, 0, .35);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, .50), 0 16px 48px rgba(0, 0, 0, .40);
+  --shadow-primary: 0 4px 14px rgba(77, 146, 255, 0.30);
+  --shadow-focus:   0 0 0 3px var(--accent-dim-strong);
+
+  color-scheme: dark;
+}
+
+/* Dark-mode tweaks for known layered components that hardcode light
+   colors at the legacy stylesheet level. Kept narrow on purpose. */
+:root[data-theme="dark"] .bulk-action-bar { background: #050608; }
+:root[data-theme="dark"] .toast-stack .toast,
+:root[data-theme="dark"] .ctx-menu,
+:root[data-theme="dark"] .col-vis-pop,
+:root[data-theme="dark"] .multi-select-dropdown {
+  background: var(--surface-elevated);
+  color: var(--text);
+}
+:root[data-theme="dark"] .saved-view-pill.is-active {
+  background: var(--accent);
+  color: #0c0e12;
+}
+:root[data-theme="dark"] .filter-chip {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border-color: var(--accent-dim-strong);
+}
+:root[data-theme="dark"] img,
+:root[data-theme="dark"] svg.lucide { /* leave logo / brand alone */ }
+
+/* Smooth theme switch */
+html, body, .app-rail, .app-header, .data-table, .card, .modal,
+.col-vis-pop, .multi-select-dropdown, .saved-view-pill, .filter-chip,
+.cmdk-modal, .cheatsheet-modal, .ctx-menu {
+  transition: background-color 200ms var(--ease), color 200ms var(--ease),
+              border-color 200ms var(--ease);
+}
+
+/* =================================================================
    2. Reset & base
    ================================================================= */
 *, *::before, *::after { box-sizing: border-box; }
@@ -2181,6 +2284,34 @@ body.density-spacious .data-table tbody td { padding: 13px 14px; font-size: 13px
 .multi-select-dropdown label > span:not(.facet-count) {
   flex: 1;
 }
+
+/* =================================================================
+   24-pre. Theme toggle button in topbar
+   ================================================================= */
+.theme-toggle {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0 !important;
+  border: 1px solid var(--border) !important;
+  background: var(--surface-2) !important;
+  color: var(--text-secondary) !important;
+  border-radius: var(--radius) !important;
+  margin-inline-end: var(--sp-1);
+  cursor: pointer;
+}
+.theme-toggle:hover {
+  background: var(--surface-hover) !important;
+  color: var(--text) !important;
+}
+.theme-toggle svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 250ms var(--ease);
+}
+.theme-toggle:hover svg { transform: rotate(15deg); }
 
 /* =================================================================
    24a. Cmd+K search hint button in topbar

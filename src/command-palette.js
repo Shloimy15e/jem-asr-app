@@ -34,6 +34,7 @@ const STATIC_ACTIONS = [
   { id: 'act.signout',    label: 'Sign out',                        group: 'Actions', icon: 'logOut',   onRun: () => document.getElementById('btn-logout')?.click() },
 
   { id: 'help.shortcuts', label: 'Keyboard shortcuts',              group: 'Help',    icon: 'keyboard', onRun: () => openCheatsheet() },
+  { id: 'help.theme',     label: 'Toggle dark mode',                 group: 'Help',    icon: 'moon',     onRun: () => window.__jemTheme && window.__jemTheme.toggle() },
 ];
 
 export function registerSource(fn) {

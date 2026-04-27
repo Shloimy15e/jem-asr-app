@@ -7,6 +7,8 @@
 import { icons, iconEl } from './icons.js';
 import { mountDrawerToggle, setShellSections } from './layout-shell.js';
 import * as authMod from './auth.js';
+import './theme.js';
+import { toggleTheme, getTheme } from './theme.js';
 import './toast.js';
 import './command-palette.js';
 
@@ -86,7 +88,7 @@ function buildContextualNav() {
   }
   if (actions.length) sections.push({ heading: 'Quick actions', items: actions });
 
-  // Help (cheatsheet + command palette) above account
+  // Help (cheatsheet + command palette + theme) above account
   sections.push({
     heading: 'Help',
     items: [
@@ -94,6 +96,9 @@ function buildContextualNav() {
         onClick: () => window.__jemCmdK && window.__jemCmdK.open() },
       { label: 'Keyboard shortcuts', icon: 'keyboard',
         onClick: () => window.__jemCmdK && window.__jemCmdK.openCheatsheet() },
+      { label: getTheme() === 'dark' ? 'Light mode' : 'Dark mode',
+        icon: getTheme() === 'dark' ? 'sun' : 'moon',
+        onClick: () => { toggleTheme(); refreshShell(); } },
     ],
   });
 
@@ -156,6 +161,28 @@ function mountSkipLink() {
   document.body.insertBefore(link, document.body.firstChild);
 }
 
+function mountThemeToggle(header) {
+  if (header.querySelector('.theme-toggle')) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'theme-toggle toolbar-btn';
+  btn.title = 'Toggle dark mode';
+  btn.setAttribute('aria-label', 'Toggle dark mode');
+  function paint() {
+    btn.innerHTML = getTheme() === 'dark' ? icons.sun() : icons.moon();
+  }
+  paint();
+  btn.addEventListener('click', () => {
+    toggleTheme();
+    paint();
+  });
+  window.addEventListener('jem:theme-change', paint);
+  // Insert before .toolbar (so the right-aligned toolbar stays last)
+  const toolbar = header.querySelector('.toolbar');
+  if (toolbar) header.insertBefore(btn, toolbar);
+  else header.appendChild(btn);
+}
+
 function mountCmdkHint(header) {
   if (header.querySelector('.cmdk-hint')) return;
   const hint = document.createElement('button');
@@ -188,6 +215,7 @@ export function initAppShell() {
   // Hamburger drawer toggle removed per UX feedback — the persistent
   // left rail covers nav on tablet+ and is the intended primary surface.
   // (Was: mountDrawerToggle(header, 'Open navigation'))
+  mountThemeToggle(header);
   mountCmdkHint(header);
   refreshShell();
 

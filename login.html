@@ -4,6 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sign In — JEM ASR Workbench</title>
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('jem-asr-theme-v1');
+        if (!t && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) t = 'dark';
+        if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+      } catch (e) {}
+    })();
+  </script>
   <link rel="stylesheet" href="/style.css" />
   <link rel="stylesheet" href="/src/styles/refresh.css" />
   <link rel="stylesheet" href="/src/styles/app.css" />
