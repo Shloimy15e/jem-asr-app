@@ -1,3 +1,4 @@
+import './app-shell.js';
 import { initState, getState, getVersions, addVersion, updateVersion, mergeSupabaseData, updateState } from './state.js';
 import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, getActiveLibraryConfig } from './auth.js';
 import { transcribeAudio } from './alignment.js';
@@ -53,7 +54,8 @@ function renderTranscribePage(audioId, audio, state, root) {
   const backBtn = document.createElement('a');
   backBtn.href = `/detail.html?id=${audioId}`;
   backBtn.className = 'toolbar-btn';
-  backBtn.textContent = '\u2190 Back to File';
+  backBtn.style.textDecoration = 'none';
+  backBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:-3px"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg><span>Back to file</span>';
 
   const title = document.createElement('span');
   title.className = 'app-title';
@@ -120,7 +122,8 @@ function renderTranscribePage(audioId, audio, state, root) {
 
   const iconEl = document.createElement('div');
   iconEl.className = 'asr-card-icon';
-  iconEl.textContent = '\uD83C\uDF99';
+  // Inline mic SVG (matches icons.js mic glyph). Sized to fit the 40x40 chip.
+  iconEl.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
 
   const headerText = document.createElement('div');
   headerText.className = 'asr-card-header-text';

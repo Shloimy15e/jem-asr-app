@@ -1,3 +1,4 @@
+import './app-shell.js';
 import { initState, getState, getStatus, mergeSupabaseData } from './state.js';
 import { checkAuth, signOut, getUserLibraries, getActiveLibrary, setActiveLibrary } from './auth.js';
 import { loadFromSupabase } from './db.js';

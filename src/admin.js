@@ -1,3 +1,4 @@
+import './app-shell.js';
 import { createClient } from '@supabase/supabase-js';
 import { checkAuth, signOut, getUserLibraries, getActiveLibrary } from './auth.js';
 import { logActivity } from './db.js';
