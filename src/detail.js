@@ -1043,6 +1043,16 @@ function buildAsrProviderBar(audioId, state, onComplete) {
         if (onComplete) onComplete();
       } catch (err) {
         console.error('[ASR] transcription failed:', err);
+        if (err && err.code === 'INSUFFICIENT_CREDITS') {
+          btn.textContent = btnLabel;
+          btn.disabled = false;
+          if (typeof window !== 'undefined' && window.confirm(
+            (err.message || 'Insufficient credits.') + '\n\nOpen Billing now?'
+          )) {
+            window.location.href = '/billing.html';
+          }
+          return;
+        }
         btn.textContent = `${btnLabel} — failed`;
         btn.disabled = false;
       }
@@ -2178,6 +2188,18 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
         });
       } catch (err) {
         console.error('[Alignment] Failed for', audioId, ':', err);
+        if (err && err.code === 'INSUFFICIENT_CREDITS') {
+          alignBtn.textContent = 'Run Alignment';
+          alignBtn.disabled = false;
+          alignBtn.classList.add('btn-error');
+          const errMsg = document.createElement('p');
+          errMsg.className = 'alignment-error-msg';
+          errMsg.innerHTML =
+            (err.message || 'Insufficient credits.') +
+            ' <a href="/billing.html" style="color:var(--accent);text-decoration:underline;">Open Billing →</a>';
+          alignBar.parentNode.insertBefore(errMsg, alignBar.nextSibling);
+          return;
+        }
         // Persistent error state
         alignBtn.textContent = 'Alignment failed — retry?';
         alignBtn.disabled = false;

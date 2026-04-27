@@ -474,6 +474,23 @@ function renderTranscribePage(audioId, audio, state, root) {
 
       } catch (err) {
         console.error('[ASR] transcription failed:', err);
+        if (err && err.code === 'INSUFFICIENT_CREDITS') {
+          btn.textContent = btnLabel;
+          btn.disabled = false;
+          resultArea.hidden = false;
+          resultArea.innerHTML = '';
+          const msg = document.createElement('div');
+          msg.className = 'asr-result-label';
+          msg.style.color = 'var(--red, #ff3b30)';
+          msg.textContent = err.message || 'Insufficient credits.';
+          const link = document.createElement('a');
+          link.href = '/billing.html';
+          link.className = 'asr-result-back-btn';
+          link.textContent = 'Open Billing \u2192';
+          resultArea.appendChild(msg);
+          resultArea.appendChild(link);
+          return;
+        }
         btn.textContent = `${btnLabel} \u2014 failed, retry?`;
         btn.disabled = false;
       }

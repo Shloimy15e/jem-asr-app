@@ -1,5 +1,31 @@
 import { updateState, setVersionAlignment } from './state.js';
-import { isLibraryR2Url } from './auth.js';
+import { isLibraryR2Url, getAccessToken } from './auth.js';
+
+// Build common headers for billing-aware /api endpoints. Includes the
+// Supabase access token so the Worker can pre-flight credits and meter usage
+// against the caller's org. When unauthenticated (e.g. desktop / staff
+// scripts) the Worker treats the request as internal and skips metering.
+async function billingHeaders(extra = {}) {
+  const token = await getAccessToken().catch(() => null);
+  const headers = { 'Content-Type': 'application/json', ...extra };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+// Throw a billing-aware error that pages can catch and route to /billing.html.
+async function throwForResponse(response, label) {
+  let body = null;
+  try { body = await response.clone().json(); } catch {}
+  const errText = (body && body.error) || (await response.text().catch(() => '')) || '';
+  if (response.status === 402) {
+    const err = new Error(body?.error || 'Insufficient credits — open Billing to top up.');
+    err.code = 'INSUFFICIENT_CREDITS';
+    err.status = 402;
+    err.balance = body?.balance_micro_usd ?? null;
+    throw err;
+  }
+  throw new Error(`${label} ${response.status}: ${errText}`);
+}
 
 const ALIGN_ENDPOINT = '/api/align';
 
@@ -242,7 +268,7 @@ export async function doAlignRequest(requestBody, chunkLabel, onProgress) {
     try {
       response = await fetch(ALIGN_ENDPOINT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await billingHeaders(),
         body: requestBody,
         signal: controller.signal,
       });
@@ -257,6 +283,11 @@ export async function doAlignRequest(requestBody, chunkLabel, onProgress) {
       throw new Error(`Alignment network error after ${MAX_RETRIES} attempts: ${err.message}`);
     }
     clearTimeout(timeoutId);
+    // Billing pre-flight failure — surface with the special code so callers
+    // can redirect to /billing.html instead of generic-erroring.
+    if (response.status === 402) {
+      await throwForResponse(response, `Alignment${chunkLabel}`);
+    }
     if (response.status === 502 || response.status === 504) {
       console.warn(`[Align${chunkLabel}] Got ${response.status} on attempt ${attempt}/${MAX_RETRIES} — retrying in ${RETRY_DELAY_MS / 1000}s...`);
       if (attempt < MAX_RETRIES) {
@@ -581,9 +612,15 @@ export async function transcribeAudio(audioId, audioUrl, config) {
   if (provider === 'whisper') {
     const response = await fetch(ALIGN_ENDPOINT, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: 'transcribe', ...audioFields, language: 'yi' }),
+      headers: await billingHeaders(),
+      body: JSON.stringify({
+        mode: 'transcribe',
+        ...audioFields,
+        language: 'yi',
+        ...(audioId ? { audio_id: audioId } : {}),
+      }),
     });
+    if (response.status === 402) await throwForResponse(response, 'Whisper');
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
       throw new Error(`Whisper transcription error ${response.status}: ${errText}`);
@@ -618,10 +655,16 @@ export async function transcribeAudio(audioId, audioUrl, config) {
 
   const response = await fetch(TRANSCRIBE_ENDPOINT, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ provider, ...audioFields, ...providerPayload }),
+    headers: await billingHeaders(),
+    body: JSON.stringify({
+      provider,
+      ...audioFields,
+      ...providerPayload,
+      ...(audioId ? { audio_id: audioId } : {}),
+    }),
   });
 
+  if (response.status === 402) await throwForResponse(response, provider);
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(err.error || `Transcription error ${response.status}`);

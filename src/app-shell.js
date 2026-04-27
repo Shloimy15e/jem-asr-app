@@ -25,9 +25,10 @@ export function setContextualSections(sections) {
 }
 
 const NAV = [
-  { label: 'Audio',         icon: 'audio',    href: '/index.html',         match: ['/', '/index.html'] },
-  { label: 'Transcribe',    icon: 'mic',      href: '/transcribe.html',    match: ['/transcribe.html'] },
-  { label: 'Dashboard',     icon: 'sliders',  href: '/dashboard.html',     match: ['/dashboard.html'] },
+  { label: 'Audio',         icon: 'audio',      href: '/index.html',         match: ['/', '/index.html'] },
+  { label: 'Transcribe',    icon: 'mic',        href: '/transcribe.html',    match: ['/transcribe.html'] },
+  { label: 'Dashboard',     icon: 'sliders',    href: '/dashboard.html',     match: ['/dashboard.html'] },
+  { label: 'Billing',       icon: 'creditCard', href: '/billing.html',       match: ['/billing.html'] },
 ];
 
 const ADMIN_NAV = [
