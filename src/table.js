@@ -1022,6 +1022,77 @@ function openRemapModal(audioId) {
   searchInput.focus();
 }
 
+// ── Column resize (drag handle on each th) ─────────────────────────
+const COL_WIDTHS_KEY = 'jem-asr-col-widths-v1';
+function loadColWidths() {
+  try { return JSON.parse(localStorage.getItem(COL_WIDTHS_KEY) || '{}') || {}; }
+  catch { return {}; }
+}
+function saveColWidths(map) {
+  try { localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(map)); } catch {}
+}
+function setColWidth(key, px) {
+  const m = loadColWidths();
+  m[key] = Math.max(40, Math.round(px));
+  saveColWidths(m);
+}
+function clearColWidth(key) {
+  const m = loadColWidths();
+  delete m[key];
+  saveColWidths(m);
+}
+let _colWidthsStyleEl = null;
+function applyColWidthsCSS() {
+  if (!_colWidthsStyleEl) {
+    _colWidthsStyleEl = document.createElement('style');
+    _colWidthsStyleEl.id = 'data-table-widths';
+    document.head.appendChild(_colWidthsStyleEl);
+  }
+  const m = loadColWidths();
+  const rules = [];
+  for (const [key, px] of Object.entries(m)) {
+    if (typeof px !== 'number') continue;
+    rules.push(
+      `.data-table th.cell-${key},.data-table td.cell-${key}{width:${px}px;min-width:${px}px;max-width:${px}px;}`
+    );
+  }
+  _colWidthsStyleEl.textContent = rules.join('\n');
+}
+function startColResize(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const grip = e.currentTarget;
+  const th = grip.closest('th');
+  if (!th) return;
+  const startX = e.clientX;
+  const startW = th.getBoundingClientRect().width;
+  const colKey = grip.dataset.colKey;
+  document.body.style.cursor = 'col-resize';
+  document.body.classList.add('is-col-resizing');
+  function onMove(ev) {
+    const delta = ev.clientX - startX;
+    const next = Math.max(40, startW + delta);
+    th.style.width = next + 'px';
+    th.style.minWidth = next + 'px';
+    th.style.maxWidth = next + 'px';
+  }
+  function onUp(ev) {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.body.style.cursor = '';
+    document.body.classList.remove('is-col-resizing');
+    const finalW = th.getBoundingClientRect().width;
+    setColWidth(colKey, finalW);
+    applyColWidthsCSS();
+    // Clear inline so the persistent CSS rule takes over
+    th.style.width = '';
+    th.style.minWidth = '';
+    th.style.maxWidth = '';
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
 // ── Build table DOM ─────────────────────────────────────────────────
 
 function buildTable(rows) {
@@ -1075,6 +1146,19 @@ function buildTable(rows) {
       }
     }
     if (col.key === 'firstLine') th.classList.add('rtl-cell');
+    // Add a resize handle except on checkbox / rowNum / actions / favorite
+    if (!['checkbox', 'rowNum', 'actions', 'favorite'].includes(col.key)) {
+      const grip = document.createElement('span');
+      grip.className = 'col-resize-grip';
+      grip.dataset.colKey = col.key;
+      grip.addEventListener('mousedown', startColResize);
+      grip.addEventListener('dblclick', () => {
+        // double-click to reset to default
+        clearColWidth(col.key);
+        applyColWidthsCSS();
+      });
+      th.appendChild(grip);
+    }
     headerRow.appendChild(th);
   });
   thead.appendChild(headerRow);
@@ -2086,6 +2170,7 @@ function renderTable(container, options = {}) {
   // optional columns. Selections persist in localStorage.
   mountColVisibilityMenu();
   mountDensityMenu();
+  applyColWidthsCSS();
   renderSavedViewsBar();
 
   // Populate dropdown filters from data

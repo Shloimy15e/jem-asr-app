@@ -1846,6 +1846,34 @@ kbd {
 }
 
 /* =================================================================
+   22d. Resizable columns — drag handle on each th
+   ================================================================= */
+.data-table thead th { position: relative; }
+.col-resize-grip {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  z-index: 12;
+  background: transparent;
+  transition: background var(--t-fast);
+}
+.col-resize-grip:hover,
+.col-resize-grip:active,
+body.is-col-resizing .col-resize-grip {
+  background: var(--accent);
+}
+body.is-col-resizing,
+body.is-col-resizing * {
+  user-select: none !important;
+  cursor: col-resize !important;
+}
+.data-table thead th.cell-actions .col-resize-grip { display: none; }
+
+/* =================================================================
    22c. Active filter chips (above the table)
    ================================================================= */
 .filter-chips {
