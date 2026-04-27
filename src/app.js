@@ -323,18 +323,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Trigger change on the first matching one to flush
     (checks[0] || checks).dispatchEvent(new Event('change', { bubbles: true }));
   };
-  setContextualSections([
-    {
-      heading: 'Quick filters',
-      items: [
-        { label: 'Unmapped',     icon: 'alertCircle', onClick: () => setStatusFilter('unmapped') },
-        { label: 'Mapped',       icon: 'check2',      onClick: () => setStatusFilter('mapped') },
-        { label: 'Cleaned',      icon: 'sparkles',    onClick: () => setStatusFilter('cleaned') },
-        { label: 'Approved',     icon: 'check',       onClick: () => setStatusFilter('approved') },
-        { label: 'Show all',     icon: 'refresh',     onClick: () => document.getElementById('btn-reset-filters')?.click() },
-      ],
-    },
-  ]);
+  // Build "Recently viewed" rail items from localStorage (populated by
+  // the detail page on every visit). Capped at 6 to keep the rail tidy.
+  const buildRecents = () => {
+    try {
+      const list = JSON.parse(localStorage.getItem('jem-asr-recent-views-v1') || '[]');
+      return list.slice(0, 6).map(it => ({
+        label: it.name || it.id,
+        icon: 'audio',
+        href: `/detail.html?id=${encodeURIComponent(it.id)}`,
+        title: it.name || it.id,
+      }));
+    } catch { return []; }
+  };
+  const refreshContextualSections = () => {
+    const sections = [
+      {
+        heading: 'Quick filters',
+        items: [
+          { label: 'Unmapped',     icon: 'alertCircle', onClick: () => setStatusFilter('unmapped') },
+          { label: 'Mapped',       icon: 'check2',      onClick: () => setStatusFilter('mapped') },
+          { label: 'Cleaned',      icon: 'sparkles',    onClick: () => setStatusFilter('cleaned') },
+          { label: 'Approved',     icon: 'check',       onClick: () => setStatusFilter('approved') },
+          { label: 'Show all',     icon: 'refresh',     onClick: () => document.getElementById('btn-reset-filters')?.click() },
+        ],
+      },
+    ];
+    const recents = buildRecents();
+    if (recents.length) sections.push({ heading: 'Recently viewed', items: recents });
+    setContextualSections(sections);
+  };
+  refreshContextualSections();
+  // Refresh when storage changes (e.g. another tab opened a detail page)
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'jem-asr-recent-views-v1') refreshContextualSections();
+  });
 
   // ── Command palette: register audios + transcripts as searchable ──
   registerSource(() => {

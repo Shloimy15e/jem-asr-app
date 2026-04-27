@@ -141,6 +141,7 @@ function renderRailFromSections(sections) {
       }
       el.className = 'app-rail__link';
       if (item.active) el.classList.add('is-active');
+      if (item.title) el.title = item.title;
       if (item.icon && icons[item.icon]) {
         const i = document.createElement('span');
         i.style.display = 'inline-flex';
@@ -148,6 +149,7 @@ function renderRailFromSections(sections) {
         el.appendChild(i);
       }
       const txt = document.createElement('span');
+      txt.className = 'app-rail__link-text';
       txt.textContent = item.label;
       el.appendChild(txt);
       if (item.onClick) {

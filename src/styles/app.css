@@ -363,6 +363,13 @@ body {
   color: currentColor;
 }
 .app-rail__link.is-active svg { color: var(--accent); }
+.app-rail__link-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .app-rail__spacer { flex: 1; }
 
@@ -1801,6 +1808,61 @@ kbd {
   color: var(--text-tertiary);
   font-size: 12.5px;
   max-width: 380px;
+}
+
+/* =================================================================
+   22b. Row context menu (right-click on table rows)
+   ================================================================= */
+.ctx-menu {
+  position: fixed;
+  z-index: 1500;
+  min-width: 200px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  padding: 4px;
+  font-size: 13px;
+  color: var(--text);
+  animation: ctx-menu-in .12s var(--ease-out);
+}
+@keyframes ctx-menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.98); }
+  to   { opacity: 1; transform: none; }
+}
+.ctx-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: start;
+  border-radius: 6px;
+}
+.ctx-menu__item:hover,
+.ctx-menu__item:focus-visible {
+  background: var(--surface-hover);
+  outline: none;
+}
+.ctx-menu__item kbd {
+  margin-inline-start: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding: 1px 5px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.ctx-menu__divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 4px;
 }
 
 /* =================================================================

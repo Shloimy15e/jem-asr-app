@@ -1435,7 +1435,104 @@ function buildTable(rows) {
   });
 
   table.appendChild(tbody);
+  attachRowContextMenu(tbody);
   return table;
+}
+
+// ── Row context menu (right-click) ────────────────────────────────
+let _ctxMenuEl = null;
+function closeCtxMenu() {
+  if (_ctxMenuEl) { _ctxMenuEl.remove(); _ctxMenuEl = null; }
+  document.removeEventListener('click', closeCtxMenu);
+  document.removeEventListener('keydown', _ctxKeyClose);
+  window.removeEventListener('blur', closeCtxMenu);
+  window.removeEventListener('scroll', closeCtxMenu, true);
+}
+function _ctxKeyClose(e) { if (e.key === 'Escape') closeCtxMenu(); }
+function openCtxMenu(x, y, items) {
+  closeCtxMenu();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  for (const it of items) {
+    if (it.divider) {
+      const d = document.createElement('div');
+      d.className = 'ctx-menu__divider';
+      menu.appendChild(d);
+      continue;
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ctx-menu__item';
+    btn.textContent = it.label;
+    if (it.shortcut) {
+      const k = document.createElement('kbd');
+      k.textContent = it.shortcut;
+      btn.appendChild(k);
+    }
+    btn.addEventListener('click', () => {
+      try { it.onClick && it.onClick(); } finally { closeCtxMenu(); }
+    });
+    menu.appendChild(btn);
+  }
+  document.body.appendChild(menu);
+  // Position with viewport clamping
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const rect = menu.getBoundingClientRect();
+  const px = Math.min(x, vw - rect.width - 8);
+  const py = Math.min(y, vh - rect.height - 8);
+  menu.style.left = `${Math.max(8, px)}px`;
+  menu.style.top  = `${Math.max(8, py)}px`;
+  _ctxMenuEl = menu;
+  setTimeout(() => {
+    document.addEventListener('click', closeCtxMenu);
+    document.addEventListener('keydown', _ctxKeyClose);
+    window.addEventListener('blur', closeCtxMenu);
+    window.addEventListener('scroll', closeCtxMenu, true);
+  }, 0);
+}
+
+function attachRowContextMenu(tbody) {
+  tbody.addEventListener('contextmenu', (e) => {
+    const tr = e.target.closest && e.target.closest('tr.table-row');
+    if (!tr) return;
+    const id = tr.getAttribute('data-audio-id');
+    if (!id) return;
+    e.preventDefault();
+    const state = getState();
+    const isFav = !!(state.favorites && state.favorites[id]);
+    const items = [
+      { label: 'Open',                onClick: () => { window.location.href = `/detail.html?id=${encodeURIComponent(id)}`; } },
+      { label: 'Open in new tab',     shortcut: '↵',
+        onClick: () => { window.open(`/detail.html?id=${encodeURIComponent(id)}`, '_blank', 'noopener'); } },
+      { divider: true },
+      { label: isFav ? 'Remove from favorites' : 'Add to favorites',
+        onClick: () => {
+          const favs = { ...(state.favorites || {}) };
+          if (isFav) delete favs[id]; else favs[id] = true;
+          updateState('favorites', null, favs);
+          updateTable();
+          if (window.__jemToast) window.__jemToast[isFav ? 'info' : 'success'](isFav ? 'Removed from favorites' : 'Added to favorites');
+        } },
+      { divider: true },
+      { label: 'Copy ID',
+        onClick: () => {
+          (navigator.clipboard?.writeText(id) || Promise.reject()).then(
+            () => window.__jemToast?.success(`Copied ${id}`),
+            () => window.__jemToast?.error('Copy failed')
+          );
+        } },
+      { label: 'Copy file name',
+        onClick: () => {
+          const audio = state.audio.find(a => a.id === id);
+          const name = audio?.name || id;
+          (navigator.clipboard?.writeText(name) || Promise.reject()).then(
+            () => window.__jemToast?.success(`Copied "${name}"`),
+            () => window.__jemToast?.error('Copy failed')
+          );
+        } },
+    ];
+    openCtxMenu(e.clientX, e.clientY, items);
+  });
 }
 
 function buildCardView(rows) {

@@ -299,6 +299,15 @@ function renderDetailPage(audioId, audio, state, container) {
   container.innerHTML = '';
   const status = getStatus(audioId);
 
+  // Track this audio in the "Recently viewed" list (rail nav on table page)
+  try {
+    const KEY = 'jem-asr-recent-views-v1';
+    const list = JSON.parse(localStorage.getItem(KEY) || '[]');
+    const filtered = list.filter(it => it && it.id !== audioId);
+    filtered.unshift({ id: audioId, name: audio.name || audioId, at: Date.now() });
+    localStorage.setItem(KEY, JSON.stringify(filtered.slice(0, 12)));
+  } catch (_) { /* no-op */ }
+
   // Title bar with editable name
   const titleBar = document.createElement('div');
   titleBar.className = 'detail-title-bar';
