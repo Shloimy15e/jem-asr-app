@@ -1846,6 +1846,62 @@ kbd {
 }
 
 /* =================================================================
+   22e. Reorderable columns — drag rows in the Columns popup
+   ================================================================= */
+.col-vis-pop__hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding: 6px 10px 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.col-vis-row {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: grab;
+  transition: background var(--t-fast);
+}
+.col-vis-row:hover { background: var(--surface-hover); }
+.col-vis-row.is-dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+.col-vis-row.is-drop-target {
+  background: var(--accent-soft);
+  outline: 2px dashed var(--accent-dim-strong);
+  outline-offset: -2px;
+}
+.col-vis-row__grip {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-tertiary);
+  cursor: grab;
+}
+.col-vis-row__grip:active { cursor: grabbing; }
+.col-vis-row__label { flex: 1; user-select: none; }
+
+.col-vis-pop__reset {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.col-vis-pop__reset:hover {
+  background: var(--surface-hover);
+  border-style: solid;
+  color: var(--text);
+}
+
+/* =================================================================
    22d. Resizable columns — drag handle on each th
    ================================================================= */
 .data-table thead th { position: relative; }

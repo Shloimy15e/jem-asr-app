@@ -160,6 +160,54 @@ function setColVisibility(key, v) {
   saveColVisibility(_colVisibility);
 }
 
+// ── Column ordering (persisted in localStorage) ────────────────────
+// Users can drag column rows in the Columns popup to reorder them.
+// Non-optional anchor columns (checkbox, rowNum, actions) stay pinned
+// at their natural positions; only optional columns get reordered.
+const COL_ORDER_KEY = 'jem-asr-col-order-v1';
+function loadColOrder() {
+  try {
+    const raw = localStorage.getItem(COL_ORDER_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function saveColOrder(arr) {
+  try { localStorage.setItem(COL_ORDER_KEY, JSON.stringify(arr)); } catch {}
+}
+// Returns COLUMNS sorted: anchor columns keep their natural order,
+// optional columns follow the saved order (with any new keys appended
+// in their default position).
+function getOrderedColumns() {
+  const saved = loadColOrder();
+  if (!saved || !Array.isArray(saved)) return COLUMNS.slice();
+  const optional = COLUMNS.filter(c => c.optional);
+  const anchor   = COLUMNS.filter(c => !c.optional);
+  const byKey = Object.fromEntries(optional.map(c => [c.key, c]));
+  const seen = new Set();
+  const orderedOptional = [];
+  for (const k of saved) {
+    if (byKey[k] && !seen.has(k)) { orderedOptional.push(byKey[k]); seen.add(k); }
+  }
+  for (const c of optional) {
+    if (!seen.has(c.key)) orderedOptional.push(c);
+  }
+  // Splice optional columns into the original position of the first
+  // optional column (right after the leading non-optional anchors).
+  const firstOptIdx = COLUMNS.findIndex(c => c.optional);
+  const out = [];
+  let optIdx = 0;
+  for (let i = 0; i < COLUMNS.length; i++) {
+    const c = COLUMNS[i];
+    if (c.optional) {
+      out.push(orderedOptional[optIdx++]);
+    } else {
+      out.push(c);
+    }
+  }
+  // If we have leftover optional columns (saved had unknowns) ignore them.
+  return out;
+}
+
 function mountColVisibilityMenu() {
   if (document.getElementById('btn-col-vis')) return; // already mounted
   const resetBtn = document.getElementById('btn-reset-filters');
@@ -183,9 +231,25 @@ function mountColVisibilityMenu() {
 
   function rebuild() {
     pop.innerHTML = '';
-    for (const c of COLUMNS) {
-      if (!c.optional) continue;
-      const lbl = document.createElement('label');
+    // Header note
+    const note = document.createElement('div');
+    note.className = 'col-vis-pop__hint';
+    note.textContent = 'Drag rows to reorder · check to show';
+    pop.appendChild(note);
+
+    const ordered = getOrderedColumns().filter(c => c.optional);
+    let dragKey = null;
+    for (const c of ordered) {
+      const row = document.createElement('label');
+      row.className = 'col-vis-row';
+      row.draggable = true;
+      row.dataset.colKey = c.key;
+
+      const grip = document.createElement('span');
+      grip.className = 'col-vis-row__grip';
+      grip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>';
+      grip.title = 'Drag to reorder';
+
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.checked = isColVisible(c);
@@ -193,12 +257,68 @@ function mountColVisibilityMenu() {
         setColVisibility(c.key, cb.checked);
         updateTable();
       });
+
       const span = document.createElement('span');
+      span.className = 'col-vis-row__label';
       span.textContent = c.label || c.key;
-      lbl.appendChild(cb);
-      lbl.appendChild(span);
-      pop.appendChild(lbl);
+
+      row.appendChild(grip);
+      row.appendChild(cb);
+      row.appendChild(span);
+
+      // Drag-and-drop reordering
+      row.addEventListener('dragstart', (ev) => {
+        dragKey = c.key;
+        row.classList.add('is-dragging');
+        ev.dataTransfer.effectAllowed = 'move';
+        try { ev.dataTransfer.setData('text/plain', c.key); } catch {}
+      });
+      row.addEventListener('dragend', () => {
+        row.classList.remove('is-dragging');
+        pop.querySelectorAll('.col-vis-row.is-drop-target').forEach(el => el.classList.remove('is-drop-target'));
+        dragKey = null;
+      });
+      row.addEventListener('dragover', (ev) => {
+        if (!dragKey || dragKey === c.key) return;
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = 'move';
+        pop.querySelectorAll('.col-vis-row.is-drop-target').forEach(el => el.classList.remove('is-drop-target'));
+        row.classList.add('is-drop-target');
+      });
+      row.addEventListener('drop', (ev) => {
+        ev.preventDefault();
+        const src = dragKey;
+        const dst = c.key;
+        if (!src || src === dst) return;
+        const optionalKeys = ordered.map(o => o.key);
+        const arr = optionalKeys.filter(k => k !== src);
+        const insertAt = arr.indexOf(dst);
+        arr.splice(insertAt, 0, src);
+        saveColOrder(arr);
+        updateTable();
+        rebuild();
+      });
+
+      pop.appendChild(row);
     }
+
+    // Reset button
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'col-vis-pop__reset';
+    reset.textContent = 'Reset to default';
+    reset.addEventListener('click', () => {
+      try { localStorage.removeItem(COL_ORDER_KEY); } catch {}
+      try { localStorage.removeItem(COL_WIDTHS_KEY); } catch {}
+      // Reset visibility to defaults
+      _colVisibility = {};
+      for (const cc of COLUMNS) if (cc.optional) _colVisibility[cc.key] = !cc.defaultHidden;
+      saveColVisibility(_colVisibility);
+      applyColWidthsCSS();
+      updateTable();
+      rebuild();
+    });
+    pop.appendChild(reset);
   }
   rebuild();
 
@@ -644,7 +764,7 @@ function filterMatchesStatus(filter, statuses) {
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function getVisibleColumns() {
-  return COLUMNS.filter(c => c.showWhen(buildFilter()) && isColVisible(c));
+  return getOrderedColumns().filter(c => c.showWhen(buildFilter()) && isColVisible(c));
 }
 
 function getTranscriptForAudio(audioId) {
