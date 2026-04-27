@@ -2,6 +2,7 @@ import { initState, getState, getVersions, addVersion, updateVersion, mergeSupab
 import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, getActiveLibraryConfig } from './auth.js';
 import { transcribeAudio } from './alignment.js';
 import { loadFromSupabase } from './db.js';
+import { getMergedVertexEndpoints } from './vertex-registry.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
   const root = document.getElementById('transcribe-root');
@@ -190,29 +191,55 @@ function renderTranscribePage(audioId, audio, state, root) {
     btn.setAttribute('aria-label', `Generate transcript using ${btnLabel}`);
 
     // Gemini endpoint picker — lets the user pick which fine-tuned model to
-    // use without leaving the page.
+    // use without leaving the page. Pulls global curated endpoints from the
+    // registry (Supabase) and merges with locally-added ones.
     let geminiPicker = null;
     if (key === 'gemini') {
-      const providers = getState().transcribeProviders || {};
-      const g = providers.gemini || { endpoints: [], selectedId: null };
-      const endpoints = Array.isArray(g.endpoints) ? g.endpoints : [];
-      if (endpoints.length > 0) {
-        geminiPicker = document.createElement('select');
-        geminiPicker.className = 'gemini-endpoint-picker';
-        geminiPicker.setAttribute('aria-label', 'Select Gemini endpoint');
-        endpoints.forEach((ep) => {
+      geminiPicker = document.createElement('select');
+      geminiPicker.className = 'gemini-endpoint-picker';
+      geminiPicker.setAttribute('aria-label', 'Select Gemini endpoint');
+      // Render an immediate placeholder; populate async to avoid blocking
+      // the page render.
+      const placeholder = document.createElement('option');
+      placeholder.textContent = 'Loading endpoints…';
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      geminiPicker.appendChild(placeholder);
+
+      (async () => {
+        const { merged, selected } = await getMergedVertexEndpoints(getState());
+        geminiPicker.innerHTML = '';
+        if (merged.length === 0) {
+          const opt = document.createElement('option');
+          opt.textContent = 'No endpoints — open ASR Settings';
+          opt.disabled = true;
+          geminiPicker.appendChild(opt);
+          return;
+        }
+        merged.forEach((ep) => {
           const opt = document.createElement('option');
           opt.value = ep.id;
-          opt.textContent = ep.name || `Endpoint ${ep.endpointId?.slice(-6) || '?'}`;
-          if (ep.id === g.selectedId) opt.selected = true;
+          opt.textContent = (ep._global ? '★ ' : '') + (ep.name || `Endpoint ${ep.endpointId?.slice(-6) || '?'}`);
+          if (selected && ep.id === selected.id) opt.selected = true;
           geminiPicker.appendChild(opt);
         });
-        geminiPicker.addEventListener('change', (e) => {
-          const s = getState();
-          s.transcribeProviders.gemini.selectedId = e.target.value;
+        // Persist the chosen selection if it didn't have one yet.
+        const s = getState();
+        if (!s.transcribeProviders) s.transcribeProviders = {};
+        if (!s.transcribeProviders.gemini) s.transcribeProviders.gemini = { endpoints: [], selectedId: null };
+        if (selected && s.transcribeProviders.gemini.selectedId !== selected.id) {
+          s.transcribeProviders.gemini.selectedId = selected.id;
           updateState('transcribeProviders', null, s.transcribeProviders);
-        });
-      }
+        }
+      })();
+
+      geminiPicker.addEventListener('change', (e) => {
+        const s = getState();
+        if (!s.transcribeProviders) s.transcribeProviders = {};
+        if (!s.transcribeProviders.gemini) s.transcribeProviders.gemini = { endpoints: [] };
+        s.transcribeProviders.gemini.selectedId = e.target.value;
+        updateState('transcribeProviders', null, s.transcribeProviders);
+      });
     }
 
     btn.addEventListener('click', async () => {
@@ -228,9 +255,11 @@ function renderTranscribePage(audioId, audio, state, root) {
         let prompt = null;
         let promptLabel = null;
         if (key === 'gemini') {
+          // Resolve from the merged registry+local list so global endpoints
+          // are usable without any local config.
+          const { merged, selected: defaultSel } = await getMergedVertexEndpoints(getState());
           const g = providers.gemini || {};
-          const endpoints = Array.isArray(g.endpoints) ? g.endpoints : [];
-          const selected = endpoints.find(e => e.id === g.selectedId) || endpoints[0];
+          const selected = merged.find(e => e.id === g.selectedId) || defaultSel;
           if (!selected || !selected.projectId || !selected.endpointId) {
             alert('No Gemini endpoint configured. Open ASR Settings to add one.');
             btn.disabled = false;

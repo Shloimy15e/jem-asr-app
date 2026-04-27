@@ -229,10 +229,11 @@ async function transcribeAudio(audio, env) {
     return { text: text.trim(), provider: 'gemini-vertex' };
   }
 
-  if (env.GEMINI_API_KEY) {
+  const geminiKey = env.GEMINI_API_KEY || env.GOOGLE_API_KEY;
+  if (geminiKey) {
     const modelId = env.GEMINI_MODEL_ID || 'gemini-1.5-flash';
     const prefix = /^\d+$/.test(modelId) ? 'tunedModels' : 'models';
-    const url = `https://generativelanguage.googleapis.com/v1beta/${prefix}/${modelId}:generateContent?key=${env.GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/${prefix}/${modelId}:generateContent?key=${geminiKey}`;
     const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(geminiBody(audio)) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error?.message || `Gemini ${res.status}`);
@@ -268,7 +269,7 @@ async function transcribeAudio(audio, env) {
     return { text: data.text.trim(), provider: 'mendel' };
   }
 
-  throw new Error('No ASR provider configured. Set GEMINI_API_KEY or YL_API_KEY in Worker secrets.');
+  throw new Error('No ASR provider configured. Set GEMINI_API_KEY (or GOOGLE_API_KEY / GEMINI_SA_JSON) or YL_API_KEY in Worker secrets.');
 }
 
 // ── Message handler ──────────────────────────────────────────────────

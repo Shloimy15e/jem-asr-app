@@ -2,6 +2,7 @@
 // Used by both app.js (global toolbar modal) and detail.js (per-file section).
 
 import { getState, updateState } from './state.js';
+import { loadGlobalVertexEndpoints } from './vertex-registry.js';
 
 function buildProviderBlock(title, fields) {
   const providers = getState().transcribeProviders || {};
@@ -78,15 +79,73 @@ function renderGeminiEndpointsBlock(container) {
   const endpoints = Array.isArray(g.endpoints) ? g.endpoints : [];
   const configured = endpoints.filter(e => e.projectId && e.endpointId).length;
   const statusSpan = document.createElement('span');
-  statusSpan.textContent = configured > 0 ? ` ✓ ${configured} endpoint${configured === 1 ? '' : 's'}` : ' ○ No endpoints';
+  statusSpan.textContent = configured > 0 ? ` ✓ ${configured} custom` : ' Curated registry loaded';
   statusSpan.style.cssText = `font-size: 0.75rem; color: ${configured > 0 ? 'var(--green)' : 'var(--text-secondary)'}; margin-left: 8px;`;
   title.appendChild(statusSpan);
+  // Async-update count when registry resolves so users see "10 curated + 2 custom" or similar.
+  loadGlobalVertexEndpoints().then(rows => {
+    const total = (rows?.length || 0) + configured;
+    statusSpan.textContent = total > 0 ? ` ✓ ${rows?.length || 0} curated + ${configured} custom` : ' ○ No endpoints';
+    statusSpan.style.color = total > 0 ? 'var(--green)' : 'var(--text-secondary)';
+  });
   block.appendChild(title);
   block.appendChild(secretsNote('🔒 SA JSON stored as Cloudflare Worker secret GEMINI_SA_JSON — set via CLI, not here. All endpoints below share this one credential (same GCP project).'));
 
+  // ── Curated registry (read-only, fetched from /api/vertex-endpoints) ───
+  const registryList = document.createElement('div');
+  registryList.className = 'gemini-registry-list';
+  registryList.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin:8px 0 4px;';
+  block.appendChild(registryList);
+
+  const renderRegistry = (rows) => {
+    registryList.innerHTML = '';
+    if (!rows.length) return;
+    const heading = document.createElement('div');
+    heading.textContent = `Curated endpoints (${rows.length})`;
+    heading.style.cssText = 'font-size:0.78rem;color:var(--text-secondary);font-weight:600;margin-bottom:2px;';
+    registryList.appendChild(heading);
+    rows.forEach((ep) => {
+      const r = document.createElement('label');
+      r.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border,#2a2a3a);border-radius:6px;font-size:0.82rem;cursor:pointer;background:#10101e;';
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'gemini-selected';
+      radio.value = ep.id;
+      radio.checked = g.selectedId === ep.id;
+      radio.addEventListener('change', () => {
+        g.selectedId = ep.id;
+        persist();
+      });
+      const star = document.createElement('span');
+      star.textContent = ep._registry?.is_default ? '★' : '·';
+      star.style.cssText = `color:${ep._registry?.is_default ? 'var(--accent,#00d4ff)' : 'var(--text-secondary)'};width:1em;text-align:center;`;
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = ep.name;
+      nameSpan.style.flex = '1';
+      const meta = document.createElement('span');
+      meta.style.cssText = 'color:var(--text-secondary);font-size:0.75rem;';
+      meta.textContent = ep._registry?.tuning_version
+        ? `${ep._registry.tuning_version} ckpt ${ep._registry.checkpoint}`
+        : ep.endpointId.slice(-8);
+      r.appendChild(radio);
+      r.appendChild(star);
+      r.appendChild(nameSpan);
+      r.appendChild(meta);
+      registryList.appendChild(r);
+    });
+  };
+
+  loadGlobalVertexEndpoints().then(renderRegistry);
+
+  // ── User-added endpoints (mutable) ─────────────────────────────────────
+  const localHeading = document.createElement('div');
+  localHeading.textContent = 'Your custom endpoints';
+  localHeading.style.cssText = 'font-size:0.78rem;color:var(--text-secondary);font-weight:600;margin:10px 0 2px;';
+  block.appendChild(localHeading);
+
   const list = document.createElement('div');
   list.className = 'gemini-endpoint-list';
-  list.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:8px;';
+  list.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
   block.appendChild(list);
 
   const persist = () => {

@@ -267,14 +267,19 @@ async function handleGeminiApiKey(audio, payload) {
 }
 
 async function handleGemini(audio, payload, env) {
-  // Secrets come from Cloudflare Worker env, never from the request payload
+  // Secrets come from Cloudflare Worker env, never from the request payload.
+  // Vertex (service-account) takes priority over the API-key path.
+  // We accept either GEMINI_API_KEY or GOOGLE_API_KEY so the same Pages secret
+  // works whether it was named for Gemini or for Google's broader API stack —
+  // the official google-genai SDK uses the same fallback chain.
   if (env.GEMINI_SA_JSON) {
     return { ...(await handleGeminiVertex(audio, payload, env.GEMINI_SA_JSON)), provider: 'gemini-vertex' };
   }
-  if (env.GEMINI_API_KEY) {
-    return { ...(await handleGeminiApiKey(audio, { ...payload, gemini_api_key: env.GEMINI_API_KEY })), provider: 'gemini' };
+  const apiKey = env.GEMINI_API_KEY || env.GOOGLE_API_KEY;
+  if (apiKey) {
+    return { ...(await handleGeminiApiKey(audio, { ...payload, gemini_api_key: apiKey })), provider: 'gemini' };
   }
-  throw { status: 500, message: 'Gemini credentials not configured — set GEMINI_SA_JSON (or GEMINI_API_KEY) as a Cloudflare Worker secret' };
+  throw { status: 500, message: 'Gemini credentials not configured — set GEMINI_SA_JSON (or GEMINI_API_KEY / GOOGLE_API_KEY) as a Cloudflare Worker secret' };
 }
 
 async function handleMendel(audio, payload, env) {

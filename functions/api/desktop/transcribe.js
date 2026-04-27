@@ -115,10 +115,11 @@ async function doTranscribe(audio, env) {
     if (typeof text !== 'string') throw new Error('No text in Vertex response');
     return { text: text.trim(), provider: 'gemini' };
   }
-  if (env.GEMINI_API_KEY) {
+  const geminiKey = env.GEMINI_API_KEY || env.GOOGLE_API_KEY;
+  if (geminiKey) {
     const modelId = env.GEMINI_MODEL_ID || 'gemini-1.5-flash';
     const prefix = /^\d+$/.test(modelId) ? 'tunedModels' : 'models';
-    const url = `https://generativelanguage.googleapis.com/v1beta/${prefix}/${modelId}:generateContent?key=${env.GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/${prefix}/${modelId}:generateContent?key=${geminiKey}`;
     const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(geminiBody(audio)) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error?.message || `Gemini ${res.status}`);
