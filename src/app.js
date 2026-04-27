@@ -1,3 +1,6 @@
+import './app-shell.js';
+import { setContextualSections } from './app-shell.js';
+import { registerSource } from './command-palette.js';
 import { initState, getState, getStatus, mergeSupabaseData } from './state.js';
 import { checkAuth, signOut, getUserLibraries, getActiveLibrary, setActiveLibrary } from './auth.js';
 import { loadFromSupabase } from './db.js';
@@ -309,5 +312,63 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (audioId) window.open(`/detail.html?id=${encodeURIComponent(audioId)}`, '_blank');
       }
     }
+  });
+
+  // ── Rail contextual section: Quick filters ─────────────────────
+  const setStatusFilter = (value) => {
+    const status = document.getElementById('filter-status');
+    if (!status) return;
+    const checks = status.querySelectorAll('input[type="checkbox"]');
+    checks.forEach(cb => { cb.checked = value === '__clear__' ? false : (cb.value === value); });
+    // Trigger change on the first matching one to flush
+    (checks[0] || checks).dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  // Build "Recently viewed" rail items from localStorage (populated by
+  // the detail page on every visit). Capped at 6 to keep the rail tidy.
+  const buildRecents = () => {
+    try {
+      const list = JSON.parse(localStorage.getItem('jem-asr-recent-views-v1') || '[]');
+      return list.slice(0, 6).map(it => ({
+        label: it.name || it.id,
+        icon: 'audio',
+        href: `/detail.html?id=${encodeURIComponent(it.id)}`,
+        title: it.name || it.id,
+      }));
+    } catch { return []; }
+  };
+  const refreshContextualSections = () => {
+    const sections = [
+      {
+        heading: 'Quick filters',
+        items: [
+          { label: 'Unmapped',     icon: 'alertCircle', onClick: () => setStatusFilter('unmapped') },
+          { label: 'Mapped',       icon: 'check2',      onClick: () => setStatusFilter('mapped') },
+          { label: 'Cleaned',      icon: 'sparkles',    onClick: () => setStatusFilter('cleaned') },
+          { label: 'Approved',     icon: 'check',       onClick: () => setStatusFilter('approved') },
+          { label: 'Show all',     icon: 'refresh',     onClick: () => document.getElementById('btn-reset-filters')?.click() },
+        ],
+      },
+    ];
+    const recents = buildRecents();
+    if (recents.length) sections.push({ heading: 'Recently viewed', items: recents });
+    setContextualSections(sections);
+  };
+  refreshContextualSections();
+  // Refresh when storage changes (e.g. another tab opened a detail page)
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'jem-asr-recent-views-v1') refreshContextualSections();
+  });
+
+  // ── Command palette: register audios + transcripts as searchable ──
+  registerSource(() => {
+    const s = getState();
+    return (s.audio || []).slice(0, 500).map(a => ({
+      id: 'audio-' + a.id,
+      label: a.name || a.id,
+      detail: a.id,
+      group: 'Audio',
+      icon: 'audio',
+      onRun: () => { location.href = `/detail.html?id=${encodeURIComponent(a.id)}`; },
+    }));
   });
 });

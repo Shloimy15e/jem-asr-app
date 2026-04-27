@@ -249,7 +249,107 @@ function renderGeminiEndpointsBlock(container) {
   container.appendChild(block);
 }
 
+// Renders a "Provider connection status" block with a Test button that hits
+// /api/transcribe (GET) and displays per-provider configured/connected state.
+function renderHealthBlock(container) {
+  const block = document.createElement('div');
+  block.className = 'asr-provider-block asr-health-block';
+
+  const head = document.createElement('div');
+  head.className = 'asr-provider-title';
+  head.textContent = 'Provider connection status';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'action-btn action-btn-primary';
+  btn.textContent = 'Test connection';
+  btn.style.cssText = 'margin-left:auto;';
+  head.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  head.appendChild(btn);
+  block.appendChild(head);
+
+  const grid = document.createElement('div');
+  grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px;';
+  block.appendChild(grid);
+
+  function pill(label, status, sub) {
+    const card = document.createElement('div');
+    card.style.cssText = 'padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);';
+    const top = document.createElement('div');
+    top.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;font-weight:600;';
+    const dot = document.createElement('span');
+    dot.style.cssText = `width:8px;height:8px;border-radius:50%;background:${
+      status === 'ok' ? 'var(--green)' : status === 'configured' ? 'var(--orange)' : 'var(--text-muted)'
+    };`;
+    top.appendChild(dot);
+    const lbl = document.createElement('span');
+    lbl.textContent = label;
+    top.appendChild(lbl);
+    card.appendChild(top);
+    if (sub) {
+      const s = document.createElement('div');
+      s.style.cssText = 'font-size:0.76rem;color:var(--text-secondary);margin-top:4px;line-height:1.45;';
+      s.textContent = sub;
+      card.appendChild(s);
+    }
+    return card;
+  }
+
+  function render(state) {
+    grid.innerHTML = '';
+    if (!state) {
+      grid.appendChild(pill('Click "Test connection"', 'idle', 'Verifies that Vertex AI and other providers are reachable from the worker.'));
+      return;
+    }
+    if (state.error) {
+      grid.appendChild(pill('Test failed', 'down', state.error));
+      return;
+    }
+    // Gemini / Vertex
+    const g = state.gemini || {};
+    if (g.tokenOk) {
+      grid.appendChild(pill('Gemini (Vertex AI) — connected', 'ok', `Project: ${g.project || '(from SA)'} · OAuth token minted successfully`));
+    } else if (g.configured && g.mode === 'vertex') {
+      grid.appendChild(pill('Gemini (Vertex AI) — auth failed', 'down', g.error || 'Could not mint OAuth token from GEMINI_SA_JSON'));
+    } else if (g.configured && g.mode === 'api-key') {
+      grid.appendChild(pill('Gemini (API key) — configured', 'configured', 'Using GEMINI_API_KEY (no Vertex). No live test performed.'));
+    } else {
+      grid.appendChild(pill('Gemini — not configured', 'down', 'Set GEMINI_SA_JSON or GEMINI_API_KEY as a Worker secret.'));
+    }
+    // Mendel
+    grid.appendChild(pill(
+      state.mendel?.configured ? 'Mendel — configured' : 'Mendel — not configured',
+      state.mendel?.configured ? 'configured' : 'down',
+      state.mendel?.configured ? 'YL_API_KEY is set on the worker.' : 'Set YL_API_KEY as a Worker secret.',
+    ));
+    // Whisper
+    grid.appendChild(pill('Whisper (RunPod) — ready', 'ok', 'Uses align.kohnai.ai; no key needed here.'));
+  }
+
+  render(null);
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = 'Testing…';
+    try {
+      const resp = await fetch('/api/transcribe', { method: 'GET' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      render(data);
+    } catch (err) {
+      render({ error: (err && err.message) || String(err) });
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Test connection';
+    }
+  });
+
+  container.appendChild(block);
+}
+
 export function buildAsrConfigPanel(container) {
+  // ── Connection status ──
+  renderHealthBlock(container);
+
   // ── Gemini ──
   renderGeminiEndpointsBlock(container);
 

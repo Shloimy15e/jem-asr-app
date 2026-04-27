@@ -310,20 +310,28 @@ export function updateState(key, audioId, value) {
 export function getStatus(audioId) {
   if (!state) return 'unmapped';
 
-  // A mapping only counts if the transcript it points to actually exists
+  // A mapping counts as valid if EITHER:
+  //   (a) it points to an existing transcript record, OR
+  //   (b) it's a synthetic mapping (transcriptId null) created by
+  //       "Create from scratch" / manual paste / ASR-from-audio flows.
   const mapping = state.mappings[audioId];
-  const hasValidTranscript = mapping
-    && (state.transcripts || []).some(t => t.id === mapping.transcriptId);
+  const hasMapping = !!mapping && (
+    !mapping.transcriptId
+    || (state.transcripts || []).some(t => t.id === mapping.transcriptId)
+  );
 
-  // Also check if a manual version exists with a valid sourceTranscriptId —
-  // this covers cases where the mapping was lost during Supabase sync but
-  // versions (with work done) still exist in localStorage.
+  // Also count work-in-progress: any version with non-empty text means the
+  // user added a transcript manually (paste / scratch / ASR) even if the
+  // mapping row didn't get persisted.
   const versions = state.transcriptVersions[audioId];
-  const hasVersionMapping = !hasValidTranscript && versions && versions.length > 0
+  const hasAnyVersionText = versions && versions.some(v =>
+    typeof v.text === 'string' && v.text.trim().length > 0
+  );
+  const hasVersionMapping = versions && versions.length > 0
     && versions.some(v => v.type === 'manual' && v.sourceTranscriptId
       && (state.transcripts || []).some(t => t.id === v.sourceTranscriptId));
 
-  if (!hasValidTranscript && !hasVersionMapping) return 'unmapped';
+  if (!hasMapping && !hasVersionMapping && !hasAnyVersionText) return 'unmapped';
 
   if (versions && versions.length > 0) {
     if (versions.some(v => v.review?.status === 'approved')) return 'approved';
@@ -350,12 +358,18 @@ export function getCompletedStages(audioId) {
   const result = { mapped: false, cleaned: false, aligned: false, approved: false, rejected: false };
   if (!state) return result;
 
-  // Check mapping (same logic as getStatus)
+  // Check mapping (same logic as getStatus — includes synthetic mappings
+  // and any non-empty manual / ASR / pasted version).
   const mapping = state.mappings[audioId];
   const versions = state.transcriptVersions[audioId];
-  const hasMapping = (mapping && (state.transcripts || []).some(t => t.id === mapping.transcriptId))
+  const hasMapping =
+    (!!mapping && (
+      !mapping.transcriptId
+      || (state.transcripts || []).some(t => t.id === mapping.transcriptId)
+    ))
     || (versions && versions.some(v => v.type === 'manual' && v.sourceTranscriptId
-        && (state.transcripts || []).some(t => t.id === v.sourceTranscriptId)));
+        && (state.transcripts || []).some(t => t.id === v.sourceTranscriptId)))
+    || (versions && versions.some(v => typeof v.text === 'string' && v.text.trim().length > 0));
   if (!hasMapping) return result; // unmapped — nothing is done
 
   result.mapped = true;

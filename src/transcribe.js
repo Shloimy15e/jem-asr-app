@@ -1,3 +1,4 @@
+import './app-shell.js';
 import { initState, getState, getVersions, addVersion, updateVersion, mergeSupabaseData, updateState } from './state.js';
 import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, getActiveLibraryConfig } from './auth.js';
 import { transcribeAudio } from './alignment.js';
@@ -54,7 +55,8 @@ function renderTranscribePage(audioId, audio, state, root) {
   const backBtn = document.createElement('a');
   backBtn.href = `/detail.html?id=${audioId}`;
   backBtn.className = 'toolbar-btn';
-  backBtn.textContent = '\u2190 Back to File';
+  backBtn.style.textDecoration = 'none';
+  backBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:-3px"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg><span>Back to file</span>';
 
   const title = document.createElement('span');
   title.className = 'app-title';
@@ -121,7 +123,8 @@ function renderTranscribePage(audioId, audio, state, root) {
 
   const iconEl = document.createElement('div');
   iconEl.className = 'asr-card-icon';
-  iconEl.textContent = '\uD83C\uDF99';
+  // Inline mic SVG (matches icons.js mic glyph). Sized to fit the 40x40 chip.
+  iconEl.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
 
   const headerText = document.createElement('div');
   headerText.className = 'asr-card-header-text';
@@ -166,21 +169,158 @@ function renderTranscribePage(audioId, audio, state, root) {
   // Shared per-call prompt textarea (Gemini only). Whisper/Mendel ignore it.
   // Stored ABOVE the buttons so it's discoverable and reused if user runs
   // several Gemini endpoints back-to-back.
+  // ── Prompt editor (Gemini only) ─────────────────────────────────
+  // Polished editor with preset chips, char counter, persistence,
+  // expand-to-overlay. Whisper/Mendel ignore this; we show that hint
+  // when they're highlighted.
   let promptInput = null;
+  const PROMPT_LS_KEY = 'jem-asr-last-gemini-prompt';
+  const PROMPT_PRESETS = [
+    { label: 'Default',           text: '' },
+    { label: 'Verbatim + punctuation', text: 'Transcribe this Yiddish audio verbatim with full punctuation. Preserve hesitations (uh, um) and false starts.' },
+    { label: 'Clean reading',     text: 'Transcribe this Yiddish audio. Remove filler words and false starts. Keep punctuation and sentence breaks.' },
+    { label: 'Word-for-word',     text: 'Transcribe word-for-word in Yiddish, exactly as spoken. Do not paraphrase. Mark unintelligible words with [?].' },
+    { label: 'With speaker tags', text: 'Transcribe this Yiddish audio. Identify each speaker and prefix lines with the speaker label (Speaker 1: / Speaker 2:). Use full punctuation.' },
+  ];
   {
     const wrap = document.createElement('div');
-    wrap.className = 'gemini-prompt-wrap';
-    wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin:8px 0 12px;';
-    const lbl = document.createElement('label');
-    lbl.textContent = 'Gemini prompt (optional, ignored by Whisper/Mendel)';
-    lbl.style.cssText = 'font-size:0.78rem;color:var(--text-secondary);';
+    wrap.className = 'prompt-editor';
+    wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin:10px 0 14px;padding:14px 14px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-lg);';
+
+    // Header row: label + expand button
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    const headLabel = document.createElement('div');
+    headLabel.style.cssText = 'font-size:0.75rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);';
+    headLabel.textContent = 'Gemini Prompt';
+    const headHint = document.createElement('div');
+    headHint.style.cssText = 'font-size:0.74rem;color:var(--text-muted);';
+    headHint.textContent = '· Whisper / Mendel ignore this';
+    const expandBtn = document.createElement('button');
+    expandBtn.type = 'button';
+    expandBtn.className = 'action-btn';
+    expandBtn.style.cssText = 'margin-left:auto;font-size:0.75rem;height:26px;padding:0 10px;';
+    expandBtn.title = 'Expand prompt editor';
+    expandBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
+    head.appendChild(headLabel);
+    head.appendChild(headHint);
+    head.appendChild(expandBtn);
+    wrap.appendChild(head);
+
+    // Preset chips
+    const chips = document.createElement('div');
+    chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;';
+    PROMPT_PRESETS.forEach(p => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'prompt-preset-chip';
+      chip.textContent = p.label;
+      chip.title = p.text || 'Use the default Worker prompt';
+      chip.style.cssText = 'height:26px;padding:0 10px;font-size:0.74rem;font-weight:600;border:1px solid var(--border);background:var(--surface);color:var(--text-secondary);border-radius:999px;cursor:pointer;transition:all 150ms;';
+      chip.addEventListener('click', () => {
+        promptInput.value = p.text;
+        updateCharCount();
+        promptInput.focus();
+        // Visual select
+        chips.querySelectorAll('.prompt-preset-chip').forEach(c => {
+          c.style.background = 'var(--surface)';
+          c.style.color = 'var(--text-secondary)';
+          c.style.borderColor = 'var(--border)';
+        });
+        chip.style.background = 'var(--accent-dim)';
+        chip.style.color = 'var(--accent)';
+        chip.style.borderColor = 'var(--accent)';
+      });
+      chips.appendChild(chip);
+    });
+    wrap.appendChild(chips);
+
+    // Textarea
     promptInput = document.createElement('textarea');
     promptInput.className = 'gemini-prompt-input';
-    promptInput.rows = 2;
-    promptInput.placeholder = 'e.g. Verbatim transcription with full punctuation, mark uncertain words with [?]';
-    promptInput.style.cssText = 'width:100%;padding:6px 8px;border:1px solid var(--border,#ccc);border-radius:6px;font-size:0.85rem;resize:vertical;font-family:inherit;';
-    wrap.appendChild(lbl);
+    promptInput.rows = 4;
+    promptInput.placeholder = 'Leave blank to use the worker default prompt, or write your own. Tip: be specific about Yiddish, punctuation, and how to handle uncertain words.';
+    promptInput.style.cssText = 'width:100%;min-height:88px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:0.88rem;line-height:1.5;font-family:inherit;background:var(--surface);color:var(--text);resize:vertical;outline:none;transition:border-color 150ms, box-shadow 150ms;';
+    promptInput.addEventListener('focus', () => {
+      promptInput.style.borderColor = 'var(--accent)';
+      promptInput.style.boxShadow = '0 0 0 3px var(--accent-dim)';
+    });
+    promptInput.addEventListener('blur', () => {
+      promptInput.style.borderColor = 'var(--border)';
+      promptInput.style.boxShadow = 'none';
+    });
+    // Restore last prompt
+    try {
+      const saved = localStorage.getItem(PROMPT_LS_KEY);
+      if (saved) promptInput.value = saved;
+    } catch {}
     wrap.appendChild(promptInput);
+
+    // Footer: char count + clear + persist
+    const foot = document.createElement('div');
+    foot.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+    const charCount = document.createElement('span');
+    charCount.style.cssText = 'font-size:0.72rem;color:var(--text-muted);font-variant-numeric:tabular-nums;';
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'action-btn action-btn-danger';
+    clearBtn.style.cssText = 'font-size:0.72rem;height:24px;padding:0 8px;';
+    clearBtn.textContent = 'Clear';
+    clearBtn.addEventListener('click', () => { promptInput.value = ''; updateCharCount(); promptInput.focus(); });
+    foot.appendChild(charCount);
+    foot.appendChild(clearBtn);
+    wrap.appendChild(foot);
+
+    function updateCharCount() {
+      const n = (promptInput.value || '').length;
+      charCount.textContent = n === 0 ? 'Using worker default prompt' : `${n} character${n === 1 ? '' : 's'}`;
+      try { localStorage.setItem(PROMPT_LS_KEY, promptInput.value); } catch {}
+    }
+    promptInput.addEventListener('input', updateCharCount);
+    updateCharCount();
+
+    // Expand-to-fullscreen overlay
+    expandBtn.addEventListener('click', () => {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.45);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:1000;padding:24px;';
+      const dlg = document.createElement('div');
+      dlg.style.cssText = 'background:var(--surface);border-radius:var(--radius-2xl);box-shadow:var(--shadow-lg);width:min(900px, 92vw);max-height:88vh;display:flex;flex-direction:column;padding:22px;';
+      const dlgHead = document.createElement('div');
+      dlgHead.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;';
+      const dlgTitle = document.createElement('h3');
+      dlgTitle.textContent = 'Edit Gemini prompt';
+      dlgTitle.style.cssText = 'margin:0;font-size:1rem;font-weight:700;letter-spacing:-0.01em;';
+      const dlgClose = document.createElement('button');
+      dlgClose.type = 'button';
+      dlgClose.className = 'action-btn';
+      dlgClose.textContent = 'Done';
+      dlgHead.appendChild(dlgTitle);
+      dlgHead.appendChild(dlgClose);
+      dlg.appendChild(dlgHead);
+      const dlgArea = document.createElement('textarea');
+      dlgArea.value = promptInput.value;
+      dlgArea.style.cssText = 'flex:1;width:100%;min-height:50vh;padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius);font-size:0.95rem;line-height:1.6;font-family:inherit;resize:vertical;outline:none;';
+      dlgArea.addEventListener('focus', () => { dlgArea.style.borderColor = 'var(--accent)'; dlgArea.style.boxShadow = '0 0 0 3px var(--accent-dim)'; });
+      dlgArea.addEventListener('blur',  () => { dlgArea.style.borderColor = 'var(--border)'; dlgArea.style.boxShadow = 'none'; });
+      dlg.appendChild(dlgArea);
+      overlay.appendChild(dlg);
+      document.body.appendChild(overlay);
+      dlgArea.focus();
+      const close = () => {
+        promptInput.value = dlgArea.value;
+        updateCharCount();
+        document.body.removeChild(overlay);
+      };
+      dlgClose.addEventListener('click', close);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      document.addEventListener('keydown', function onEsc(e) {
+        if (e.key === 'Escape') {
+          document.removeEventListener('keydown', onEsc);
+          close();
+        }
+      });
+    });
+
     asrCard.appendChild(wrap);
   }
 

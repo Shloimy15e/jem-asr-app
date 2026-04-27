@@ -1,3 +1,4 @@
+import './app-shell.js';
 import { initState, getState, getStatus, getCompletedStages, PIPELINE_STAGES, getVersions, getBestVersion, addVersion, updateVersion, updateState, mergeSupabaseData, setVersionAlignment, getAlignedVersions, getPipelineStep, getIterationCount, setSegmentApprovals, getApprovedSegments, toggleSegmentApproval } from './state.js';
 import { checkAuth, signOut, getCurrentUser, getUserLibraries, getActiveLibrary, setActiveLibrary, getActiveLibraryConfig, isLibraryR2Url, getAccessToken } from './auth.js';
 import { renderSuggestedMatches, linkMatch, unlinkMatch, renderSearchModal } from './mapping.js';
@@ -298,6 +299,15 @@ function renderDetailPage(audioId, audio, state, container) {
   container.innerHTML = '';
   const status = getStatus(audioId);
 
+  // Track this audio in the "Recently viewed" list (rail nav on table page)
+  try {
+    const KEY = 'jem-asr-recent-views-v1';
+    const list = JSON.parse(localStorage.getItem(KEY) || '[]');
+    const filtered = list.filter(it => it && it.id !== audioId);
+    filtered.unshift({ id: audioId, name: audio.name || audioId, at: Date.now() });
+    localStorage.setItem(KEY, JSON.stringify(filtered.slice(0, 12)));
+  } catch (_) { /* no-op */ }
+
   // Title bar with editable name
   const titleBar = document.createElement('div');
   titleBar.className = 'detail-title-bar';
@@ -317,8 +327,68 @@ function renderDetailPage(audioId, audio, state, container) {
     if (e.key === 'Enter') { e.preventDefault(); title.blur(); }
   });
   titleBar.appendChild(title);
+
+  // Prev / Next sibling navigation (J / K keyboard) — uses the natural
+  // order of state.audio so users can sweep through the library without
+  // bouncing to the table page.
+  const navWrap = document.createElement('span');
+  navWrap.className = 'detail-prevnext';
+  const allIds = (state.audio || []).map(a => a.id);
+  const idx = allIds.indexOf(audioId);
+  const prevId = idx > 0 ? allIds[idx - 1] : null;
+  const nextId = idx >= 0 && idx < allIds.length - 1 ? allIds[idx + 1] : null;
+  function goTo(id) {
+    if (!id) return;
+    window.location.href = `/detail.html?id=${encodeURIComponent(id)}`;
+  }
+  const prevBtn = document.createElement('button');
+  prevBtn.type = 'button';
+  prevBtn.className = 'detail-prevnext__btn';
+  prevBtn.disabled = !prevId;
+  prevBtn.title = prevId ? `Previous: ${(state.audio.find(a=>a.id===prevId)||{}).name || prevId} (K)` : 'No previous file';
+  prevBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>';
+  prevBtn.addEventListener('click', () => goTo(prevId));
+  const counter = document.createElement('span');
+  counter.className = 'detail-prevnext__counter';
+  counter.textContent = idx >= 0 ? `${idx + 1} / ${allIds.length}` : '';
+  const nextBtn = document.createElement('button');
+  nextBtn.type = 'button';
+  nextBtn.className = 'detail-prevnext__btn';
+  nextBtn.disabled = !nextId;
+  nextBtn.title = nextId ? `Next: ${(state.audio.find(a=>a.id===nextId)||{}).name || nextId} (J)` : 'No next file';
+  nextBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+  nextBtn.addEventListener('click', () => goTo(nextId));
+  navWrap.appendChild(prevBtn);
+  navWrap.appendChild(counter);
+  navWrap.appendChild(nextBtn);
+  titleBar.appendChild(navWrap);
+
+  // J / K keyboard shortcuts (only when not typing in an editor)
+  if (!window._detailPrevNextWired) {
+    window._detailPrevNextWired = true;
+    document.addEventListener('keydown', (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (t && (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) return;
+      if (e.key === 'j' || e.key === 'J') {
+        const btn = document.querySelector('.detail-prevnext__btn:nth-child(3)');
+        if (btn && !btn.disabled) { e.preventDefault(); btn.click(); }
+      } else if (e.key === 'k' || e.key === 'K') {
+        const btn = document.querySelector('.detail-prevnext__btn:nth-child(1)');
+        if (btn && !btn.disabled) { e.preventDefault(); btn.click(); }
+      }
+    });
+  }
+
   // Pipeline progress indicator
   titleBar.appendChild(renderDetailPipeline(audioId));
+  // Save indicator chip (right-aligned)
+  const saveChip = document.createElement('span');
+  saveChip.className = 'save-indicator';
+  saveChip.style.marginInlineStart = 'auto';
+  saveChip.dataset.role = 'save-indicator';
+  saveChip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>All changes saved</span>';
+  titleBar.appendChild(saveChip);
   container.appendChild(titleBar);
 
   // Split-relationship links — parent + sibling parts. Split IDs follow
@@ -635,11 +705,97 @@ function renderDetailPage(audioId, audio, state, container) {
 
     container.appendChild(benchSection.el);
   }
+  // Publish rail nav after sections are mounted
+  setTimeout(publishDetailRailSections, 0);
+  // Hook autosave indicator into editable surfaces
+  setTimeout(() => attachSaveIndicator(container), 0);
 }
+
+// ────────────────────────────────────────────────────────────────────
+// Save-indicator hook: turns the chip in .detail-title-bar into a live
+// status. On blur of any contenteditable / textarea / input within the
+// detail page, briefly show "Saving…" then "Saved · Xs ago". Uses
+// optimistic UI — the actual persistence is handled elsewhere; we just
+// reflect the lifecycle visually.
+// ────────────────────────────────────────────────────────────────────
+let _lastSaveAt = null;
+let _saveTickInterval = null;
+function setSaveIndicator(state, opts = {}) {
+  const chip = document.querySelector('.save-indicator[data-role="save-indicator"]');
+  if (!chip) return;
+  chip.classList.remove('save-indicator--saving', 'save-indicator--saved', 'save-indicator--error');
+  if (state === 'saving') {
+    chip.classList.add('save-indicator--saving');
+    chip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg><span>Saving…</span>';
+  } else if (state === 'saved') {
+    chip.classList.add('save-indicator--saved');
+    _lastSaveAt = Date.now();
+    refreshSavedLabel();
+    if (!_saveTickInterval) _saveTickInterval = setInterval(refreshSavedLabel, 15000);
+  } else if (state === 'error') {
+    chip.classList.add('save-indicator--error');
+    chip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>' + (opts.detail || 'Save failed') + '</span>';
+  } else {
+    chip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>All changes saved</span>';
+  }
+}
+function refreshSavedLabel() {
+  const chip = document.querySelector('.save-indicator[data-role="save-indicator"]');
+  if (!chip || !_lastSaveAt) return;
+  const sec = Math.max(1, Math.round((Date.now() - _lastSaveAt) / 1000));
+  let phrase;
+  if (sec < 60) phrase = `Saved · ${sec}s ago`;
+  else if (sec < 3600) phrase = `Saved · ${Math.round(sec / 60)}m ago`;
+  else phrase = 'Saved';
+  if (chip.classList.contains('save-indicator--saved')) {
+    chip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>' + phrase + '</span>';
+  }
+}
+
+let _attachedSave = new WeakSet();
+function attachSaveIndicator(container) {
+  if (!container) return;
+  const targets = container.querySelectorAll('[contenteditable="true"], textarea, input[type="text"]');
+  targets.forEach(el => {
+    if (_attachedSave.has(el)) return;
+    _attachedSave.add(el);
+    let dirty = false;
+    el.addEventListener('input', () => {
+      dirty = true;
+      setSaveIndicator('saving');
+    });
+    el.addEventListener('blur', () => {
+      if (!dirty) return;
+      dirty = false;
+      // Optimistic: assume the underlying save will succeed since the
+      // existing handlers already commit on blur.
+      setTimeout(() => setSaveIndicator('saved'), 350);
+    });
+  });
+}
+
+// Cmd+S forces a flush by blurring the active editor (which triggers
+// the existing save handlers).
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
+    const active = document.activeElement;
+    if (active && (active.isContentEditable || active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) {
+      e.preventDefault();
+      active.blur();
+      // Re-focus shortly so the user can keep editing
+      setTimeout(() => active.focus && active.focus(), 50);
+    }
+  }
+});
 
 function createSection(title) {
   const el = document.createElement('section');
   el.className = 'detail-section';
+  // Slug for in-page jump from rail / cmdk
+  const slug = String(title || '').toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (slug) el.id = `section-${slug}`;
+  el.dataset.sectionTitle = title;
   const header = document.createElement('h3');
   header.className = 'detail-section-title';
   header.textContent = title;
@@ -648,6 +804,29 @@ function createSection(title) {
   content.className = 'detail-section-content';
   el.appendChild(content);
   return { el, header, content };
+}
+
+// Walk the rendered detail page and publish a "Sections" rail block so
+// the user can jump between Audio Player / Mapping / Versions / etc.
+function publishDetailRailSections() {
+  try {
+    const sections = Array.from(document.querySelectorAll('.detail-section'));
+    if (sections.length === 0) return;
+    const items = sections.map(sec => ({
+      label: sec.dataset.sectionTitle || sec.id || 'Section',
+      icon: 'layoutGrid',
+      onClick: (e) => {
+        if (e) e.preventDefault();
+        sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return false;
+      },
+    }));
+    import('./app-shell.js').then(mod => {
+      if (typeof mod.setContextualSections === 'function') {
+        mod.setContextualSections([{ heading: 'On this page', items }]);
+      }
+    });
+  } catch (e) { /* no-op */ }
 }
 
 function addCollapseBehavior(section, header, collapseByDefault) {
@@ -697,15 +876,76 @@ function buildAsrProviderBar(audioId, state, onComplete) {
   label.textContent = 'Generate transcript:';
   bar.appendChild(label);
 
-  // Per-call Gemini prompt — Whisper and Mendel ignore it. Lives on the same
-  // bar so users can edit and rerun without leaving the detail view.
+  // Per-call Gemini prompt — Whisper / Mendel ignore. Compact on the detail
+  // bar; an "Edit fullscreen" link opens an overlay for longer prompts.
+  // Last value persists across pages via the same localStorage key as the
+  // dedicated Transcribe page.
+  const promptWrap = document.createElement('div');
+  promptWrap.style.cssText = 'flex:1;min-width:240px;display:flex;flex-direction:column;gap:4px;';
   const promptInput = document.createElement('textarea');
   promptInput.className = 'gemini-prompt-input';
-  promptInput.rows = 1;
-  promptInput.placeholder = 'Optional Gemini prompt (Whisper/Mendel ignore)';
+  promptInput.rows = 2;
+  promptInput.placeholder = 'Optional Gemini prompt — leave blank for default. (Whisper / Mendel ignore.)';
   promptInput.title = 'Custom prompt for Gemini/Vertex; appended as a separate version per run';
-  promptInput.style.cssText = 'flex:1;min-width:200px;padding:5px 8px;border:1px solid var(--border,#ccc);border-radius:6px;font-size:0.82rem;resize:vertical;font-family:inherit;';
-  bar.appendChild(promptInput);
+  promptInput.style.cssText = 'width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:0.85rem;line-height:1.45;resize:vertical;font-family:inherit;background:var(--surface);color:var(--text);outline:none;transition:border-color 150ms, box-shadow 150ms;';
+  promptInput.addEventListener('focus', () => { promptInput.style.borderColor = 'var(--accent)'; promptInput.style.boxShadow = '0 0 0 3px var(--accent-dim)'; });
+  promptInput.addEventListener('blur',  () => { promptInput.style.borderColor = 'var(--border)'; promptInput.style.boxShadow = 'none'; });
+  try {
+    const saved = localStorage.getItem('jem-asr-last-gemini-prompt');
+    if (saved) promptInput.value = saved;
+  } catch {}
+  promptInput.addEventListener('input', () => {
+    try { localStorage.setItem('jem-asr-last-gemini-prompt', promptInput.value); } catch {}
+  });
+  promptWrap.appendChild(promptInput);
+  // Subtle hint row
+  const promptHint = document.createElement('div');
+  promptHint.style.cssText = 'font-size:0.72rem;color:var(--text-muted);display:flex;justify-content:space-between;gap:6px;';
+  const promptHintText = document.createElement('span');
+  promptHintText.textContent = 'Each Gemini run is saved as a new version with a timestamp.';
+  promptHint.appendChild(promptHintText);
+  const fullscreenLink = document.createElement('a');
+  fullscreenLink.href = '#';
+  fullscreenLink.textContent = 'Expand';
+  fullscreenLink.style.cssText = 'color:var(--accent);text-decoration:none;font-weight:600;';
+  fullscreenLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.45);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:1000;padding:24px;';
+    const dlg = document.createElement('div');
+    dlg.style.cssText = 'background:var(--surface);border-radius:var(--radius-2xl);box-shadow:var(--shadow-lg);width:min(900px,92vw);max-height:88vh;display:flex;flex-direction:column;padding:22px;';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;';
+    const title = document.createElement('h3');
+    title.textContent = 'Edit Gemini prompt';
+    title.style.cssText = 'margin:0;font-size:1rem;font-weight:700;letter-spacing:-0.01em;';
+    const done = document.createElement('button');
+    done.type = 'button';
+    done.className = 'action-btn';
+    done.textContent = 'Done';
+    head.appendChild(title);
+    head.appendChild(done);
+    const area = document.createElement('textarea');
+    area.value = promptInput.value;
+    area.style.cssText = 'flex:1;width:100%;min-height:50vh;padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius);font-size:0.95rem;line-height:1.6;font-family:inherit;resize:vertical;outline:none;';
+    area.addEventListener('focus', () => { area.style.borderColor = 'var(--accent)'; area.style.boxShadow = '0 0 0 3px var(--accent-dim)'; });
+    area.addEventListener('blur',  () => { area.style.borderColor = 'var(--border)'; area.style.boxShadow = 'none'; });
+    dlg.appendChild(head);
+    dlg.appendChild(area);
+    overlay.appendChild(dlg);
+    document.body.appendChild(overlay);
+    area.focus();
+    const close = () => {
+      promptInput.value = area.value;
+      try { localStorage.setItem('jem-asr-last-gemini-prompt', area.value); } catch {}
+      document.body.removeChild(overlay);
+    };
+    done.addEventListener('click', close);
+    overlay.addEventListener('click', (e2) => { if (e2.target === overlay) close(); });
+  });
+  promptHint.appendChild(fullscreenLink);
+  promptWrap.appendChild(promptHint);
+  bar.appendChild(promptWrap);
 
   for (const { key, label: btnLabel } of PROVIDERS) {
     const btn = document.createElement('button');
@@ -855,12 +1095,21 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
       // this audio (manual / edited / cleaned / asr-<model>) instead of being
       // stuck on whatever getBestVersion picked. Empty versions are still
       // listed so users can see they exist, but marked so they're obvious.
-      if (versions.length > 1) {
+      // Render whenever there is at least one comparable surface — i.e.
+      // multiple versions OR a single version + a mapped transcript (so the
+      // user can compare ASR vs. the manual / original transcript).
+      const SYN_MANUAL_ID = '__synthetic_manual__';
+      const hasManualVersion = versions.some(v => v.type === 'manual');
+      const canSynthesizeManual = !!transcript && !hasManualVersion;
+      const showPickers = versions.length > 1 || canSynthesizeManual;
+      if (showPickers) {
         const picker = document.createElement('select');
         picker.className = 'version-picker';
         picker.style.cssText = 'padding:3px 8px;border:1px solid var(--border,#ccc);border-radius:6px;font-size:0.85rem;background:#fff;';
         picker.setAttribute('aria-label', 'Select transcript version');
-        const byType = { edited: 'Edited', cleaned: 'Cleaned', asr: 'ASR', manual: 'Original' };
+        // 'Manual (original)' is clearer than just 'Original' since users
+        // type the word "manual" when they mean the typed/imported text.
+        const byType = { edited: 'Edited', cleaned: 'Cleaned', asr: 'ASR', manual: 'Manual (original)' };
         // Look up Gemini endpoint display names so "asr (gemini-yiddish-v3-large)"
         // renders as "ASR (gemini: Yiddish v3 large)".
         const geminiEndpoints = (getState().transcribeProviders?.gemini?.endpoints) || [];
@@ -916,18 +1165,71 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
         const compareTargetId = _compareVersionByAudio.get(audioId) || null;
         versions.forEach((v) => {
           if (v.id === activeVersionRef?.id) return; // can't compare to itself
+          // Include all versions even if text isn't loaded — manual versions
+          // often start empty until first opened; we lazy-load on pick.
           const empty = !(typeof v.text === 'string' && v.text.trim().length > 0);
-          if (empty) return;
           const opt = document.createElement('option');
           opt.value = v.id;
-          opt.textContent = labelFor(v);
+          opt.textContent = empty ? `${labelFor(v)} \u2014 (load on pick)` : labelFor(v);
           if (v.id === compareTargetId) opt.selected = true;
           comparePicker.appendChild(opt);
         });
-        comparePicker.addEventListener('change', (e) => {
+        // Synthetic "Manual (original transcript)" option — appears when no
+        // manual version record exists yet (e.g. ASR-only run with mapped
+        // transcript, or migration glitch). Picking it lazy-loads the
+        // transcript text and creates a real manual version.
+        if (canSynthesizeManual) {
+          const opt = document.createElement('option');
+          opt.value = SYN_MANUAL_ID;
+          opt.textContent = 'Manual (original transcript) — (load on pick)';
+          if (compareTargetId === SYN_MANUAL_ID) opt.selected = true;
+          comparePicker.appendChild(opt);
+        }
+        comparePicker.addEventListener('change', async (e) => {
           const val = e.target.value || null;
-          if (val) _compareVersionByAudio.set(audioId, val);
-          else _compareVersionByAudio.delete(audioId);
+          if (val) {
+            if (val === SYN_MANUAL_ID && transcript) {
+              // Lazy-create a real manual version from the mapped transcript
+              try {
+                const text = await loadFullText(transcript);
+                addVersion(audioId, {
+                  type: 'manual',
+                  sourceTranscriptId: transcript.id,
+                  text: text || '',
+                  createdAt: new Date().toISOString(),
+                  createdBy: 'detail-page-synthesized',
+                });
+                const newVersions = getVersions(audioId);
+                const created = newVersions.find(v => v.type === 'manual');
+                if (created) _compareVersionByAudio.set(audioId, created.id);
+              } catch (err) {
+                console.warn('Failed to load original transcript for compare:', err);
+              }
+            } else {
+              // Lazy-load text for the picked version (especially manual /
+              // cleaned imported from Supabase metadata where text is fetched
+              // on demand).
+              const target = versions.find(v => v.id === val);
+              const isEmpty = target && !(typeof target.text === 'string' && target.text.trim().length > 0);
+              if (isEmpty) {
+                try {
+                  if (target.type === 'manual' && transcript) {
+                    const text = await loadFullText(transcript);
+                    if (text) target.text = text;
+                  } else if (target.type === 'cleaned' || target.type === 'edited' || target.type === 'asr') {
+                    const { loadTranscriptText } = await import('./db.js');
+                    const text = await loadTranscriptText(audioId, target.id);
+                    if (text) target.text = text;
+                  }
+                } catch (err) {
+                  console.warn('Failed to load comparison version text:', err);
+                }
+              }
+              _compareVersionByAudio.set(audioId, val);
+            }
+          } else {
+            _compareVersionByAudio.delete(audioId);
+          }
           const s = getState();
           renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
         });
@@ -1704,10 +2006,9 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
     container.appendChild(hint);
   }
 
-  // ── Progress card (when alignment exists) ──
-  if (alignment) {
-    container.appendChild(renderProgressCard(alignment));
-  }
+  // (Progress card with high-confidence % + low-confidence red bar removed
+  // per user feedback — alignment confidence now lives only on the version
+  // info bar / iteration history.)
 
   // ── Step panels ──
   function buildPassButtons(targetEl) {
@@ -1995,7 +2296,12 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
   const cleanLabel = document.createElement('div');
   cleanLabel.className = 'section-sublabel';
   cleanLabel.textContent = 'Cleaning — click a pass to preview changes line by line';
+  cleanLabel.title = 'Cleaning prepares the raw transcript for word-level alignment by removing things the audio does not contain (e.g. bracketed editor notes, parenthetical asides, section markers, leading/trailing intro text, double spaces).';
   cleanSection.appendChild(cleanLabel);
+  const cleanHelp = document.createElement('div');
+  cleanHelp.style.cssText = 'font-size:0.78rem;color:var(--text-secondary);margin:-2px 0 8px;line-height:1.5;';
+  cleanHelp.textContent = 'What is "cleaned"? Removes editor-only text that\'s not actually spoken (e.g. [bracketed notes], (parentheticals), section markers, intro/outro, double spaces) so the transcript matches what the speaker said. Required before alignment.';
+  cleanSection.appendChild(cleanHelp);
   buildPassButtons(cleanSection);
 
   // Revert button — undo last cleaning operation

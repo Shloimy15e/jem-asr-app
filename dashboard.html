@@ -4,7 +4,18 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dashboard — JEM ASR</title>
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('jem-asr-theme-v1');
+        if (!t && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) t = 'dark';
+        if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+      } catch (e) {}
+    })();
+  </script>
   <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/src/styles/refresh.css" />
+  <link rel="stylesheet" href="/src/styles/app.css" />
   <style>
     body { background: var(--bg); min-height: 100vh; }
 
@@ -281,12 +292,12 @@
       <div class="dash-card-title">Download Desktop App</div>
       <div class="download-row">
         <a class="download-btn" id="download-win" href="#" target="_blank">
-          <span class="download-icon">🖥️</span>
+          <span class="download-icon" data-icon="windows"></span>
           <span class="download-label">Windows</span>
           <span class="download-sub">Yiddish Voice.exe</span>
         </a>
         <a class="download-btn" id="download-mac" href="#" style="opacity:0.5;pointer-events:none">
-          <span class="download-icon">🍎</span>
+          <span class="download-icon" data-icon="apple"></span>
           <span class="download-label">macOS</span>
           <span class="download-sub">Coming soon</span>
         </a>
@@ -309,6 +320,8 @@
   <div class="toast" id="toast"></div>
 
   <script type="module">
+    import './src/app-shell.js';
+    import { icons } from './src/icons.js';
     import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
     // Config injected at build time via vite env vars
@@ -470,6 +483,16 @@
       if (diffMin < 1440) return Math.floor(diffMin / 60) + 'h ago';
       return d.toLocaleDateString();
     }
+
+    // Replace data-icon placeholders with SVGs
+    document.querySelectorAll('[data-icon]').forEach(el => {
+      const name = el.getAttribute('data-icon');
+      if (icons[name]) {
+        el.innerHTML = icons[name]();
+        const svg = el.querySelector('svg');
+        if (svg) { svg.setAttribute('width', '28'); svg.setAttribute('height', '28'); }
+      }
+    });
 
     // ── Run all ───────────────────────────────────────────────────────
     await Promise.all([loadApiKey(), loadCredits(), loadUsage()]);

@@ -58,7 +58,21 @@ function toggleInlinePlay(btn, audioUrl, audioId) {
 let fiftyFilter = '';  // '' = all, 'yes' = 50hr only, 'no' = not in 50hr
 let favoritesFilter = ''; // '' = all, 'yes' = favorites only
 let statusFilter = [];  // array of selected statuses, empty = all
-let currentSort = { column: null, dir: 'asc' };
+// ── Sort state (persisted) ─────────────────────────────────────────
+const SORT_KEY = 'jem-asr-sort-v1';
+function loadSort() {
+  try {
+    const raw = localStorage.getItem(SORT_KEY);
+    if (!raw) return { column: null, dir: 'asc' };
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === 'object') return { column: obj.column || null, dir: obj.dir === 'desc' ? 'desc' : 'asc' };
+  } catch {}
+  return { column: null, dir: 'asc' };
+}
+function saveSort(s) {
+  try { localStorage.setItem(SORT_KEY, JSON.stringify(s)); } catch {}
+}
+let currentSort = loadSort();
 let currentPage = 1;
 let searchTerm = '';
 let filterYear = '';
@@ -81,7 +95,19 @@ function updateMultiSelectLabel(btn, selected, allLabel) {
   else if (selected.length <= 2) btn.textContent = selected.map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(', ');
   else btn.textContent = selected.length + ' selected';
 }
-const PAGE_SIZE = 50;
+// Page size — user-adjustable via the pagination size selector.
+const PAGE_SIZE_KEY = 'jem-asr-page-size-v1';
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
+function loadPageSize() {
+  try {
+    const v = parseInt(localStorage.getItem(PAGE_SIZE_KEY) || '50', 10);
+    return PAGE_SIZE_OPTIONS.includes(v) ? v : 50;
+  } catch { return 50; }
+}
+function savePageSize(v) {
+  try { localStorage.setItem(PAGE_SIZE_KEY, String(v)); } catch {}
+}
+let PAGE_SIZE = loadPageSize();
 const selectedIds = new Set();
 
 function getSelectedRows() {
@@ -107,24 +133,646 @@ let _container = null;
 let _onRowExpand = null;
 
 // ── Column definitions ─────────────────────────────────────────────
+// Column order tuned so the most-used cells (Open, Comments, First 15 words,
+// Status) are visible without horizontal scroll. Additional columns can be
+// hidden via the column-visibility menu (filter bar → "Columns").
+//
+// `defaultHidden: true` columns start hidden but can be re-enabled.
 const COLUMNS = [
-  { key: 'checkbox',      label: '',                  sortable: false, showWhen: () => true },
-  { key: 'rowNum',        label: '#',                 sortable: false, showWhen: () => true },
-  { key: 'favorite',      label: '\u2605',            sortable: false, showWhen: () => true },
-  { key: 'id',            label: 'ID',                sortable: true,  showWhen: () => true },
-  { key: 'name',          label: 'Audio Name',        sortable: true,  showWhen: () => true },
-  { key: 'year',          label: 'Year',              sortable: true,  showWhen: () => true },
-  { key: 'month',         label: 'Month',             sortable: true,  showWhen: () => true },
-  { key: 'day',           label: 'Day',               sortable: true,  showWhen: () => true },
-  { key: 'type',          label: 'Type',              sortable: true,  showWhen: () => true },
-  { key: 'sichaNum',      label: 'No.',               sortable: true,  showWhen: () => true },
-  { key: 'estMinutes',    label: 'Duration',          sortable: true,  showWhen: () => true },
-  { key: 'firstLine',     label: 'First 15 Words',    sortable: false, showWhen: () => true },
-  { key: 'transcript',    label: 'Transcript Name',   sortable: true,  showWhen: () => true },
-  { key: 'comments',      label: 'Comments',          sortable: false, showWhen: () => true },
-  { key: 'status',        label: 'Status',            sortable: true,  showWhen: () => true },
-  { key: 'actions',       label: 'Actions',           sortable: false, showWhen: () => true },
+  { key: 'checkbox',      label: '',                  sortable: false, showWhen: () => true,  optional: false },
+  { key: 'rowNum',        label: '#',                 sortable: false, showWhen: () => true,  optional: false },
+  { key: 'favorite',      label: '\u2605',            sortable: false, showWhen: () => true,  optional: true },
+  { key: 'actions',       label: 'Actions',           sortable: false, showWhen: () => true,  optional: false, sticky: true },
+  { key: 'name',          label: 'Audio Name',        sortable: true,  showWhen: () => true,  optional: false },
+  { key: 'status',        label: 'Status',            sortable: true,  showWhen: () => true,  optional: true },
+  { key: 'comments',      label: 'Comments',          sortable: false, showWhen: () => true,  optional: true },
+  { key: 'firstLine',     label: 'First 15 Words',    sortable: false, showWhen: () => true,  optional: true },
+  { key: 'estMinutes',    label: 'Duration',          sortable: true,  showWhen: () => true,  optional: true },
+  { key: 'exported',      label: 'Exported',          sortable: true,  showWhen: () => true,  optional: true },
+  { key: 'transcript',    label: 'Transcript Name',   sortable: true,  showWhen: () => true,  optional: true },
+  { key: 'id',            label: 'ID',                sortable: true,  showWhen: () => true,  optional: true, defaultHidden: true },
+  { key: 'year',          label: 'Year',              sortable: true,  showWhen: () => true,  optional: true },
+  { key: 'month',         label: 'Month',             sortable: true,  showWhen: () => true,  optional: true, defaultHidden: true },
+  { key: 'day',           label: 'Day',               sortable: true,  showWhen: () => true,  optional: true, defaultHidden: true },
+  { key: 'type',          label: 'Type',              sortable: true,  showWhen: () => true,  optional: true },
+  { key: 'sichaNum',      label: 'No.',               sortable: true,  showWhen: () => true,  optional: true, defaultHidden: true },
 ];
+
+// ── Column visibility (persisted in localStorage) ──────────────────
+const COL_VIS_KEY = 'jem-asr-col-visibility-v1';
+function loadColVisibility() {
+  try {
+    const raw = localStorage.getItem(COL_VIS_KEY);
+    if (!raw) {
+      // First visit — apply defaults from column defs
+      const def = {};
+      for (const c of COLUMNS) if (c.optional) def[c.key] = c.defaultHidden ? false : true;
+      return def;
+    }
+    return JSON.parse(raw);
+  } catch { return {}; }
+}
+function saveColVisibility(vis) {
+  try { localStorage.setItem(COL_VIS_KEY, JSON.stringify(vis)); } catch {}
+}
+let _colVisibility = loadColVisibility();
+function isColVisible(c) {
+  if (!c.optional) return true;
+  if (Object.prototype.hasOwnProperty.call(_colVisibility, c.key)) return !!_colVisibility[c.key];
+  return !c.defaultHidden;
+}
+function setColVisibility(key, v) {
+  _colVisibility[key] = !!v;
+  saveColVisibility(_colVisibility);
+}
+
+// ── Column ordering (persisted in localStorage) ────────────────────
+// Users can drag column rows in the Columns popup to reorder them.
+// Non-optional anchor columns (checkbox, rowNum, actions) stay pinned
+// at their natural positions; only optional columns get reordered.
+const COL_ORDER_KEY = 'jem-asr-col-order-v1';
+function loadColOrder() {
+  try {
+    const raw = localStorage.getItem(COL_ORDER_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function saveColOrder(arr) {
+  try { localStorage.setItem(COL_ORDER_KEY, JSON.stringify(arr)); } catch {}
+}
+// Returns COLUMNS sorted: anchor columns keep their natural order,
+// optional columns follow the saved order (with any new keys appended
+// in their default position).
+function getOrderedColumns() {
+  const saved = loadColOrder();
+  if (!saved || !Array.isArray(saved)) return COLUMNS.slice();
+  const optional = COLUMNS.filter(c => c.optional);
+  const anchor   = COLUMNS.filter(c => !c.optional);
+  const byKey = Object.fromEntries(optional.map(c => [c.key, c]));
+  const seen = new Set();
+  const orderedOptional = [];
+  for (const k of saved) {
+    if (byKey[k] && !seen.has(k)) { orderedOptional.push(byKey[k]); seen.add(k); }
+  }
+  for (const c of optional) {
+    if (!seen.has(c.key)) orderedOptional.push(c);
+  }
+  // Splice optional columns into the original position of the first
+  // optional column (right after the leading non-optional anchors).
+  const firstOptIdx = COLUMNS.findIndex(c => c.optional);
+  const out = [];
+  let optIdx = 0;
+  for (let i = 0; i < COLUMNS.length; i++) {
+    const c = COLUMNS[i];
+    if (c.optional) {
+      out.push(orderedOptional[optIdx++]);
+    } else {
+      out.push(c);
+    }
+  }
+  // If we have leftover optional columns (saved had unknowns) ignore them.
+  return out;
+}
+
+function mountColVisibilityMenu() {
+  if (document.getElementById('btn-col-vis')) return; // already mounted
+  const resetBtn = document.getElementById('btn-reset-filters');
+  if (!resetBtn || !resetBtn.parentElement) return;
+
+  const wrap = document.createElement('span');
+  wrap.style.position = 'relative';
+  wrap.style.display = 'inline-block';
+
+  const btn = document.createElement('button');
+  btn.id = 'btn-col-vis';
+  btn.type = 'button';
+  btn.className = 'col-vis-btn';
+  btn.setAttribute('aria-haspopup', 'true');
+  btn.setAttribute('aria-expanded', 'false');
+  btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg><span>Columns</span>';
+
+  const pop = document.createElement('div');
+  pop.className = 'col-vis-pop';
+  pop.setAttribute('role', 'menu');
+
+  function rebuild() {
+    pop.innerHTML = '';
+    // Header note
+    const note = document.createElement('div');
+    note.className = 'col-vis-pop__hint';
+    note.textContent = 'Drag rows to reorder · check to show';
+    pop.appendChild(note);
+
+    const ordered = getOrderedColumns().filter(c => c.optional);
+    let dragKey = null;
+    for (const c of ordered) {
+      const row = document.createElement('label');
+      row.className = 'col-vis-row';
+      row.draggable = true;
+      row.dataset.colKey = c.key;
+
+      const grip = document.createElement('span');
+      grip.className = 'col-vis-row__grip';
+      grip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>';
+      grip.title = 'Drag to reorder';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = isColVisible(c);
+      cb.addEventListener('change', () => {
+        setColVisibility(c.key, cb.checked);
+        updateTable();
+      });
+
+      const span = document.createElement('span');
+      span.className = 'col-vis-row__label';
+      span.textContent = c.label || c.key;
+
+      row.appendChild(grip);
+      row.appendChild(cb);
+      row.appendChild(span);
+
+      // Drag-and-drop reordering
+      row.addEventListener('dragstart', (ev) => {
+        dragKey = c.key;
+        row.classList.add('is-dragging');
+        ev.dataTransfer.effectAllowed = 'move';
+        try { ev.dataTransfer.setData('text/plain', c.key); } catch {}
+      });
+      row.addEventListener('dragend', () => {
+        row.classList.remove('is-dragging');
+        pop.querySelectorAll('.col-vis-row.is-drop-target').forEach(el => el.classList.remove('is-drop-target'));
+        dragKey = null;
+      });
+      row.addEventListener('dragover', (ev) => {
+        if (!dragKey || dragKey === c.key) return;
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = 'move';
+        pop.querySelectorAll('.col-vis-row.is-drop-target').forEach(el => el.classList.remove('is-drop-target'));
+        row.classList.add('is-drop-target');
+      });
+      row.addEventListener('drop', (ev) => {
+        ev.preventDefault();
+        const src = dragKey;
+        const dst = c.key;
+        if (!src || src === dst) return;
+        const optionalKeys = ordered.map(o => o.key);
+        const arr = optionalKeys.filter(k => k !== src);
+        const insertAt = arr.indexOf(dst);
+        arr.splice(insertAt, 0, src);
+        saveColOrder(arr);
+        updateTable();
+        rebuild();
+      });
+
+      pop.appendChild(row);
+    }
+
+    // Reset button
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'col-vis-pop__reset';
+    reset.textContent = 'Reset to default';
+    reset.addEventListener('click', () => {
+      try { localStorage.removeItem(COL_ORDER_KEY); } catch {}
+      try { localStorage.removeItem(COL_WIDTHS_KEY); } catch {}
+      // Reset visibility to defaults
+      _colVisibility = {};
+      for (const cc of COLUMNS) if (cc.optional) _colVisibility[cc.key] = !cc.defaultHidden;
+      saveColVisibility(_colVisibility);
+      applyColWidthsCSS();
+      updateTable();
+      rebuild();
+    });
+    pop.appendChild(reset);
+  }
+  rebuild();
+
+  function open() {
+    rebuild();
+    pop.classList.add('is-open');
+    btn.setAttribute('aria-expanded', 'true');
+    setTimeout(() => document.addEventListener('click', onDocClick), 0);
+  }
+  function close() {
+    pop.classList.remove('is-open');
+    btn.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', onDocClick);
+  }
+  function onDocClick(e) { if (!wrap.contains(e.target)) close(); }
+  btn.addEventListener('click', () => {
+    if (pop.classList.contains('is-open')) close(); else open();
+  });
+
+  wrap.appendChild(btn);
+  wrap.appendChild(pop);
+  resetBtn.parentElement.insertBefore(wrap, resetBtn);
+}
+
+// ── Density toggle (compact / cozy / spacious) ─────────────────────
+const DENSITY_KEY = 'jem-asr-density-v1';
+const DENSITIES = [
+  { key: 'compact',  label: 'Compact'  },
+  { key: 'cozy',     label: 'Cozy'     },
+  { key: 'spacious', label: 'Spacious' },
+];
+function loadDensity() {
+  try { return localStorage.getItem(DENSITY_KEY) || 'cozy'; } catch { return 'cozy'; }
+}
+function saveDensity(v) {
+  try { localStorage.setItem(DENSITY_KEY, v); } catch {}
+}
+function applyDensity(v) {
+  document.body.classList.remove('density-compact', 'density-cozy', 'density-spacious');
+  document.body.classList.add('density-' + (v || 'cozy'));
+}
+
+function mountDensityMenu() {
+  if (document.getElementById('btn-density')) return;
+  const resetBtn = document.getElementById('btn-reset-filters');
+  if (!resetBtn || !resetBtn.parentElement) return;
+
+  const wrap = document.createElement('span');
+  wrap.style.position = 'relative';
+  wrap.style.display = 'inline-block';
+
+  const btn = document.createElement('button');
+  btn.id = 'btn-density';
+  btn.type = 'button';
+  btn.className = 'col-vis-btn';
+  btn.setAttribute('aria-haspopup', 'true');
+  btn.setAttribute('aria-expanded', 'false');
+  const current = loadDensity();
+  applyDensity(current);
+  btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg><span>Density</span>';
+
+  const pop = document.createElement('div');
+  pop.className = 'col-vis-pop';
+  pop.setAttribute('role', 'menu');
+
+  function rebuild() {
+    pop.innerHTML = '';
+    const cur = loadDensity();
+    for (const d of DENSITIES) {
+      const lbl = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'radio';
+      cb.name = 'density-radio';
+      cb.checked = cur === d.key;
+      cb.addEventListener('change', () => {
+        if (cb.checked) {
+          saveDensity(d.key);
+          applyDensity(d.key);
+        }
+      });
+      const span = document.createElement('span');
+      span.textContent = d.label;
+      lbl.appendChild(cb);
+      lbl.appendChild(span);
+      pop.appendChild(lbl);
+    }
+  }
+  rebuild();
+
+  function open()  { rebuild(); pop.classList.add('is-open'); btn.setAttribute('aria-expanded', 'true'); setTimeout(() => document.addEventListener('click', onDoc), 0); }
+  function close() { pop.classList.remove('is-open'); btn.setAttribute('aria-expanded', 'false'); document.removeEventListener('click', onDoc); }
+  function onDoc(e) { if (!wrap.contains(e.target)) close(); }
+  btn.addEventListener('click', () => pop.classList.contains('is-open') ? close() : open());
+
+  wrap.appendChild(btn);
+  wrap.appendChild(pop);
+  resetBtn.parentElement.insertBefore(wrap, resetBtn);
+}
+
+// ── Saved views (pinned pills above the filter bar) ───────────────
+// A "view" is a snapshot of the filter state: status, confidence, fifty,
+// favorites, year, month, type, search. Click to apply. Built-in views
+// cover the most common annotation flows; the user can save the current
+// state as a custom view, persisted to localStorage.
+
+const VIEW_KEY = 'jem-asr-saved-views-v1';
+const ACTIVE_VIEW_KEY = 'jem-asr-active-view-v1';
+
+const BUILTIN_VIEWS = [
+  { id: '_all',          label: 'All',           builtin: true,
+    state: { status: [], confidence: '', fifty: '', favorites: '', year: '', month: '', type: '', search: '' } },
+  { id: '_unmapped',     label: 'Unmapped',      builtin: true,
+    state: { status: ['unmapped'], confidence: '', fifty: '', favorites: '', year: '', month: '', type: '', search: '' } },
+  { id: '_needs-clean',  label: 'Needs cleaning',builtin: true,
+    state: { status: ['mapped'], confidence: '', fifty: '', favorites: '', year: '', month: '', type: '', search: '' } },
+  { id: '_needs-align',  label: 'Needs alignment', builtin: true,
+    state: { status: ['cleaned'], confidence: '', fifty: '', favorites: '', year: '', month: '', type: '', search: '' } },
+  { id: '_approved',     label: 'Approved',      builtin: true,
+    state: { status: ['approved'], confidence: '', fifty: '', favorites: '', year: '', month: '', type: '', search: '' } },
+  { id: '_rejected',     label: 'Rejected',      builtin: true,
+    state: { status: ['rejected'], confidence: '', fifty: '', favorites: '', year: '', month: '', type: '', search: '' } },
+  { id: '_favorites',    label: 'Favorites',     builtin: true,
+    state: { status: [], confidence: '', fifty: '', favorites: 'yes', year: '', month: '', type: '', search: '' } },
+];
+
+function loadUserViews() {
+  try {
+    const raw = localStorage.getItem(VIEW_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+function saveUserViews(views) {
+  try { localStorage.setItem(VIEW_KEY, JSON.stringify(views)); } catch {}
+}
+function getActiveViewId() {
+  try { return localStorage.getItem(ACTIVE_VIEW_KEY) || ''; } catch { return ''; }
+}
+function setActiveViewId(id) {
+  try { id ? localStorage.setItem(ACTIVE_VIEW_KEY, id) : localStorage.removeItem(ACTIVE_VIEW_KEY); } catch {}
+}
+
+function snapshotCurrentState() {
+  return {
+    status: [...statusFilter],
+    confidence: filterConfidence,
+    fifty: fiftyFilter,
+    favorites: favoritesFilter,
+    year: filterYear,
+    month: filterMonth,
+    type: filterType,
+    search: searchTerm,
+  };
+}
+function statesEqual(a, b) {
+  if (!a || !b) return false;
+  const sa = [...(a.status || [])].sort().join(',');
+  const sb = [...(b.status || [])].sort().join(',');
+  return sa === sb && a.confidence === b.confidence &&
+    a.fifty === b.fifty && a.favorites === b.favorites &&
+    a.year === b.year && a.month === b.month &&
+    a.type === b.type && (a.search || '') === (b.search || '');
+}
+function applyView(view) {
+  if (!view) return;
+  const s = view.state || {};
+  statusFilter = [...(s.status || [])];
+  filterConfidence = s.confidence || '';
+  fiftyFilter = s.fifty || '';
+  favoritesFilter = s.favorites || '';
+  filterYear = s.year || '';
+  filterMonth = s.month || '';
+  filterType = s.type || '';
+  searchTerm = s.search || '';
+  currentPage = 1;
+  selectedIds.clear();
+
+  // Sync UI controls
+  const statusContainer = document.getElementById('filter-status');
+  if (statusContainer) {
+    const checks = statusContainer.querySelectorAll('input[type="checkbox"]');
+    checks.forEach(cb => { cb.checked = statusFilter.includes(cb.value); });
+    const btn = statusContainer.querySelector('.multi-select-btn');
+    if (btn) updateMultiSelectLabel(btn, statusFilter, 'All Statuses');
+  }
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+  set('filter-confidence', filterConfidence);
+  set('filter-fifty', fiftyFilter);
+  set('filter-favorites', favoritesFilter);
+  set('filter-year', filterYear);
+  set('filter-month', filterMonth);
+  set('filter-type', filterType);
+  const search = document.getElementById('search-input');
+  if (search) search.value = searchTerm;
+
+  setActiveViewId(view.id);
+  updateURL();
+  updateTable();
+  renderSavedViewsBar();
+}
+
+function findMatchingView() {
+  const cur = snapshotCurrentState();
+  const all = [...BUILTIN_VIEWS, ...loadUserViews()];
+  return all.find(v => statesEqual(v.state, cur));
+}
+
+let _viewsBar = null;
+function ensureSavedViewsBar() {
+  if (_viewsBar && document.body.contains(_viewsBar)) return;
+  // Insert before the #btn-filter-toggle (or filter-bar if missing)
+  const anchor = document.getElementById('btn-filter-toggle')
+              || document.getElementById('filter-bar');
+  if (!anchor || !anchor.parentElement) return;
+  _viewsBar = document.createElement('div');
+  _viewsBar.className = 'saved-views';
+  anchor.parentElement.insertBefore(_viewsBar, anchor);
+}
+
+function renderSavedViewsBar() {
+  ensureSavedViewsBar();
+  if (!_viewsBar) return;
+  _viewsBar.innerHTML = '';
+
+  const all = [...BUILTIN_VIEWS, ...loadUserViews()];
+  const matched = findMatchingView();
+  const activeId = matched ? matched.id : '';
+  setActiveViewId(activeId);
+
+  for (const v of all) {
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'saved-view-pill' + (v.id === activeId ? ' is-active' : '');
+    pill.textContent = v.label;
+    pill.title = v.builtin ? 'Built-in view' : 'Custom view (right-click to delete)';
+    pill.addEventListener('click', () => applyView(v));
+    if (!v.builtin) {
+      pill.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (confirm(`Delete saved view "${v.label}"?`)) {
+          const remaining = loadUserViews().filter(u => u.id !== v.id);
+          saveUserViews(remaining);
+          renderSavedViewsBar();
+        }
+      });
+      const x = document.createElement('span');
+      x.className = 'saved-view-pill__x';
+      x.textContent = '×';
+      x.title = 'Delete view';
+      x.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (confirm(`Delete saved view "${v.label}"?`)) {
+          const remaining = loadUserViews().filter(u => u.id !== v.id);
+          saveUserViews(remaining);
+          renderSavedViewsBar();
+        }
+      });
+      pill.appendChild(x);
+    }
+    _viewsBar.appendChild(pill);
+  }
+
+  // "+ Save current view" button — appears only when current state
+  // doesn't already match a known view.
+  if (!matched) {
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'saved-view-pill saved-view-pill--save';
+    save.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span>Save view</span>';
+    save.addEventListener('click', () => {
+      const name = prompt('Name this view (e.g. "Needs review · 2024"):');
+      if (!name || !name.trim()) return;
+      const id = 'u_' + Date.now().toString(36);
+      const view = { id, label: name.trim(), builtin: false, state: snapshotCurrentState() };
+      const list = loadUserViews();
+      list.push(view);
+      saveUserViews(list);
+      setActiveViewId(id);
+      renderSavedViewsBar();
+    });
+    _viewsBar.appendChild(save);
+  }
+}
+
+// ── Active filter chips strip ──────────────────────────────────────
+// Renders a row of small chips just above the data table summarising
+// every active filter. Each chip has an × to remove just that filter.
+// Visible only when at least one filter is active.
+let _filterChipsEl = null;
+function ensureFilterChipsHost() {
+  if (_filterChipsEl && document.body.contains(_filterChipsEl)) return;
+  const anchor = _container;
+  if (!anchor || !anchor.parentElement) return;
+  _filterChipsEl = document.createElement('div');
+  _filterChipsEl.className = 'filter-chips';
+  anchor.parentElement.insertBefore(_filterChipsEl, anchor);
+}
+function clearStatus()      { statusFilter = []; }
+function clearConfidence()  { filterConfidence = ''; }
+function clearFifty()       { fiftyFilter = ''; }
+function clearFavorites()   { favoritesFilter = ''; }
+function clearYear()        { filterYear = ''; }
+function clearMonth()       { filterMonth = ''; }
+function clearType()        { filterType = ''; }
+function clearSearch()      { searchTerm = ''; }
+function syncControlsAndUpdate() {
+  // Reuse applyView's UI sync by snapshotting current state.
+  applyView({ id: '_internal', label: '', state: snapshotCurrentState() });
+}
+function renderFilterChips() {
+  ensureFilterChipsHost();
+  if (!_filterChipsEl) return;
+  _filterChipsEl.innerHTML = '';
+
+  const chips = [];
+  for (const s of statusFilter) {
+    chips.push({ label: 'Status: ' + s.charAt(0).toUpperCase() + s.slice(1),
+      onClear: () => { statusFilter = statusFilter.filter(v => v !== s); syncControlsAndUpdate(); } });
+  }
+  if (filterConfidence) chips.push({ label: 'Confidence: ' + filterConfidence, onClear: () => { clearConfidence(); syncControlsAndUpdate(); } });
+  if (fiftyFilter)      chips.push({ label: '50hr: ' + fiftyFilter,            onClear: () => { clearFifty();      syncControlsAndUpdate(); } });
+  if (favoritesFilter)  chips.push({ label: 'Favorites only',                  onClear: () => { clearFavorites();  syncControlsAndUpdate(); } });
+  if (filterYear)       chips.push({ label: 'Year: ' + filterYear,             onClear: () => { clearYear();       syncControlsAndUpdate(); } });
+  if (filterMonth)      chips.push({ label: 'Month: ' + filterMonth,           onClear: () => { clearMonth();      syncControlsAndUpdate(); } });
+  if (filterType)       chips.push({ label: 'Type: ' + filterType,             onClear: () => { clearType();       syncControlsAndUpdate(); } });
+  if (searchTerm)       chips.push({ label: '"' + searchTerm + '"',            onClear: () => { clearSearch();     syncControlsAndUpdate(); } });
+
+  if (chips.length === 0) {
+    _filterChipsEl.style.display = 'none';
+    return;
+  }
+  _filterChipsEl.style.display = '';
+
+  const lead = document.createElement('span');
+  lead.className = 'filter-chips__lead';
+  lead.textContent = 'Filters:';
+  _filterChipsEl.appendChild(lead);
+
+  for (const c of chips) {
+    const chip = document.createElement('span');
+    chip.className = 'filter-chip';
+    const txt = document.createElement('span');
+    txt.textContent = c.label;
+    chip.appendChild(txt);
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'filter-chip__x';
+    x.setAttribute('aria-label', 'Remove filter ' + c.label);
+    x.textContent = '×';
+    x.addEventListener('click', c.onClear);
+    chip.appendChild(x);
+    _filterChipsEl.appendChild(chip);
+  }
+  if (chips.length > 1) {
+    const all = document.createElement('button');
+    all.type = 'button';
+    all.className = 'filter-chip filter-chip--clear-all';
+    all.textContent = 'Clear all';
+    all.addEventListener('click', () => document.getElementById('btn-reset-filters')?.click());
+    _filterChipsEl.appendChild(all);
+  }
+}
+
+// ── Faceted counts: compute audios per status (ignoring the status
+// filter itself) so checkbox labels can show "Mapped (247)". Considers
+// active 50hr / fav / search / year / month / type filters so counts
+// reflect what the user would actually see if they picked the status. */
+function computeStatusFacets() {
+  try {
+    const state = getState();
+    const all = state.audio || [];
+    const counts = { unmapped: 0, mapped: 0, cleaned: 0, aligned: 0, approved: 0, rejected: 0, benchmark: 0 };
+
+    // Apply same filters as updateTable EXCEPT statusFilter
+    let pool = all;
+    if (fiftyFilter === 'yes') pool = pool.filter(a => a.fifty === true);
+    else if (fiftyFilter === 'no') pool = pool.filter(a => a.fifty !== true);
+    if (favoritesFilter === 'yes') {
+      const favs = state.favorites || {};
+      pool = pool.filter(a => !!favs[a.id]);
+    }
+    if (filterYear) pool = pool.filter(a => String(a.year || '') === String(filterYear));
+    if (filterMonth) pool = pool.filter(a => String(a.month || '') === String(filterMonth));
+    if (filterType) pool = pool.filter(a => (a.type || '') === filterType);
+
+    for (const a of pool) {
+      const s = getStatus(a.id);
+      if (s && counts[s] !== undefined) counts[s]++;
+      // Special case: an audio can be both mapped + benchmark, etc.
+      // For now the primary status from getStatus is canonical.
+    }
+    return counts;
+  } catch (_) {
+    return null;
+  }
+}
+
+function applyFacetCountsToStatusFilter(counts) {
+  if (!counts) return;
+  const container = document.getElementById('filter-status');
+  if (!container) return;
+  const labels = container.querySelectorAll('.multi-select-dropdown label');
+  labels.forEach(lbl => {
+    const cb = lbl.querySelector('input[type="checkbox"]');
+    if (!cb) return;
+    const key = cb.value;
+    const n = counts[key];
+    // Cache base label
+    if (!lbl.dataset.baseLabel) {
+      const txt = lbl.textContent.replace(/\s*\(\d+\)\s*$/, '').trim();
+      lbl.dataset.baseLabel = txt;
+    }
+    const base = lbl.dataset.baseLabel;
+    // Rebuild label content keeping the checkbox
+    lbl.innerHTML = '';
+    lbl.appendChild(cb);
+    const span = document.createElement('span');
+    span.textContent = ` ${base}`;
+    lbl.appendChild(span);
+    if (typeof n === 'number') {
+      const cnt = document.createElement('span');
+      cnt.className = 'facet-count';
+      cnt.textContent = n;
+      lbl.appendChild(cnt);
+    }
+  });
+}
 
 // Filter keys from HTML data-filter attributes are passed directly to state.js
 // since getFilteredRows now accepts both 'fifty-*' and '50hr-*' variants.
@@ -142,7 +790,7 @@ function filterMatchesStatus(filter, statuses) {
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function getVisibleColumns() {
-  return COLUMNS.filter(c => c.showWhen(buildFilter()));
+  return getOrderedColumns().filter(c => c.showWhen(buildFilter()) && isColVisible(c));
 }
 
 function getTranscriptForAudio(audioId) {
@@ -162,6 +810,30 @@ function getRowData(audio) {
   const alignment = state.alignments && state.alignments[id];
   const transcript = getTranscriptForAudio(id);
 
+  // Compute effective duration honoring trim_start / trim_end (both stored in seconds).
+  // If trimmed, the displayed duration is trim_end-trim_start (or remaining-after-start).
+  const trim = state.trims?.[id] || null;
+  const totalSec = (audio.estMinutes || 0) * 60;
+  let effectiveSec = totalSec;
+  let isTrimmed = false;
+  if (trim && (trim.start || trim.end)) {
+    const start = trim.start || 0;
+    const end = trim.end && trim.end > 0 ? trim.end : totalSec;
+    if (end > start) {
+      effectiveSec = end - start;
+      isTrimmed = effectiveSec !== totalSec;
+    }
+  }
+  const effectiveMin = effectiveSec / 60;
+  const durationText = audio.estMinutes != null
+    ? (isTrimmed
+        ? `${effectiveMin.toFixed(1)} min ✂`
+        : `${(audio.estMinutes).toFixed ? audio.estMinutes.toFixed(1) : audio.estMinutes} min`)
+    : '';
+  const durationTitle = isTrimmed
+    ? `Trimmed ${effectiveMin.toFixed(1)} min · original ${audio.estMinutes} min`
+    : '';
+
   return {
     id,
     name: (state.audioNames && state.audioNames[id]) || audio.name || '',
@@ -170,7 +842,10 @@ function getRowData(audio) {
     day: (state.audioDays && state.audioDays[id]) || audio.day || '',
     type: (state.audioTypes && state.audioTypes[id]) || audio.type || '',
     sichaNum: parseSichaNum(audio.name) || '',
-    estMinutes: audio.estMinutes != null ? audio.estMinutes + ' min' : '',
+    estMinutes: durationText,
+    estMinutesNumeric: effectiveMin,
+    estMinutesTitle: durationTitle,
+    isTrimmed,
     firstLine: transcript ? truncateWords(transcript.firstLine || '', 15) : '',
     transcript: transcript ? transcript.name : '',
     matchConf: mapping ? formatConfidence(mapping.confidence) : '',
@@ -181,6 +856,8 @@ function getRowData(audio) {
     status,
     isBenchmark: !!audio.isBenchmark,
     isSelected50hr: !!audio.isSelected50hr,
+    trainingExportedAt: audio.trainingExportedAt || null,
+    trainingExportedBy: audio.trainingExportedBy || null,
   };
 }
 
@@ -249,6 +926,18 @@ function sortRows(rows) {
   const key = currentSort.column;
   const dir = currentSort.dir === 'asc' ? 1 : -1;
   return [...rows].sort((a, b) => {
+    // Special-case numeric-trimmed duration so we sort by minutes, not by
+    // the formatted text (which has a non-numeric scissors emoji).
+    if (key === 'estMinutes') {
+      const av = a.estMinutesNumeric ?? -1;
+      const bv = b.estMinutesNumeric ?? -1;
+      return (av - bv) * dir;
+    }
+    if (key === 'exported') {
+      const av = a.trainingExportedAt ? new Date(a.trainingExportedAt).getTime() : 0;
+      const bv = b.trainingExportedAt ? new Date(b.trainingExportedAt).getTime() : 0;
+      return (av - bv) * dir;
+    }
     let va = a[key];
     let vb = b[key];
     // Parse numeric-looking values
@@ -287,6 +976,7 @@ function renderPipelineIndicator(audioId, detail) {
     const badge = document.createElement('span');
     badge.className = 'status-badge status-unmapped';
     badge.textContent = 'unmapped';
+    badge.title = 'No transcript linked yet — open the file and link / paste / generate one.';
     return badge;
   }
 
@@ -305,18 +995,24 @@ function renderPipelineIndicator(audioId, detail) {
     const isDone = stages[name];
     const isRejected = name === 'approved' && stages.rejected && !stages.approved;
 
+    const STAGE_TIPS = {
+      mapped:   'Mapped — transcript text is linked to this audio (manual paste, ASR, or matched)',
+      cleaned:  'Cleaned — transcript was edited / cleaned (brackets, parentheses, intro/outro, whitespace removed)',
+      aligned:  'Aligned — words have timestamps from a forced-alignment run',
+      approved: 'Approved — reviewed and ready for training export',
+    };
     if (isRejected) {
       dot.className = 'pipeline-stage done-rejected';
       dot.textContent = '✗';
-      dot.title = 'rejected';
+      dot.title = 'Rejected — review marked this transcript as not usable';
     } else if (isDone) {
       dot.className = `pipeline-stage done-${name}`;
       dot.textContent = '✓';
-      dot.title = name;
+      dot.title = STAGE_TIPS[name] || name;
     } else {
       dot.className = 'pipeline-stage pending';
       dot.textContent = '○';
-      dot.title = name;
+      dot.title = (STAGE_TIPS[name] ? 'Pending: ' + STAGE_TIPS[name] : 'Pending: ' + name);
     }
     container.appendChild(dot);
   }
@@ -472,6 +1168,77 @@ function openRemapModal(audioId) {
   searchInput.focus();
 }
 
+// ── Column resize (drag handle on each th) ─────────────────────────
+const COL_WIDTHS_KEY = 'jem-asr-col-widths-v1';
+function loadColWidths() {
+  try { return JSON.parse(localStorage.getItem(COL_WIDTHS_KEY) || '{}') || {}; }
+  catch { return {}; }
+}
+function saveColWidths(map) {
+  try { localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(map)); } catch {}
+}
+function setColWidth(key, px) {
+  const m = loadColWidths();
+  m[key] = Math.max(40, Math.round(px));
+  saveColWidths(m);
+}
+function clearColWidth(key) {
+  const m = loadColWidths();
+  delete m[key];
+  saveColWidths(m);
+}
+let _colWidthsStyleEl = null;
+function applyColWidthsCSS() {
+  if (!_colWidthsStyleEl) {
+    _colWidthsStyleEl = document.createElement('style');
+    _colWidthsStyleEl.id = 'data-table-widths';
+    document.head.appendChild(_colWidthsStyleEl);
+  }
+  const m = loadColWidths();
+  const rules = [];
+  for (const [key, px] of Object.entries(m)) {
+    if (typeof px !== 'number') continue;
+    rules.push(
+      `.data-table th.cell-${key},.data-table td.cell-${key}{width:${px}px;min-width:${px}px;max-width:${px}px;}`
+    );
+  }
+  _colWidthsStyleEl.textContent = rules.join('\n');
+}
+function startColResize(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const grip = e.currentTarget;
+  const th = grip.closest('th');
+  if (!th) return;
+  const startX = e.clientX;
+  const startW = th.getBoundingClientRect().width;
+  const colKey = grip.dataset.colKey;
+  document.body.style.cursor = 'col-resize';
+  document.body.classList.add('is-col-resizing');
+  function onMove(ev) {
+    const delta = ev.clientX - startX;
+    const next = Math.max(40, startW + delta);
+    th.style.width = next + 'px';
+    th.style.minWidth = next + 'px';
+    th.style.maxWidth = next + 'px';
+  }
+  function onUp(ev) {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.body.style.cursor = '';
+    document.body.classList.remove('is-col-resizing');
+    const finalW = th.getBoundingClientRect().width;
+    setColWidth(colKey, finalW);
+    applyColWidthsCSS();
+    // Clear inline so the persistent CSS rule takes over
+    th.style.width = '';
+    th.style.minWidth = '';
+    th.style.maxWidth = '';
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
 // ── Build table DOM ─────────────────────────────────────────────────
 
 function buildTable(rows) {
@@ -487,6 +1254,7 @@ function buildTable(rows) {
   const headerRow = document.createElement('tr');
   cols.forEach(col => {
     const th = document.createElement('th');
+    th.classList.add('cell-' + col.key);
     if (col.key === 'checkbox') {
       th.classList.add('cell-checkbox');
       const cb = document.createElement('input');
@@ -518,12 +1286,26 @@ function buildTable(rows) {
             currentSort.column = col.key;
             currentSort.dir = 'asc';
           }
+          saveSort(currentSort);
           currentPage = 1;
           updateTable();
         });
       }
     }
     if (col.key === 'firstLine') th.classList.add('rtl-cell');
+    // Add a resize handle except on checkbox / rowNum / actions / favorite
+    if (!['checkbox', 'rowNum', 'actions', 'favorite'].includes(col.key)) {
+      const grip = document.createElement('span');
+      grip.className = 'col-resize-grip';
+      grip.dataset.colKey = col.key;
+      grip.addEventListener('mousedown', startColResize);
+      grip.addEventListener('dblclick', () => {
+        // double-click to reset to default
+        clearColWidth(col.key);
+        applyColWidthsCSS();
+      });
+      th.appendChild(grip);
+    }
     headerRow.appendChild(th);
   });
   thead.appendChild(headerRow);
@@ -541,6 +1323,8 @@ function buildTable(rows) {
 
     cols.forEach(col => {
       const td = document.createElement('td');
+      // Stable per-cell class so refresh.css can sticky / style by column
+      td.classList.add('cell-' + col.key);
 
       switch (col.key) {
         case 'checkbox': {
@@ -867,6 +1651,29 @@ function buildTable(rows) {
           }
           break;
         }
+        case 'exported': {
+          if (row.trainingExportedAt) {
+            const badge = document.createElement('span');
+            badge.className = 'status-badge status-exported';
+            const d = new Date(row.trainingExportedAt);
+            badge.textContent = d.toLocaleDateString();
+            badge.title = `Exported for training on ${d.toLocaleString()}`
+              + (row.trainingExportedBy ? ` by ${row.trainingExportedBy}` : '');
+            td.appendChild(badge);
+          } else {
+            const dash = document.createElement('span');
+            dash.style.color = 'var(--text-muted)';
+            dash.textContent = '—';
+            td.appendChild(dash);
+          }
+          break;
+        }
+        case 'estMinutes': {
+          td.textContent = row.estMinutes || '';
+          if (row.estMinutesTitle) td.title = row.estMinutesTitle;
+          if (row.isTrimmed) td.style.fontVariantNumeric = 'tabular-nums';
+          break;
+        }
         case 'actions': {
           // Play button
           const state = getState();
@@ -938,7 +1745,104 @@ function buildTable(rows) {
   });
 
   table.appendChild(tbody);
+  attachRowContextMenu(tbody);
   return table;
+}
+
+// ── Row context menu (right-click) ────────────────────────────────
+let _ctxMenuEl = null;
+function closeCtxMenu() {
+  if (_ctxMenuEl) { _ctxMenuEl.remove(); _ctxMenuEl = null; }
+  document.removeEventListener('click', closeCtxMenu);
+  document.removeEventListener('keydown', _ctxKeyClose);
+  window.removeEventListener('blur', closeCtxMenu);
+  window.removeEventListener('scroll', closeCtxMenu, true);
+}
+function _ctxKeyClose(e) { if (e.key === 'Escape') closeCtxMenu(); }
+function openCtxMenu(x, y, items) {
+  closeCtxMenu();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  for (const it of items) {
+    if (it.divider) {
+      const d = document.createElement('div');
+      d.className = 'ctx-menu__divider';
+      menu.appendChild(d);
+      continue;
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ctx-menu__item';
+    btn.textContent = it.label;
+    if (it.shortcut) {
+      const k = document.createElement('kbd');
+      k.textContent = it.shortcut;
+      btn.appendChild(k);
+    }
+    btn.addEventListener('click', () => {
+      try { it.onClick && it.onClick(); } finally { closeCtxMenu(); }
+    });
+    menu.appendChild(btn);
+  }
+  document.body.appendChild(menu);
+  // Position with viewport clamping
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const rect = menu.getBoundingClientRect();
+  const px = Math.min(x, vw - rect.width - 8);
+  const py = Math.min(y, vh - rect.height - 8);
+  menu.style.left = `${Math.max(8, px)}px`;
+  menu.style.top  = `${Math.max(8, py)}px`;
+  _ctxMenuEl = menu;
+  setTimeout(() => {
+    document.addEventListener('click', closeCtxMenu);
+    document.addEventListener('keydown', _ctxKeyClose);
+    window.addEventListener('blur', closeCtxMenu);
+    window.addEventListener('scroll', closeCtxMenu, true);
+  }, 0);
+}
+
+function attachRowContextMenu(tbody) {
+  tbody.addEventListener('contextmenu', (e) => {
+    const tr = e.target.closest && e.target.closest('tr.table-row');
+    if (!tr) return;
+    const id = tr.getAttribute('data-audio-id');
+    if (!id) return;
+    e.preventDefault();
+    const state = getState();
+    const isFav = !!(state.favorites && state.favorites[id]);
+    const items = [
+      { label: 'Open',                onClick: () => { window.location.href = `/detail.html?id=${encodeURIComponent(id)}`; } },
+      { label: 'Open in new tab',     shortcut: '↵',
+        onClick: () => { window.open(`/detail.html?id=${encodeURIComponent(id)}`, '_blank', 'noopener'); } },
+      { divider: true },
+      { label: isFav ? 'Remove from favorites' : 'Add to favorites',
+        onClick: () => {
+          const favs = { ...(state.favorites || {}) };
+          if (isFav) delete favs[id]; else favs[id] = true;
+          updateState('favorites', null, favs);
+          updateTable();
+          if (window.__jemToast) window.__jemToast[isFav ? 'info' : 'success'](isFav ? 'Removed from favorites' : 'Added to favorites');
+        } },
+      { divider: true },
+      { label: 'Copy ID',
+        onClick: () => {
+          (navigator.clipboard?.writeText(id) || Promise.reject()).then(
+            () => window.__jemToast?.success(`Copied ${id}`),
+            () => window.__jemToast?.error('Copy failed')
+          );
+        } },
+      { label: 'Copy file name',
+        onClick: () => {
+          const audio = state.audio.find(a => a.id === id);
+          const name = audio?.name || id;
+          (navigator.clipboard?.writeText(name) || Promise.reject()).then(
+            () => window.__jemToast?.success(`Copied "${name}"`),
+            () => window.__jemToast?.error('Copy failed')
+          );
+        } },
+    ];
+    openCtxMenu(e.clientX, e.clientY, items);
+  });
 }
 
 function buildCardView(rows) {
@@ -1013,33 +1917,101 @@ function buildCardView(rows) {
 function buildPagination(totalRows) {
   const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
   if (currentPage > totalPages) currentPage = totalPages;
+  const goTo = (n) => {
+    const next = Math.max(1, Math.min(totalPages, n | 0));
+    if (next !== currentPage) {
+      currentPage = next; selectedIds.clear(); updateURL(); updateTable();
+    }
+  };
 
   const nav = document.createElement('div');
   nav.className = 'pagination';
+
+  // First / Prev
+  const firstBtn = document.createElement('button');
+  firstBtn.className = 'pagination-btn';
+  firstBtn.title = 'First page';
+  firstBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg>';
+  firstBtn.disabled = currentPage <= 1;
+  firstBtn.addEventListener('click', () => goTo(1));
+  nav.appendChild(firstBtn);
 
   const prevBtn = document.createElement('button');
   prevBtn.className = 'pagination-btn';
   prevBtn.textContent = 'Prev';
   prevBtn.disabled = currentPage <= 1;
-  prevBtn.addEventListener('click', () => {
-    if (currentPage > 1) { currentPage--; selectedIds.clear(); updateURL(); updateTable(); }
+  prevBtn.addEventListener('click', () => goTo(currentPage - 1));
+  nav.appendChild(prevBtn);
+
+  // Jump-to-page input
+  const jump = document.createElement('span');
+  jump.className = 'pagination-jump';
+  const jumpInput = document.createElement('input');
+  jumpInput.type = 'number';
+  jumpInput.className = 'pagination-jump__input';
+  jumpInput.min = '1';
+  jumpInput.max = String(totalPages);
+  jumpInput.value = String(currentPage);
+  jumpInput.title = 'Type a page number and press Enter';
+  jumpInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); goTo(parseInt(jumpInput.value, 10) || 1); }
   });
+  jumpInput.addEventListener('blur', () => goTo(parseInt(jumpInput.value, 10) || 1));
+  const jumpSep = document.createElement('span');
+  jumpSep.className = 'pagination-jump__sep';
+  jumpSep.textContent = ' / ' + totalPages;
+  jump.appendChild(jumpInput);
+  jump.appendChild(jumpSep);
+  nav.appendChild(jump);
 
-  const pageInfo = document.createElement('span');
-  pageInfo.className = 'pagination-info';
-  pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
-
+  // Next / Last
   const nextBtn = document.createElement('button');
   nextBtn.className = 'pagination-btn';
   nextBtn.textContent = 'Next';
   nextBtn.disabled = currentPage >= totalPages;
-  nextBtn.addEventListener('click', () => {
-    if (currentPage < totalPages) { currentPage++; selectedIds.clear(); updateURL(); updateTable(); }
-  });
-
-  nav.appendChild(prevBtn);
-  nav.appendChild(pageInfo);
+  nextBtn.addEventListener('click', () => goTo(currentPage + 1));
   nav.appendChild(nextBtn);
+
+  const lastBtn = document.createElement('button');
+  lastBtn.className = 'pagination-btn';
+  lastBtn.title = 'Last page';
+  lastBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>';
+  lastBtn.disabled = currentPage >= totalPages;
+  lastBtn.addEventListener('click', () => goTo(totalPages));
+  nav.appendChild(lastBtn);
+
+  // Page-size selector
+  const sizeWrap = document.createElement('span');
+  sizeWrap.className = 'pagination-size';
+  const sizeLbl = document.createElement('label');
+  sizeLbl.className = 'pagination-size__label';
+  sizeLbl.textContent = 'Rows';
+  const sizeSel = document.createElement('select');
+  sizeSel.className = 'pagination-size__select';
+  for (const opt of PAGE_SIZE_OPTIONS) {
+    const o = document.createElement('option');
+    o.value = String(opt);
+    o.textContent = String(opt);
+    if (opt === PAGE_SIZE) o.selected = true;
+    sizeSel.appendChild(o);
+  }
+  sizeSel.addEventListener('change', () => {
+    const next = parseInt(sizeSel.value, 10) || 50;
+    PAGE_SIZE = next;
+    savePageSize(next);
+    currentPage = 1;
+    updateTable();
+  });
+  sizeLbl.appendChild(sizeSel);
+  sizeWrap.appendChild(sizeLbl);
+  nav.appendChild(sizeWrap);
+
+  // Total label (right aligned via CSS)
+  const total = document.createElement('span');
+  total.className = 'pagination-total';
+  total.textContent = totalRows.toLocaleString() + ' rows';
+  nav.appendChild(total);
+
   return nav;
 }
 
@@ -1140,9 +2112,86 @@ function buildBulkBar() {
   });
   bar.appendChild(cleanBtn);
 
-  // Clear selection
+  // ── New bulk actions (favorites / copy / open / export) ───────
+  const favBtn = document.createElement('button');
+  favBtn.className = 'action-btn';
+  favBtn.title = 'Toggle favorite on every selected row';
+  favBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>Favorite';
+  favBtn.addEventListener('click', () => {
+    const state = getState();
+    const favs = { ...(state.favorites || {}) };
+    // If majority of selection isn't favorited, add; otherwise remove
+    const ids = [...selectedIds];
+    const favCount = ids.filter(id => favs[id]).length;
+    const adding = favCount < ids.length / 2;
+    for (const id of ids) {
+      if (adding) favs[id] = true; else delete favs[id];
+    }
+    updateState('favorites', null, favs);
+    updateTable();
+    if (window.__jemToast) {
+      window.__jemToast.success((adding ? 'Added ' : 'Removed ') + ids.length + ' file' + (ids.length === 1 ? '' : 's') + (adding ? ' to' : ' from') + ' favorites');
+    }
+  });
+  bar.appendChild(favBtn);
+
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'action-btn';
+  copyBtn.title = 'Copy selected IDs to clipboard (newline-separated)';
+  copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy IDs';
+  copyBtn.addEventListener('click', () => {
+    const ids = [...selectedIds];
+    const text = ids.join('\n');
+    (navigator.clipboard?.writeText(text) || Promise.reject()).then(
+      () => window.__jemToast?.success('Copied ' + ids.length + ' ID' + (ids.length === 1 ? '' : 's')),
+      () => window.__jemToast?.error('Copy failed')
+    );
+  });
+  bar.appendChild(copyBtn);
+
+  const openBtn = document.createElement('button');
+  openBtn.className = 'action-btn';
+  openBtn.title = 'Open every selected file in a new tab';
+  openBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open all';
+  openBtn.addEventListener('click', () => {
+    const ids = [...selectedIds];
+    if (ids.length > 10) {
+      if (!confirm('Open ' + ids.length + ' new tabs? Your browser may block some.')) return;
+    }
+    for (const id of ids) {
+      window.open('/detail.html?id=' + encodeURIComponent(id), '_blank', 'noopener');
+    }
+  });
+  bar.appendChild(openBtn);
+
+  const exportBtn = document.createElement('button');
+  exportBtn.className = 'action-btn';
+  exportBtn.title = 'Export only the selected rows as CSV';
+  exportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export';
+  exportBtn.addEventListener('click', async () => {
+    try {
+      const { exportCSV } = await import('./utils.js');
+      const state = getState();
+      const ids = new Set(selectedIds);
+      const rows = (state.audio || [])
+        .filter(a => ids.has(a.id))
+        .map(getRowData);
+      exportCSV(rows, getVisibleColumns().filter(c => !['checkbox', 'actions'].includes(c.key)));
+      window.__jemToast?.success('Exported ' + rows.length + ' row' + (rows.length === 1 ? '' : 's'));
+    } catch (err) {
+      window.__jemToast?.error('Export failed: ' + (err?.message || err));
+    }
+  });
+  bar.appendChild(exportBtn);
+
+  // ── Spacer + Clear (right-aligned) ─────────────────────────────
+  const spacer = document.createElement('span');
+  spacer.style.flex = '1';
+  bar.appendChild(spacer);
+
   const clearBtn = document.createElement('button');
   clearBtn.className = 'action-btn';
+  clearBtn.title = 'Deselect all (Esc)';
   clearBtn.textContent = 'Clear';
   clearBtn.addEventListener('click', () => {
     selectedIds.clear();
@@ -1331,6 +2380,14 @@ function renderTable(container, options = {}) {
     });
   }
 
+  // ── Column visibility menu ──────────────────────────────────────
+  // Lives inline next to "Reset"; clicking it pops a checkbox list of
+  // optional columns. Selections persist in localStorage.
+  mountColVisibilityMenu();
+  mountDensityMenu();
+  applyColWidthsCSS();
+  renderSavedViewsBar();
+
   // Populate dropdown filters from data
   populateDropdownFilters();
 
@@ -1413,6 +2470,40 @@ function updateTable() {
       : `${rows.length} of ${totalAudio} files`;
   }
 
+  // Empty state — when no rows after filters, show a friendly panel
+  // instead of an empty table.
+  if (rows.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.innerHTML = `
+      <span class="empty-state__icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" width="22" height="22"
+             aria-hidden="true">
+          <circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>
+        </svg>
+      </span>
+      <div class="empty-state__title">No files match your filters</div>
+      <div class="empty-state__detail">Try clearing one of the active filters
+        or use the Search box at the top of the page.</div>`;
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'action-btn action-btn-primary';
+    reset.style.marginTop = '12px';
+    reset.textContent = 'Reset filters';
+    reset.addEventListener('click', () => {
+      document.getElementById('btn-reset-filters')?.click();
+    });
+    empty.appendChild(reset);
+    _container.appendChild(empty);
+    // Apply faceted counts even when empty (so user can see other options
+    // would have results).
+    applyFacetCountsToStatusFilter(computeStatusFacets());
+    renderSavedViewsBar();
+    renderFilterChips();
+    return;
+  }
+
   // Build and append table
   const table = buildTable(rows);
   _container.appendChild(table);
@@ -1428,6 +2519,13 @@ function updateTable() {
   // Build and append bulk action bar
   const bulkBar = buildBulkBar();
   _container.appendChild(bulkBar);
+
+  // Update faceted counts on the Status multi-select labels
+  applyFacetCountsToStatusFilter(computeStatusFacets());
+  // Refresh which saved view (if any) matches the current state
+  renderSavedViewsBar();
+  // Active filter chips above the table
+  renderFilterChips();
 }
 
 export { renderTable, updateTable, getSelectedRows };
