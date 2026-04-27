@@ -13,3 +13,4 @@ dist-training-slices/
 vendor/
 .claude/
 supabase/.temp/
+_worktree-rescue/
