@@ -148,14 +148,19 @@ const MIME_MAP = {
   '.flac': 'audio/flac',
 };
 
-function buildGeminiRequestBody(audio) {
+const DEFAULT_GEMINI_PROMPT = 'transcribe this yiddish audio';
+
+function buildGeminiRequestBody(audio, prompt) {
   const mimeType = MIME_MAP[audio.format] || 'audio/mpeg';
+  const promptText = (typeof prompt === 'string' && prompt.trim().length > 0)
+    ? prompt
+    : DEFAULT_GEMINI_PROMPT;
   return {
     contents: [{
       role: 'user',
       parts: [
         { inline_data: { mime_type: mimeType, data: audio.base64 } },
-        { text: 'transcribe this yiddish audio' },
+        { text: promptText },
       ],
     }],
     generationConfig: { temperature: 0, maxOutputTokens: 8192 },
@@ -193,7 +198,7 @@ async function handleGeminiVertex(audio, payload, saJson) {
       'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(buildGeminiRequestBody(audio)),
+    body: JSON.stringify(buildGeminiRequestBody(audio, payload.gemini_prompt)),
   });
 
   const data = await resp.json().catch(() => ({}));
@@ -219,7 +224,7 @@ async function handleGeminiApiKey(audio, payload) {
   const resp = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildGeminiRequestBody(audio)),
+    body: JSON.stringify(buildGeminiRequestBody(audio, payload.gemini_prompt)),
   });
 
   const data = await resp.json().catch(() => ({}));

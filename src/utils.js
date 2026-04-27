@@ -271,3 +271,60 @@ export function downloadFile(content, filename, mimeType) {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+// Tokenise a transcript into runs of (whitespace | non-whitespace), keeping
+// whitespace as standalone tokens so diff output reflows naturally.
+export function tokenizeWords(text) {
+  if (!text) return [];
+  return text.match(/\s+|\S+/g) || [];
+}
+
+// Word-level LCS diff. Returns a list of { op:'eq'|'add'|'del', text } chunks
+// covering the full input. Adjacent same-op runs are merged for compactness.
+//
+// Performance: O(n*m) memory — fine for transcripts up to ~few thousand
+// tokens. ASR outputs in this app are typically a few hundred words.
+export function diffWords(a, b) {
+  const A = tokenizeWords(a);
+  const B = tokenizeWords(b);
+  const n = A.length;
+  const m = B.length;
+
+  // Short-circuit identical inputs.
+  if (n === 0 && m === 0) return [];
+  if (n === 0) return [{ op: 'add', text: B.join('') }];
+  if (m === 0) return [{ op: 'del', text: A.join('') }];
+
+  // LCS DP table — rolling rows would halve memory but the explicit table
+  // makes the backtrack simpler and keeps this file readable.
+  const dp = Array(n + 1);
+  for (let i = 0; i <= n; i++) dp[i] = new Int32Array(m + 1);
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      if (A[i - 1] === B[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1;
+      else dp[i][j] = dp[i - 1][j] >= dp[i][j - 1] ? dp[i - 1][j] : dp[i][j - 1];
+    }
+  }
+
+  // Backtrack to recover the alignment, emitting eq/add/del ops.
+  const ops = [];
+  let i = n, j = m;
+  while (i > 0 && j > 0) {
+    if (A[i - 1] === B[j - 1]) { ops.push({ op: 'eq',  text: A[i - 1] }); i--; j--; }
+    else if (dp[i - 1][j] >= dp[i][j - 1]) { ops.push({ op: 'del', text: A[i - 1] }); i--; }
+    else { ops.push({ op: 'add', text: B[j - 1] }); j--; }
+  }
+  while (i > 0) { ops.push({ op: 'del', text: A[--i] }); }
+  while (j > 0) { ops.push({ op: 'add', text: B[--j] }); }
+  ops.reverse();
+
+  // Coalesce neighbouring same-op chunks so the rendered output isn't a
+  // sea of tiny spans (whitespace tokens otherwise create lots of seams).
+  const merged = [];
+  for (const o of ops) {
+    const last = merged[merged.length - 1];
+    if (last && last.op === o.op) last.text += o.text;
+    else merged.push({ op: o.op, text: o.text });
+  }
+  return merged;
+}

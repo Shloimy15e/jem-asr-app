@@ -604,6 +604,10 @@ export async function transcribeAudio(audioId, audioUrl, config) {
       gemini_region: config.region || 'us-central1',
       gemini_endpoint_id: config.endpointId,
     };
+    // Optional custom prompt — Worker falls back to default if missing/empty.
+    if (typeof config.prompt === 'string' && config.prompt.trim().length > 0) {
+      providerPayload.gemini_prompt = config.prompt;
+    }
   } else if (provider === 'mendel') {
     providerPayload = {
       ...(config.endpoint ? { yl_endpoint: config.endpoint } : {}),

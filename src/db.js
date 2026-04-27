@@ -6,6 +6,17 @@ const supabase = createClient(
   import.meta.env.VITE_SUPABASE_ANON_KEY,
 );
 
+// Parse the 'asr-...' version key written to transcript_edits.
+// Two shapes coexist:
+//   'asr-<model>'             (legacy / no-prompt; one row per model)
+//   'asr-<model>-<unix-ms>'   (prompted / history-mode; unique per run)
+// Returns { model, runId? }.
+function parseAsrVersionKey(versionKey) {
+  const stripped = (versionKey || '').replace(/^asr-/, '');
+  const m = stripped.match(/^(.*)-(\d{10,})$/);
+  return m ? { model: m[1], runId: m[2] } : { model: stripped, runId: null };
+}
+
 // ── Audio file FK guard ──────────────────────────────────────────────
 // Many tables have audio_id FK → audio_files.id, so we upsert the file
 // before writing related rows.
@@ -138,22 +149,46 @@ export async function syncEdited(audioId, text, audioEntry) {
   else logActivity('transcript_edited', audioId, audioEntry?.name);
 }
 
-export async function syncAsr(audioId, text, modelName, audioEntry) {
+export async function syncAsr(audioId, text, modelName, audioEntry, opts = {}) {
   if (text == null) return;
   await ensureAudioFile(audioEntry);
-  // Each model gets its own row: version = 'asr-gemini', 'asr-whisper', 'asr-mendel', etc.
-  const versionKey = `asr-${modelName || 'unknown'}`;
-  const { error } = await supabase.from('transcript_edits').upsert(
-    {
-      audio_id: audioId,
-      version: versionKey,
-      text,
-      created_at: new Date().toISOString(),
-      created_by: modelName || 'asr',
-      library_id: getActiveLibrary() || 'jemedia',
-    },
+  // Two version-key shapes coexist for back-compat:
+  //  - Legacy / no-prompt: `asr-<model>` (one row per model, upserted)
+  //  - Prompted/append:    `asr-<model>-<unix-ms>` (unique per run)
+  // The runId opt is provided by the caller when they want history-mode.
+  const baseKey = `asr-${modelName || 'unknown'}`;
+  const versionKey = opts.runId ? `${baseKey}-${opts.runId}` : baseKey;
+  const row = {
+    audio_id: audioId,
+    version: versionKey,
+    text,
+    created_at: new Date().toISOString(),
+    created_by: modelName || 'asr',
+    library_id: getActiveLibrary() || 'jemedia',
+  };
+  // Only include the prompt columns when there's actual data — keeps the
+  // upsert backwards-compatible with environments that haven't yet run the
+  // 20260427_add_asr_prompt_columns migration. PostgREST rejects unknown
+  // columns even when the value is null.
+  if (opts.prompt) row.prompt = opts.prompt;
+  if (opts.promptLabel) row.prompt_label = opts.promptLabel;
+  let { error } = await supabase.from('transcript_edits').upsert(
+    row,
     { onConflict: 'audio_id,version' },
   );
+  // Self-heal: if the columns don't exist yet, retry without them so the
+  // text and version key still land on the server. Users see prompt info
+  // in their local state until the migration is applied.
+  if (error && (row.prompt !== undefined || row.prompt_label !== undefined)
+      && /column .*(prompt|prompt_label)/i.test(error.message || '')) {
+    delete row.prompt;
+    delete row.prompt_label;
+    const retry = await supabase.from('transcript_edits').upsert(
+      row,
+      { onConflict: 'audio_id,version' },
+    );
+    error = retry.error;
+  }
   if (error) console.warn('[DB] syncAsr:', error.message);
 }
 
@@ -632,14 +667,22 @@ export async function loadFromSupabase(libraryId = null) {
       };
     });
 
-    // asr[audioId] = array of { text, model, createdAt } — one entry per model
+    // asr[audioId] = array of { text, model, createdAt, runId?, prompt?, promptLabel? }
+    // Version keys take two shapes:
+    //   - 'asr-<model>'             (legacy / no-prompt; one row per model)
+    //   - 'asr-<model>-<unix-ms>'   (prompted / history-mode; unique per run)
+    // The trailing 10+ digit group is the runId; we strip it back off the model.
     const asr = {};
     (editsData || []).filter(e => e.version.startsWith('asr-')).forEach(e => {
       if (!asr[e.audio_id]) asr[e.audio_id] = [];
+      const parsed = parseAsrVersionKey(e.version);
       asr[e.audio_id].push({
         text: e.text,
-        model: e.version.replace(/^asr-/, ''),
+        model: parsed.model,
+        runId: parsed.runId,
         createdAt: e.created_at,
+        prompt: e.prompt || null,
+        promptLabel: e.prompt_label || null,
       });
     });
 
@@ -733,7 +776,15 @@ export async function loadForDetailPage(audioId, libraryId = null) {
     const asr = {};
     edits.filter(e => e.version.startsWith('asr-')).forEach(e => {
       if (!asr[e.audio_id]) asr[e.audio_id] = [];
-      asr[e.audio_id].push({ text: e.text, model: e.version.replace(/^asr-/, ''), createdAt: e.created_at });
+      const parsed = parseAsrVersionKey(e.version);
+      asr[e.audio_id].push({
+        text: e.text,
+        model: parsed.model,
+        runId: parsed.runId,
+        createdAt: e.created_at,
+        prompt: e.prompt || null,
+        promptLabel: e.prompt_label || null,
+      });
     });
 
     return { audio, transcripts, mappings, alignments, reviews, cleaning, trims, edited, asr };

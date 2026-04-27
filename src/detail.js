@@ -7,7 +7,7 @@ import { createSplitFromAudio } from './split.js';
 import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark.js';
 import { buildAsrConfigPanel } from './asr-config.js';
 
-import { formatConfidence, getConfidenceLevel, generateSRT, generateVTT, downloadFile } from './utils.js';
+import { formatConfidence, getConfidenceLevel, generateSRT, generateVTT, downloadFile, diffWords } from './utils.js';
 import { loadAlignmentWords, loadTranscriptText, loadForDetailPage, syncAudioDuration, syncAudioField, loadSegmentApprovals, syncSegmentApproval } from './db.js';
 
 // ── Pipeline indicator for detail page ──────────────────────────────
@@ -288,6 +288,11 @@ function renderTranscriptPage(transcriptId, transcript, state, container) {
 // activeVersionRef to getBestVersion) but resets on full page reload — that's
 // fine, we just need the user's choice to stick while they're on the page.
 const _pickedVersionByAudio = new Map();
+
+// In-memory override for the "compare to" target version per audio, used by
+// the diff panel below the version picker. Same lifetime / reset semantics
+// as _pickedVersionByAudio. A null value means "no comparison active".
+const _compareVersionByAudio = new Map();
 
 function renderDetailPage(audioId, audio, state, container) {
   container.innerHTML = '';
@@ -692,6 +697,16 @@ function buildAsrProviderBar(audioId, state, onComplete) {
   label.textContent = 'Generate transcript:';
   bar.appendChild(label);
 
+  // Per-call Gemini prompt — Whisper and Mendel ignore it. Lives on the same
+  // bar so users can edit and rerun without leaving the detail view.
+  const promptInput = document.createElement('textarea');
+  promptInput.className = 'gemini-prompt-input';
+  promptInput.rows = 1;
+  promptInput.placeholder = 'Optional Gemini prompt (Whisper/Mendel ignore)';
+  promptInput.title = 'Custom prompt for Gemini/Vertex; appended as a separate version per run';
+  promptInput.style.cssText = 'flex:1;min-width:200px;padding:5px 8px;border:1px solid var(--border,#ccc);border-radius:6px;font-size:0.82rem;resize:vertical;font-family:inherit;';
+  bar.appendChild(promptInput);
+
   for (const { key, label: btnLabel } of PROVIDERS) {
     const btn = document.createElement('button');
     btn.className = 'action-btn action-btn-primary';
@@ -734,6 +749,8 @@ function buildAsrProviderBar(audioId, state, onComplete) {
         const providers = getState().transcribeProviders || {};
         let providerCfg = providers[key] || {};
         let saveModel = key;
+        let prompt = null;
+        let promptLabel = null;
         if (key === 'gemini') {
           const g = providers.gemini || {};
           const endpoints = Array.isArray(g.endpoints) ? g.endpoints : [];
@@ -746,19 +763,39 @@ function buildAsrProviderBar(audioId, state, onComplete) {
           }
           providerCfg = { projectId: selected.projectId, region: selected.region, endpointId: selected.endpointId };
           saveModel = `gemini-${geminiSlug(selected)}`;
+          const raw = (promptInput?.value || '').trim();
+          prompt = raw.length > 0 ? raw : null;
+          promptLabel = raw.length > 0
+            ? (raw.length > 32 ? raw.slice(0, 32) + '\u2026' : raw)
+            : 'default';
         }
         const config = { provider: key, ...providerCfg };
+        if (prompt) config.prompt = prompt;
         const text = await transcribeAudio(audioId, audioUrl, config);
         if (!text) throw new Error('Empty transcription returned');
 
-        // Save or update ASR version (keyed on model, so per-endpoint versions
-        // coexist rather than overwriting each other).
-        const versions = getVersions(audioId);
-        const existing = versions.find(v => v.type === 'asr' && v.model === saveModel);
-        if (existing) {
-          updateVersion(audioId, existing.id, { text, createdAt: new Date().toISOString() });
+        // Gemini: append every run as a distinct version with a unique runId
+        // so prompted variants and reruns coexist for side-by-side comparison.
+        // Whisper / Mendel: keep the existing dedup-per-model behavior.
+        if (key === 'gemini') {
+          const runId = String(Date.now());
+          addVersion(audioId, {
+            type: 'asr',
+            text,
+            model: saveModel,
+            runId,
+            prompt,
+            promptLabel,
+            createdAt: new Date().toISOString(),
+          });
         } else {
-          addVersion(audioId, { type: 'asr', text, model: saveModel });
+          const versions = getVersions(audioId);
+          const existing = versions.find(v => v.type === 'asr' && v.model === saveModel);
+          if (existing) {
+            updateVersion(audioId, existing.id, { text, createdAt: new Date().toISOString() });
+          } else {
+            addVersion(audioId, { type: 'asr', text, model: saveModel });
+          }
         }
 
         btn.textContent = btnLabel;
@@ -827,22 +864,33 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
         // Look up Gemini endpoint display names so "asr (gemini-yiddish-v3-large)"
         // renders as "ASR (gemini: Yiddish v3 large)".
         const geminiEndpoints = (getState().transcribeProviders?.gemini?.endpoints) || [];
-        const prettyAsr = (model) => {
-          if (!model) return 'ASR';
-          if (model === 'gemini') return 'ASR (gemini)';
-          if (model.startsWith('gemini-')) {
+        const prettyAsr = (model, v) => {
+          let base;
+          if (!model) base = 'ASR';
+          else if (model === 'gemini') base = 'ASR (gemini)';
+          else if (model.startsWith('gemini-')) {
             const slug = model.slice('gemini-'.length);
             const ep = geminiEndpoints.find(e => geminiSlug(e) === slug);
-            return `ASR (gemini: ${ep?.name || slug})`;
+            base = `ASR (gemini: ${ep?.name || slug})`;
+          } else {
+            base = `ASR (${model})`;
           }
-          return `ASR (${model})`;
+          // Append the prompt label and run timestamp where present so each
+          // Gemini run is visually unique in the dropdown.
+          const parts = [base];
+          if (v?.promptLabel) parts.push(`\u2014 ${v.promptLabel}`);
+          if (v?.runId) {
+            const t = new Date(parseInt(v.runId, 10));
+            if (!isNaN(t.getTime())) parts.push(`@ ${t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+          }
+          return parts.join(' ');
         };
+        const labelFor = (v) => v.type === 'asr' ? prettyAsr(v.model, v) : (byType[v.type] || v.type);
         versions.forEach((v) => {
           const opt = document.createElement('option');
           opt.value = v.id;
-          const label = v.type === 'asr' ? prettyAsr(v.model) : (byType[v.type] || v.type);
           const empty = !(typeof v.text === 'string' && v.text.trim().length > 0);
-          opt.textContent = empty ? `${label} — (empty)` : label;
+          opt.textContent = empty ? `${labelFor(v)} — (empty)` : labelFor(v);
           if (v.id === activeVersionRef?.id) opt.selected = true;
           picker.appendChild(opt);
         });
@@ -853,6 +901,37 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
           renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
         });
         infoBar.appendChild(picker);
+
+        // ── Compare-to picker ────────────────────────────────────
+        // Lets the user pin a second version and see a word-level diff
+        // against the active one. "(none)" hides the diff panel.
+        const comparePicker = document.createElement('select');
+        comparePicker.className = 'version-compare-picker';
+        comparePicker.style.cssText = 'padding:3px 8px;border:1px solid var(--border,#ccc);border-radius:6px;font-size:0.85rem;background:#fff;';
+        comparePicker.setAttribute('aria-label', 'Compare active version against another');
+        const noneOpt = document.createElement('option');
+        noneOpt.value = '';
+        noneOpt.textContent = 'Compare to\u2026 (none)';
+        comparePicker.appendChild(noneOpt);
+        const compareTargetId = _compareVersionByAudio.get(audioId) || null;
+        versions.forEach((v) => {
+          if (v.id === activeVersionRef?.id) return; // can't compare to itself
+          const empty = !(typeof v.text === 'string' && v.text.trim().length > 0);
+          if (empty) return;
+          const opt = document.createElement('option');
+          opt.value = v.id;
+          opt.textContent = labelFor(v);
+          if (v.id === compareTargetId) opt.selected = true;
+          comparePicker.appendChild(opt);
+        });
+        comparePicker.addEventListener('change', (e) => {
+          const val = e.target.value || null;
+          if (val) _compareVersionByAudio.set(audioId, val);
+          else _compareVersionByAudio.delete(audioId);
+          const s = getState();
+          renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
+        });
+        infoBar.appendChild(comparePicker);
       } else {
         const typeLabel = document.createElement('span');
         typeLabel.className = `version-type-badge version-type-${bestVersion.type}`;
@@ -898,6 +977,84 @@ function renderMappingSection(audioId, state, container, pageContainer, activeVe
         infoBar.appendChild(startBtn);
       }
       container.appendChild(infoBar);
+
+      // ── Diff panel ──────────────────────────────────────────────
+      // Renders when the user has picked a Compare-to target. Word-level
+      // diff between activeVersion (left side, "current") and the target
+      // (right side, "comparison"). Right-to-left so Yiddish renders
+      // correctly. Equal runs use neutral colour, additions are green,
+      // deletions are red w/ strikethrough.
+      const compareTargetId = _compareVersionByAudio.get(audioId);
+      if (compareTargetId) {
+        const target = versions.find(v => v.id === compareTargetId);
+        if (target && bestVersion && target.id !== bestVersion.id) {
+          const diffPanel = document.createElement('div');
+          diffPanel.className = 'version-diff-panel';
+          diffPanel.style.cssText = 'margin-top:10px;border:1px solid var(--border,#ccc);border-radius:8px;padding:10px;background:#fafafa;';
+
+          const diffHeader = document.createElement('div');
+          diffHeader.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font-size:0.78rem;color:var(--text-secondary);margin-bottom:6px;';
+          const labelLeft = bestVersion.type === 'asr' ? `ASR (${bestVersion.model || '?'})` : (bestVersion.type || 'current');
+          const labelRight = target.type === 'asr' ? `ASR (${target.model || '?'})` : (target.type || 'compare');
+          const headLine = document.createElement('span');
+          headLine.appendChild(document.createTextNode('Diff vs '));
+          const rightLabel = document.createElement('strong');
+          rightLabel.textContent = labelRight;
+          headLine.appendChild(rightLabel);
+          headLine.appendChild(document.createTextNode(' \u2014 '));
+          const addLegend = document.createElement('span');
+          addLegend.style.color = '#198754';
+          addLegend.textContent = 'green = added';
+          headLine.appendChild(addLegend);
+          headLine.appendChild(document.createTextNode(', '));
+          const delLegend = document.createElement('span');
+          delLegend.style.cssText = 'color:#dc3545;text-decoration:line-through;';
+          delLegend.textContent = 'red = removed';
+          headLine.appendChild(delLegend);
+          headLine.appendChild(document.createTextNode(' (relative to '));
+          const leftLabel = document.createElement('strong');
+          leftLabel.textContent = labelLeft;
+          headLine.appendChild(leftLabel);
+          headLine.appendChild(document.createTextNode(')'));
+          const closeBtn = document.createElement('button');
+          closeBtn.type = 'button';
+          closeBtn.textContent = 'Hide diff';
+          closeBtn.className = 'action-btn';
+          closeBtn.style.cssText = 'font-size:0.75rem;padding:2px 8px;';
+          closeBtn.addEventListener('click', () => {
+            _compareVersionByAudio.delete(audioId);
+            const s = getState();
+            renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
+          });
+          diffHeader.appendChild(headLine);
+          diffHeader.appendChild(closeBtn);
+          diffPanel.appendChild(diffHeader);
+
+          const body = document.createElement('div');
+          body.dir = 'rtl';
+          body.style.cssText = 'white-space:pre-wrap;line-height:1.7;font-size:0.95rem;max-height:50vh;overflow:auto;padding:6px 8px;background:#fff;border:1px solid var(--border-light,#eee);border-radius:6px;';
+
+          const leftText = (bestVersion.text || '').toString();
+          const rightText = (target.text || '').toString();
+          const ops = diffWords(leftText, rightText);
+          for (const op of ops) {
+            if (op.op === 'eq') {
+              body.appendChild(document.createTextNode(op.text));
+            } else {
+              const span = document.createElement('span');
+              span.textContent = op.text;
+              if (op.op === 'add') {
+                span.style.cssText = 'background:#e6f4ea;color:#0f5132;border-radius:2px;padding:0 1px;';
+              } else {
+                span.style.cssText = 'background:#fdecea;color:#842029;text-decoration:line-through;border-radius:2px;padding:0 1px;';
+              }
+              body.appendChild(span);
+            }
+          }
+          diffPanel.appendChild(body);
+          container.appendChild(diffPanel);
+        }
+      }
     } else if (!versions.length && transcript) {
       // No versions yet — offer "Start Editing" to create an edited version
       const startBtn = document.createElement('button');

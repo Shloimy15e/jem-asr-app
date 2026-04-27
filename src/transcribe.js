@@ -162,6 +162,27 @@ function renderTranscribePage(audioId, audio, state, root) {
     return 'unknown';
   };
 
+  // Shared per-call prompt textarea (Gemini only). Whisper/Mendel ignore it.
+  // Stored ABOVE the buttons so it's discoverable and reused if user runs
+  // several Gemini endpoints back-to-back.
+  let promptInput = null;
+  {
+    const wrap = document.createElement('div');
+    wrap.className = 'gemini-prompt-wrap';
+    wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin:8px 0 12px;';
+    const lbl = document.createElement('label');
+    lbl.textContent = 'Gemini prompt (optional, ignored by Whisper/Mendel)';
+    lbl.style.cssText = 'font-size:0.78rem;color:var(--text-secondary);';
+    promptInput = document.createElement('textarea');
+    promptInput.className = 'gemini-prompt-input';
+    promptInput.rows = 2;
+    promptInput.placeholder = 'e.g. Verbatim transcription with full punctuation, mark uncertain words with [?]';
+    promptInput.style.cssText = 'width:100%;padding:6px 8px;border:1px solid var(--border,#ccc);border-radius:6px;font-size:0.85rem;resize:vertical;font-family:inherit;';
+    wrap.appendChild(lbl);
+    wrap.appendChild(promptInput);
+    asrCard.appendChild(wrap);
+  }
+
   for (const { key, label: btnLabel, providerArg } of PROVIDERS) {
     const btn = document.createElement('button');
     btn.className = 'asr-provider-btn';
@@ -204,6 +225,8 @@ function renderTranscribePage(audioId, audio, state, root) {
         const providers = getState().transcribeProviders || {};
         let providerCfg = providers[key] || {};
         let saveModel = key;
+        let prompt = null;
+        let promptLabel = null;
         if (key === 'gemini') {
           const g = providers.gemini || {};
           const endpoints = Array.isArray(g.endpoints) ? g.endpoints : [];
@@ -216,19 +239,43 @@ function renderTranscribePage(audioId, audio, state, root) {
           }
           providerCfg = { projectId: selected.projectId, region: selected.region, endpointId: selected.endpointId };
           saveModel = `gemini-${geminiSlug(selected)}`;
+          // Pull the per-call prompt; treat empty/whitespace as "use default"
+          // and mark the resulting version with promptLabel='default' so the
+          // version picker can disambiguate it from prompted runs.
+          const raw = (promptInput?.value || '').trim();
+          prompt = raw.length > 0 ? raw : null;
+          promptLabel = raw.length > 0
+            ? (raw.length > 32 ? raw.slice(0, 32) + '\u2026' : raw)
+            : 'default';
         }
         const config = { provider: providerArg, ...providerCfg };
+        if (prompt) config.prompt = prompt;
         const text = await transcribeAudio(audioId, audioUrl, config);
         if (!text) throw new Error('Empty transcription returned');
 
-        // Save version — keyed on saveModel so multiple Gemini endpoints
-        // produce distinct, coexisting ASR versions.
-        const versions = getVersions(audioId);
-        const existingAsr = versions.find(v => v.type === 'asr' && v.model === saveModel);
-        if (existingAsr) {
-          updateVersion(audioId, existingAsr.id, { text, createdAt: new Date().toISOString() });
+        // Save version. For Gemini we ALWAYS append a new version (per-run
+        // history mode, with a unique runId) so different prompts and reruns
+        // coexist for side-by-side comparison. For Whisper/Mendel we keep
+        // the existing dedup-per-model behavior since they have no prompt.
+        if (key === 'gemini') {
+          const runId = String(Date.now());
+          addVersion(audioId, {
+            type: 'asr',
+            text,
+            model: saveModel,
+            runId,
+            prompt,
+            promptLabel,
+            createdAt: new Date().toISOString(),
+          });
         } else {
-          addVersion(audioId, { type: 'asr', text, model: saveModel, createdAt: new Date().toISOString() });
+          const versions = getVersions(audioId);
+          const existingAsr = versions.find(v => v.type === 'asr' && v.model === saveModel);
+          if (existingAsr) {
+            updateVersion(audioId, existingAsr.id, { text, createdAt: new Date().toISOString() });
+          } else {
+            addVersion(audioId, { type: 'asr', text, model: saveModel, createdAt: new Date().toISOString() });
+          }
         }
 
         btn.textContent = btnLabel;
@@ -290,12 +337,18 @@ function renderTranscribePage(audioId, audio, state, root) {
 
       const modelLabel = document.createElement('span');
       modelLabel.className = 'asr-existing-model';
-      modelLabel.textContent = v.model || 'asr';
+      const baseLabel = v.model || 'asr';
+      modelLabel.textContent = v.promptLabel
+        ? `${baseLabel} \u2014 ${v.promptLabel}`
+        : baseLabel;
+      if (v.prompt) modelLabel.title = v.prompt;
 
       const date = document.createElement('span');
       date.className = 'text-secondary';
       date.style.fontSize = '0.75rem';
-      date.textContent = v.createdAt ? new Date(v.createdAt).toLocaleDateString() : '';
+      date.textContent = v.createdAt
+        ? new Date(v.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })
+        : '';
 
       const preview = document.createElement('div');
       preview.className = 'asr-existing-preview';

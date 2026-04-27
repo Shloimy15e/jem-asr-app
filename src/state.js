@@ -147,11 +147,16 @@ function migrateToVersions() {
       if (!v.iteration) v.iteration = 1;
     }
 
-    // Deduplicate: keep only the latest version of each type (except 'asr' which allows multiple models)
+    // Deduplicate: keep only the latest version of each type. ASR versions
+    // are deduped on (model, runId) — runId guarantees that prompted runs
+    // remain distinct (each run gets its own runId so they all survive),
+    // while legacy no-prompt rows (no runId) collapse per model as before.
     const seen = {};
     for (let i = versions.length - 1; i >= 0; i--) {
       const v = versions[i];
-      const key = v.type === 'asr' ? `asr_${v.model || ''}` : v.type;
+      const key = v.type === 'asr'
+        ? `asr_${v.model || ''}_${v.runId || ''}`
+        : v.type;
       if (seen[key]) {
         versions.splice(i, 1); // remove older duplicate
       } else {
@@ -204,22 +209,32 @@ export function mergeSupabaseData(remote) {
     }
   }
 
-  // Restore asr versions loaded from Supabase — one version per model.
-  // Same seeding rationale as edited: training files may have only ASR rows.
+  // Restore asr versions loaded from Supabase. Each remote row is one version
+  // identified by (model, runId): legacy rows have runId=null and dedup per
+  // model; prompted rows have a unique runId so they all survive as siblings.
   if (remote.asr) {
     for (const [audioId, asrArray] of Object.entries(remote.asr)) {
       if (!state.transcriptVersions[audioId]) state.transcriptVersions[audioId] = [];
       const versions = state.transcriptVersions[audioId];
       for (const asrData of asrArray) {
-        const existing = versions.find(v => v.type === 'asr' && v.model === asrData.model);
+        const existing = versions.find(v =>
+          v.type === 'asr' &&
+          v.model === asrData.model &&
+          (v.runId || null) === (asrData.runId || null),
+        );
         if (existing) {
           existing.text = asrData.text;
+          if (asrData.prompt != null) existing.prompt = asrData.prompt;
+          if (asrData.promptLabel != null) existing.promptLabel = asrData.promptLabel;
         } else {
           versions.push({
-            id: `tv_${audioId}_asr_${asrData.model}_restored`,
+            id: `tv_${audioId}_asr_${asrData.model}_${asrData.runId || 'r0'}_restored`,
             type: 'asr',
             text: asrData.text,
             model: asrData.model,
+            runId: asrData.runId || null,
+            prompt: asrData.prompt || null,
+            promptLabel: asrData.promptLabel || null,
             createdAt: asrData.createdAt,
           });
         }
@@ -421,7 +436,11 @@ export function addVersion(audioId, versionData) {
   }
   if (versionData.type === 'asr' && versionData.text != null) {
     const audioEntry = state.audio?.find(a => a.id === audioId);
-    syncAsr(audioId, versionData.text, versionData.model, audioEntry).catch(console.warn);
+    syncAsr(audioId, versionData.text, versionData.model, audioEntry, {
+      runId: versionData.runId || null,
+      prompt: versionData.prompt || null,
+      promptLabel: versionData.promptLabel || null,
+    }).catch(console.warn);
   }
   return version;
 }
@@ -447,7 +466,11 @@ export function updateVersion(audioId, versionId, updates) {
   }
   if (v.type === 'asr' && updates.text != null) {
     const audioEntry = state.audio?.find(a => a.id === audioId);
-    const p = syncAsr(audioId, v.text, v.model, audioEntry);
+    const p = syncAsr(audioId, v.text, v.model, audioEntry, {
+      runId: v.runId || null,
+      prompt: v.prompt || null,
+      promptLabel: v.promptLabel || null,
+    });
     p.catch(console.warn);
     return p;
   }
