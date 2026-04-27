@@ -6,6 +6,11 @@
 // Pages do not need to know about layout-shell or icons directly.
 import { icons, iconEl } from './icons.js';
 import { mountDrawerToggle, setShellSections } from './layout-shell.js';
+import * as authMod from './auth.js';
+
+// Expose auth on window so layout-shell can read user info without a
+// circular import (it looks at window.__jemAuthMod).
+if (typeof window !== 'undefined') window.__jemAuthMod = authMod;
 
 const NAV = [
   { label: 'Audio',         icon: 'audio',    href: '/index.html',         match: ['/', '/index.html'] },
@@ -142,7 +147,9 @@ export function initAppShell() {
   mountSkipLink();
   const header = document.querySelector('.app-header');
   if (!header) return;
-  mountDrawerToggle(header, 'Open navigation');
+  // Hamburger drawer toggle removed per UX feedback — the persistent
+  // left rail covers nav on tablet+ and is the intended primary surface.
+  // (Was: mountDrawerToggle(header, 'Open navigation'))
   refreshShell();
 
   // If admin button becomes visible later (after auth), refresh nav
@@ -151,6 +158,10 @@ export function initAppShell() {
     const obs = new MutationObserver(() => refreshShell());
     obs.observe(adminBtn, { attributes: true, attributeFilter: ['style', 'class'] });
   }
+  // Auth resolves shortly after page load — re-render once it should be
+  // available so the rail user card shows the real email.
+  setTimeout(refreshShell, 800);
+  setTimeout(refreshShell, 2200);
 }
 
 // Auto-init when imported on a page that has DOM ready.

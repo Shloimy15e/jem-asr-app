@@ -223,7 +223,7 @@ body {
   min-height: 100vh;
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
   body { padding-inline-start: var(--rail-width); }
   /* Login page opts out of rail offset */
   body.is-login { padding-inline-start: 0; }
@@ -234,11 +234,11 @@ body {
   position: sticky;
   top: 0;
   z-index: 50;
-  height: var(--topbar-height);
+  min-height: var(--topbar-height);
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  padding: 0 var(--sp-4);
+  padding: 6px var(--sp-4);
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: saturate(180%) blur(14px);
   -webkit-backdrop-filter: saturate(180%) blur(14px);
@@ -256,13 +256,11 @@ body {
   align-items: center;
   gap: var(--sp-2);
 }
-.app-title::before {
-  /* tiny brand dot */
-  content: '';
-  width: 8px; height: 8px;
-  border-radius: 999px;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.18);
+/* Brand mark in the topbar — only on phone (<768px) where the rail is
+ * hidden. On tablet+ the rail already shows the brand, so the topbar
+ * starts with the page-context label only. */
+@media (min-width: 768px) {
+  .app-title { display: none; }
 }
 
 .toolbar {
@@ -270,6 +268,8 @@ body {
   align-items: center;
   gap: var(--sp-1);
   margin-inline-start: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 /* =================================================================
@@ -289,7 +289,7 @@ body {
   overflow-y: auto;
   z-index: 60;
 }
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
   .app-rail { display: flex; }
   body.is-login .app-rail { display: none; }
 }
@@ -404,22 +404,9 @@ body {
 }
 
 /* Drawer toggle (mobile/tablet only) */
-.side-drawer-toggle {
-  display: inline-grid;
-  place-items: center;
-  width: 32px; height: 32px;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  border: 0;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background var(--t-fast), color var(--t-fast);
-}
-.side-drawer-toggle:hover { background: var(--surface-hover); color: var(--text); }
-.side-drawer-toggle svg { width: 18px; height: 18px; }
-@media (min-width: 1024px) {
-  .side-drawer-toggle { display: none; }
-}
+/* Drawer toggle removed per UX feedback (the rail handles desktop+tablet
+ * nav). Hide unconditionally in case a stale instance is still in DOM. */
+.side-drawer-toggle { display: none !important; }
 
 /* Drawer (mobile) */
 .side-drawer {
@@ -696,8 +683,8 @@ button, .btn {
   font-weight: 400;
 }
 
-/* Hide filter toggle on desktop, always show inline */
-@media (min-width: 1024px) {
+/* Hide filter toggle on tablet+, always show filter bar inline */
+@media (min-width: 768px) {
   #btn-filter-toggle { display: none; }
 }
 
@@ -844,7 +831,8 @@ label, .login-field label, .asr-form-label, .asr-config-label {
   display: none;
   z-index: 60;
 }
-.multi-select.is-open .multi-select-dropdown { display: block; }
+.multi-select.is-open .multi-select-dropdown,
+.multi-select.open .multi-select-dropdown { display: block; }
 .multi-select-dropdown label {
   display: flex;
   align-items: center;
@@ -877,7 +865,7 @@ label, .login-field label, .asr-form-label, .asr-config-label {
 .filter-bar[aria-expanded="true"],
 .filter-bar.is-open { display: flex; }
 
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
   .filter-bar { display: flex; }
 }
 

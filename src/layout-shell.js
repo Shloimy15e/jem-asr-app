@@ -74,11 +74,16 @@ function buildBrandHeader() {
 }
 
 function getUserDisplay() {
-  // Best-effort lookup from common globals / DOM hints
+  // Read from auth.js getCurrentUser() (synchronously available after
+  // checkAuth resolves). Fall back to a [data-user-email] DOM hint.
   let email = null;
   try {
-    const ls = JSON.parse(localStorage.getItem('jem-asr-current-user') || 'null');
-    if (ls && ls.email) email = ls.email;
+    // Lazy require to avoid a circular import at module-load time.
+    const auth = window.__jemAuthMod || null;
+    if (auth && typeof auth.getCurrentUser === 'function') {
+      const cu = auth.getCurrentUser();
+      if (cu && typeof cu === 'string' && cu !== 'user') email = cu;
+    }
   } catch (_) {}
   if (!email) {
     const m = document.querySelector('[data-user-email]');
@@ -88,7 +93,7 @@ function getUserDisplay() {
   const initials = email
     ? email.replace(/@.*/, '').split(/[._-]/).filter(Boolean)
         .slice(0, 2).map(s => s[0].toUpperCase()).join('') || email[0].toUpperCase()
-    : '?';
+    : 'JE';
   return { email, initials };
 }
 
