@@ -21,8 +21,16 @@
 //   node scripts/export-approved-to-ivrit.mjs --out ./dist-training --library jemedia
 //   node scripts/export-approved-to-ivrit.mjs --dry-run --limit 3
 //   node scripts/export-approved-to-ivrit.mjs --out ./dist-training --resume
-//   node scripts/export-approved-to-ivrit.mjs --out ./dist-training --id a_1124
-//   node scripts/export-approved-to-ivrit.mjs --out ./dist-training --id a_1124 --force
+//   node scripts/export-approved-to-ivrit.mjs --out ./dist-training --id 585689
+//   node scripts/export-approved-to-ivrit.mjs --out ./dist-training --id 585689 --force
+//   node scripts/export-approved-to-ivrit.mjs --out ./dist-training --library training --no-filter
+//
+// On success, every exported audio_files row is stamped with
+// training_exported_at / training_exported_by so the detail page can show
+// "Exported for training" status.
+//
+// --id auto-bypasses the approved/50hr/benchmark filters (single-file targeted
+// export is always intentional). --no-filter does the same for multi-file runs.
 
 import { createClient } from '@supabase/supabase-js';
 import { mkdirSync, writeFileSync, existsSync, statSync, readFileSync } from 'node:fs';
@@ -69,6 +77,11 @@ const DRY_RUN = !!args['dry-run'];
 const LIMIT = args.limit ? parseInt(args.limit, 10) : null;
 const RESUME = !!args.resume;
 const FORCE  = !!args.force;                // re-export even if output exists
+// On-demand export: bypass approved / 50hr / benchmark filters. Auto-on when
+// --id is used (single-file targeted export is always intentional). Can also
+// be explicitly enabled for ad-hoc multi-file runs.
+const NO_FILTER = !!args['no-filter'] || !!ID_FILTER;
+const EXPORTED_BY = args['exported-by'] || env.USER || env.USERNAME || 'cli';
 
 function parseArgs(argv) {
   const out = {};
@@ -159,43 +172,68 @@ async function main() {
   console.log(`Output: ${OUT_ROOT}`);
   console.log(`Library filter: ${LIBRARY_FILTER || '(all)'}`);
   if (ID_FILTER) console.log(`ID filter:      ${ID_FILTER}`);
-  console.log(`Dry run: ${DRY_RUN}   Limit: ${LIMIT || '∞'}   Resume: ${RESUME}   Force: ${FORCE}`);
+  console.log(`Dry run: ${DRY_RUN}   Limit: ${LIMIT || '∞'}   Resume: ${RESUME}   Force: ${FORCE}   No-filter: ${NO_FILTER}`);
   console.log();
 
-  // 1. Fetch all approved reviews
-  console.log('Fetching approved reviews…');
-  const reviewFilters = [{ op: 'eq', col: 'status', val: 'approved' }];
-  if (LIBRARY_FILTER) reviewFilters.push({ op: 'eq', col: 'library_id', val: LIBRARY_FILTER });
-  if (ID_FILTER)      reviewFilters.push({ op: 'eq', col: 'audio_id',   val: ID_FILTER });
-  const reviews = await fetchAll('reviews', 'audio_id, library_id, edited_text, reviewed_at', reviewFilters);
-  console.log(`  ${reviews.length} approved reviews`);
-
-  // 2. Fetch candidate audio_files (50hr, not benchmark) for those audio_ids
-  const candidateIds = reviews.map(r => r.audio_id);
-  if (candidateIds.length === 0) {
-    if (ID_FILTER) console.log(`No approved review for audio_id="${ID_FILTER}". Exiting.`);
-    else           console.log('Nothing approved yet. Exiting.');
-    return;
-  }
-
-  console.log('Fetching audio metadata…');
-  // Chunk the IN query to avoid URL size limits
-  const audioRows = [];
   const ID_CHUNK = 200;
-  for (let i = 0; i < candidateIds.length; i += ID_CHUNK) {
-    const chunk = candidateIds.slice(i, i + ID_CHUNK);
-    let q = supabase
-      .from('audio_files')
-      .select('id, library_id, name, year, month, day, type, r2_link, trim_start, trim_end, duration_minutes, is_selected_50hr, is_benchmark')
-      .in('id', chunk)
-      .eq('is_selected_50hr', true)
-      .eq('is_benchmark', false);
-    if (LIBRARY_FILTER) q = q.eq('library_id', LIBRARY_FILTER);
-    const { data, error } = await q;
-    if (error) throw error;
-    audioRows.push(...data);
+  const AUDIO_COLS = 'id, library_id, name, year, month, day, type, r2_link, trim_start, trim_end, duration_minutes, is_selected_50hr, is_benchmark';
+  let audioRows = [];
+
+  if (NO_FILTER) {
+    // On-demand mode: fetch audio_files directly, no approved/50hr/benchmark gate.
+    console.log('Fetching audio metadata (no-filter mode)…');
+    const filters = [];
+    if (ID_FILTER)      filters.push({ op: 'eq', col: 'id',         val: ID_FILTER });
+    if (LIBRARY_FILTER) filters.push({ op: 'eq', col: 'library_id', val: LIBRARY_FILTER });
+    audioRows = await fetchAll('audio_files', AUDIO_COLS, filters);
+    if (audioRows.length === 0) {
+      if (ID_FILTER) console.log(`No audio_files row for id="${ID_FILTER}". Exiting.`);
+      else           console.log('No matching audio rows. Exiting.');
+      return;
+    }
+  } else {
+    // Default mode: only approved + 50hr + non-benchmark.
+    console.log('Fetching approved reviews…');
+    const reviewFilters = [{ op: 'eq', col: 'status', val: 'approved' }];
+    if (LIBRARY_FILTER) reviewFilters.push({ op: 'eq', col: 'library_id', val: LIBRARY_FILTER });
+    const approvedReviews = await fetchAll('reviews', 'audio_id, library_id', reviewFilters);
+    console.log(`  ${approvedReviews.length} approved reviews`);
+
+    const candidateIds = approvedReviews.map(r => r.audio_id);
+    if (candidateIds.length === 0) {
+      console.log('Nothing approved yet. Exiting.');
+      return;
+    }
+
+    console.log('Fetching audio metadata…');
+    for (let i = 0; i < candidateIds.length; i += ID_CHUNK) {
+      const chunk = candidateIds.slice(i, i + ID_CHUNK);
+      let q = supabase
+        .from('audio_files')
+        .select(AUDIO_COLS)
+        .in('id', chunk)
+        .eq('is_selected_50hr', true)
+        .eq('is_benchmark', false);
+      if (LIBRARY_FILTER) q = q.eq('library_id', LIBRARY_FILTER);
+      const { data, error } = await q;
+      if (error) throw error;
+      audioRows.push(...data);
+    }
+    console.log(`  ${audioRows.length} approved + 50hr + non-benchmark audio rows`);
   }
-  console.log(`  ${audioRows.length} approved + 50hr + non-benchmark audio rows`);
+
+  // Fetch any reviews that exist for the resolved audio rows (used for
+  // edited_text and reviewed_at metadata; optional in no-filter mode).
+  const reviews = [];
+  for (let i = 0; i < audioRows.length; i += ID_CHUNK) {
+    const chunkIds = audioRows.slice(i, i + ID_CHUNK).map(a => a.id);
+    const { data, error } = await supabase
+      .from('reviews')
+      .select('audio_id, library_id, edited_text, reviewed_at')
+      .in('audio_id', chunkIds);
+    if (error) throw error;
+    reviews.push(...data);
+  }
 
   // 3. Fetch mappings + transcript names for nice metadata
   const mappingRows = [];
@@ -348,6 +386,15 @@ async function main() {
         },
       };
       writeFileSync(path.join(outDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
+
+      // Stamp the audio_files row so the app can show "exported for training" status.
+      const exportedAt = new Date().toISOString();
+      const { error: stampErr } = await supabase
+        .from('audio_files')
+        .update({ training_exported_at: exportedAt, training_exported_by: EXPORTED_BY })
+        .eq('id', audio.id)
+        .eq('library_id', audio.library_id);
+      if (stampErr) console.warn(`${label} ⚠  failed to stamp training_exported_at: ${stampErr.message}`);
 
       const sz = statSync(audioOutPath).size;
       console.log(`${label} ✓  ${segments.length} seg · ${wordsCount} words · ${formatBytes(sz)}   "${audio.name}"`);

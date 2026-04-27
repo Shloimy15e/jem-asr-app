@@ -401,6 +401,26 @@ function renderDetailPage(audioId, audio, state, container) {
 
   container.appendChild(meta);
 
+  // Training-export status (set by scripts/export-approved-to-ivrit.mjs).
+  // Renders only when the file has been exported, so reviewers can tell at a
+  // glance which files are already in the training set vs. still need work.
+  if (audio.trainingExportedAt) {
+    const exportedRow = document.createElement('div');
+    exportedRow.className = 'training-exported-row';
+    const badge = document.createElement('span');
+    badge.className = 'status-badge status-exported';
+    badge.textContent = '✓ Exported for Training';
+    const when = new Date(audio.trainingExportedAt).toLocaleString();
+    const detail = document.createElement('span');
+    detail.className = 'training-exported-detail';
+    detail.textContent = audio.trainingExportedBy
+      ? `${when} · by ${audio.trainingExportedBy}`
+      : when;
+    exportedRow.appendChild(badge);
+    exportedRow.appendChild(detail);
+    container.appendChild(exportedRow);
+  }
+
   // === Section: Comments ===
   const commentsSection = createSection('Comments');
   addCollapseBehavior(commentsSection.el, commentsSection.header, true);

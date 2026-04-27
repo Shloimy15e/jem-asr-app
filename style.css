@@ -512,6 +512,24 @@ input {
   color: var(--accent);
 }
 
+.status-exported {
+  background: var(--green-dim);
+  color: var(--green-dark);
+}
+
+.training-exported-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 4px;
+  flex-wrap: wrap;
+}
+
+.training-exported-detail {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
 /* === Pipeline Progress Indicator === */
 .pipeline-indicator {
   display: inline-flex;

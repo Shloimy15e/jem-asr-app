@@ -560,6 +560,8 @@ export async function loadFromSupabase(libraryId = null) {
       driveLink: a.drive_link,
       trimStart: a.trim_start || 0,
       trimEnd: a.trim_end || 0,
+      trainingExportedAt: a.training_exported_at || null,
+      trainingExportedBy: a.training_exported_by || null,
     }));
 
     const trims = {};
@@ -694,6 +696,8 @@ export async function loadForDetailPage(audioId, libraryId = null) {
       estMinutes: a.duration_minutes, isSelected50hr: a.is_selected_50hr, isBenchmark: a.is_benchmark,
       comments: a.comments || '', r2Link: a.r2_link, driveLink: a.drive_link,
       trimStart: a.trim_start || 0, trimEnd: a.trim_end || 0,
+      trainingExportedAt: a.training_exported_at || null,
+      trainingExportedBy: a.training_exported_by || null,
     }));
 
     const trims = {};
