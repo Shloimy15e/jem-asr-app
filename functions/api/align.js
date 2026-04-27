@@ -5,6 +5,16 @@
 //
 // Forwards audio_url (+ optional trim_start / trim_end) straight to the pod.
 // The Worker never touches audio bytes — prevents CF error 1102 on long audio.
+//
+// Billing integration (April 2026):
+//   Authed callers (Bearer token) trigger metering. RunPod returns
+//   `executionTime` (ms) in its async status payload — that becomes our
+//   pod_seconds. Mode=transcribe drains credits the same way as /api/transcribe.
+
+import {
+  getCallerUser, getCallerOrg, preflight, startUsage, finalizeUsage, failUsage,
+  sbFetch,
+} from './billing/_lib.js';
 
 const ALIGN_ENDPOINT = 'https://align.kohnai.ai/api/align';
 
@@ -27,6 +37,17 @@ function getAllowedDomains(env) {
 //   label       — used in error messages, e.g. "ivrit-iterative" or "stable-ts-trim"
 //   endpointId  — RunPod serverless endpoint id
 //   apiKey      — RunPod API key (Bearer)
+// Pull pod execution seconds out of a RunPod status payload. RunPod returns
+// executionTime in ms on completed jobs.
+function extractPodSeconds(status) {
+  const ms = status?.executionTime
+    ?? status?.execution_time
+    ?? status?.workerStats?.executionTime
+    ?? null;
+  if (ms == null) return null;
+  return ms / 1000;
+}
+
 async function forwardToRunPodAsync(payload, { endpointId, apiKey, label }, corsHeaders) {
   const input = {
     mode: payload.mode || 'align',
@@ -65,7 +86,11 @@ async function forwardToRunPodAsync(payload, { endpointId, apiKey, label }, cors
     if (!statusResp.ok) continue;
     const status = await statusResp.json();
     if (status.status === 'COMPLETED') {
-      return new Response(JSON.stringify(status.output || {}), {
+      const podSeconds = extractPodSeconds(status);
+      const out = { ...(status.output || {}) };
+      // Surface metering data for the wrapper to consume; harmless to clients.
+      if (podSeconds != null) out._pod_seconds = podSeconds;
+      return new Response(JSON.stringify(out), {
         status: 200,
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
@@ -110,12 +135,95 @@ async function forwardToStableTsTrimPod(payload, env, corsHeaders) {
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
+// Resolve optional billing context if the caller is authed.
+async function tryResolveBillingContext(request, env, payload) {
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_KEY) return null;
+  const auth = request.headers.get('authorization');
+  if (!auth) return null;
+  const { userId, accessToken } = await getCallerUser(request, env);
+  const orgId = await getCallerOrg(env, accessToken, payload.org_id || null);
+  const orgs = await sbFetch(env, `organizations?id=eq.${orgId}&select=default_markup_pct`);
+  return {
+    userId,
+    accessToken,
+    orgId,
+    markupPct: Number(orgs?.[0]?.default_markup_pct ?? 30),
+  };
+}
+
+// Wrap any pod response and meter pod_seconds when billing context is present.
+async function wrapWithMetering(originalResponse, { env, billing, payload, providerLabel }) {
+  if (!billing || !originalResponse.ok) return originalResponse;
+
+  // Read body, extract pod_seconds, then return a clean version to the client.
+  let bodyJson = null;
+  const cloned = originalResponse.clone();
+  try {
+    bodyJson = await cloned.json();
+  } catch { return originalResponse; }
+
+  const podSeconds = bodyJson?._pod_seconds || null;
+  // Audio duration: prefer client-supplied, else fall back to ASR-reported
+  const audioSeconds =
+    payload.audio_duration_seconds
+    ?? bodyJson?.audio_duration
+    ?? bodyJson?.duration
+    ?? null;
+
+  // Only meter when this was a transcription call (mode='transcribe').
+  // Pure alignment calls (cleaned text already supplied) are still recorded
+  // but with audio_seconds → so the cost reflects pod time + minutes.
+  try {
+    const pre = await preflight(env, billing.orgId, audioSeconds || 0);
+    if (!pre.allowed) {
+      return new Response(
+        JSON.stringify({ error: 'Insufficient credits', balance_micro_usd: pre.balance_micro_usd }),
+        { status: 402, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
+      );
+    }
+    const usageId = await startUsage(env, {
+      orgId: billing.orgId,
+      userId: billing.userId,
+      audioId: payload.audio_id || null,
+      provider: providerLabel,
+      modelId: payload.aligner || null,
+      audioSeconds,
+    });
+    await finalizeUsage(env, {
+      orgId: billing.orgId,
+      usageId,
+      providerUsage: {
+        provider: providerLabel,
+        model_id: payload.aligner || null,
+        audio_seconds: audioSeconds,
+        pod_seconds: podSeconds,
+        request_count: 1,
+      },
+      markupPct: billing.markupPct,
+      chargeTo: pre.charge_to,
+    }).catch(err => console.error('[billing] align finalize:', err));
+  } catch (err) {
+    console.error('[billing] align meter failed:', err);
+  }
+
+  // Strip internal _pod_seconds before returning to client.
+  delete bodyJson._pod_seconds;
+  return new Response(JSON.stringify(bodyJson), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+  });
+}
+
 export async function onRequestPost(context) {
+  let billing = null;
   try {
     const payload = await context.request.json();
+    billing = await tryResolveBillingContext(context.request, context.env, payload).catch(err => {
+      throw err;
+    });
 
     // If the client sent audio_url, forward it to the pod as-is.
     // The pod downloads the audio and (for stable-ts) honours trim_start /
@@ -148,7 +256,8 @@ export async function onRequestPost(context) {
       // The new pod downloads the audio itself on its VM, so we skip the
       // base64 rewrite entirely and forward audio_url straight to RunPod.
       if (payload.aligner === 'ivrit-iterative') {
-        return forwardToIvritPod(payload, context.env, CORS_HEADERS);
+        const resp = await forwardToIvritPod(payload, context.env, CORS_HEADERS);
+        return wrapWithMetering(resp, { env: context.env, billing, payload, providerLabel: 'ivrit' });
       }
 
       // ── stable-ts path ───────────────────────────────────────────────
@@ -163,7 +272,8 @@ export async function onRequestPost(context) {
       // on large trim_end gaps until the secret is configured.
       const hasTrim = (payload.trim_start > 0) || (payload.trim_end > 0);
       if (hasTrim && context.env?.STABLE_TS_TRIM_ENDPOINT_ID) {
-        return forwardToStableTsTrimPod(payload, context.env, CORS_HEADERS);
+        const resp = await forwardToStableTsTrimPod(payload, context.env, CORS_HEADERS);
+        return wrapWithMetering(resp, { env: context.env, billing, payload, providerLabel: 'stable-ts' });
       }
       const forwardPayload = { ...payload };
       delete forwardPayload.audio_duration; // pod doesn't use this
@@ -173,13 +283,14 @@ export async function onRequestPost(context) {
         body: JSON.stringify(forwardPayload),
         cf: { cacheTtl: 0 },
       });
-      return new Response(resp.body, {
+      const wrapped = new Response(resp.body, {
         status: resp.status,
         headers: {
           'Content-Type': resp.headers.get('Content-Type') || 'application/json',
           ...CORS_HEADERS,
         },
       });
+      return wrapWithMetering(wrapped, { env: context.env, billing, payload, providerLabel: 'stable-ts' });
     }
 
     // Direct audio_base64 path — client already encoded the audio

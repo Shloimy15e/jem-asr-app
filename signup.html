@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign Up — JEM ASR</title>
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    /* Reuses login.html styles */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f2f2f7;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .login-wrap { width: 100%; max-width: 380px; display: flex; flex-direction: column; align-items: center; gap: 28px; }
+    .login-brand { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+    .login-logo {
+      width: 64px; height: 64px; border-radius: 16px;
+      background: linear-gradient(145deg, #007AFF, #0051d4);
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 4px 16px rgba(0, 122, 255, 0.35);
+    }
+    .login-logo svg { width: 34px; height: 34px; fill: #fff; }
+    .login-brand-name { font-size: 1.15rem; font-weight: 700; color: #1c1c1e; letter-spacing: -0.3px; }
+    .login-brand-sub { font-size: 0.82rem; color: #8e8e93; }
+    .login-card {
+      background: #fff; border-radius: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.07), 0 8px 32px rgba(0,0,0,0.07);
+      padding: 28px; width: 100%;
+    }
+    .login-card-title { font-size: 1rem; font-weight: 700; color: #1c1c1e; margin-bottom: 22px; text-align: center; }
+    .login-field { display: flex; flex-direction: column; margin-bottom: 12px; }
+    .login-field label { font-size: 0.75rem; font-weight: 600; color: #6c6c70; text-transform: uppercase; margin-bottom: 6px; }
+    .login-field input {
+      padding: 12px 14px; border: 1.5px solid rgba(60,60,67,0.15); border-radius: 10px;
+      font-size: 1rem; background: #fafafa; outline: none; font-family: inherit;
+    }
+    .login-field input:focus { border-color: #007AFF; background: #fff; box-shadow: 0 0 0 3px rgba(0,122,255,0.12); }
+    .login-submit {
+      width: 100%; margin-top: 16px; padding: 13px;
+      background: #007AFF; color: #fff; border: none; border-radius: 999px;
+      font-size: 1rem; font-weight: 600; cursor: pointer; font-family: inherit;
+    }
+    .login-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+    .login-error { margin-top: 12px; font-size: 0.84rem; color: #ff3b30; text-align: center; min-height: 1.2em; }
+    .login-success { margin-top: 12px; font-size: 0.84rem; color: #34c759; text-align: center; min-height: 1.2em; }
+    .footer-links { text-align: center; margin-top: 14px; font-size: 0.84rem; color: #6c6c70; }
+    .footer-links a { color: #007AFF; text-decoration: none; font-weight: 500; }
+    .welcome-bonus {
+      background: linear-gradient(135deg, #34c759, #2dac4d); color: #fff;
+      padding: 14px 16px; border-radius: 12px; margin-bottom: 16px;
+      font-size: 0.88rem; text-align: center; font-weight: 500;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-brand">
+      <div class="login-logo">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/>
+        </svg>
+      </div>
+      <div>
+        <div class="login-brand-name">JEM ASR</div>
+        <div class="login-brand-sub" style="text-align:center">Yiddish Speech-to-Text</div>
+      </div>
+    </div>
+
+    <div class="login-card">
+      <div class="login-card-title">Create your account</div>
+      <div class="welcome-bonus">$0.05 free credit on signup — no card required</div>
+      <form id="signup-form">
+        <div class="login-field">
+          <label for="signup-email">Email</label>
+          <input type="email" id="signup-email" autocomplete="email" required placeholder="you@example.com" />
+        </div>
+        <div class="login-field">
+          <label for="signup-password">Password</label>
+          <input type="password" id="signup-password" autocomplete="new-password" required minlength="8" placeholder="At least 8 characters" />
+        </div>
+        <div class="login-field">
+          <label for="signup-name">Workspace name (optional)</label>
+          <input type="text" id="signup-name" placeholder="e.g. Acme Studio" />
+        </div>
+        <button type="submit" class="login-submit" id="signup-submit">Create Account</button>
+        <div class="login-error" id="signup-error"></div>
+        <div class="login-success" id="signup-success"></div>
+        <div class="footer-links">Already have an account? <a href="/login.html">Sign in</a></div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="/src/signup.js"></script>
+</body>
+</html>

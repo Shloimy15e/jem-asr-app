@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Billing — JEM ASR</title>
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f2f2f7;
+      margin: 0;
+      padding: 0;
+      color: #1c1c1e;
+    }
+    .billing-shell {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 32px 20px 80px;
+    }
+    .billing-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 28px;
+    }
+    .billing-header h1 {
+      margin: 0;
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -0.4px;
+    }
+    .billing-header a {
+      font-size: 0.9rem;
+      color: #007AFF;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .billing-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 720px) {
+      .billing-grid { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .card h2 {
+      margin: 0 0 16px;
+      font-size: 0.78rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #6c6c70;
+      font-weight: 600;
+    }
+    .balance-display {
+      font-size: 2.4rem;
+      font-weight: 700;
+      letter-spacing: -1px;
+      margin-bottom: 4px;
+      color: #007AFF;
+    }
+    .balance-sub {
+      font-size: 0.88rem;
+      color: #6c6c70;
+    }
+    .plan-display {
+      font-size: 1.2rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .plan-meter {
+      height: 8px;
+      background: #e5e5ea;
+      border-radius: 4px;
+      overflow: hidden;
+      margin: 8px 0;
+    }
+    .plan-meter-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #007AFF, #5e5ce6);
+      transition: width 0.3s ease;
+    }
+    .plan-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.84rem;
+      color: #6c6c70;
+    }
+    .pack-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .pack {
+      border: 1.5px solid #e5e5ea;
+      border-radius: 14px;
+      padding: 18px 14px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      background: #fafafa;
+    }
+    .pack:hover { border-color: #007AFF; background: #fff; transform: translateY(-2px); }
+    .pack.highlight { border-color: #007AFF; background: linear-gradient(180deg, #e8f1ff, #fff); }
+    .pack-name { font-weight: 700; font-size: 0.95rem; }
+    .pack-price { font-size: 1.4rem; font-weight: 700; margin: 6px 0; color: #007AFF; }
+    .pack-credit { font-size: 0.78rem; color: #6c6c70; }
+    .plan-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .plan {
+      border: 1.5px solid #e5e5ea;
+      border-radius: 14px;
+      padding: 20px 16px;
+      background: #fff;
+    }
+    .plan.current { border-color: #34c759; background: linear-gradient(180deg, #e8f9ed, #fff); }
+    .plan-name { font-weight: 700; font-size: 1.05rem; }
+    .plan-price { font-size: 1.6rem; font-weight: 700; margin: 8px 0; color: #1c1c1e; }
+    .plan-price .per { font-size: 0.78rem; font-weight: 500; color: #6c6c70; }
+    .plan-feature { font-size: 0.84rem; color: #3c3c43; margin: 4px 0; }
+    .btn {
+      display: inline-block;
+      padding: 10px 18px;
+      background: #007AFF;
+      color: #fff;
+      border-radius: 999px;
+      border: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      text-decoration: none;
+      transition: opacity 0.15s ease, transform 0.1s ease;
+    }
+    .btn:hover:not(:disabled) { opacity: 0.9; }
+    .btn:active:not(:disabled) { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary {
+      background: #e5e5ea;
+      color: #1c1c1e;
+    }
+    .btn-block { display: block; width: 100%; text-align: center; margin-top: 12px; }
+    table.usage {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+      font-size: 0.86rem;
+    }
+    table.usage th, table.usage td {
+      text-align: left;
+      padding: 10px 8px;
+      border-bottom: 1px solid #e5e5ea;
+    }
+    table.usage th {
+      font-size: 0.74rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #6c6c70;
+      font-weight: 600;
+    }
+    table.usage td.num { font-variant-numeric: tabular-nums; text-align: right; }
+    .alert {
+      padding: 12px 16px;
+      border-radius: 12px;
+      margin-bottom: 16px;
+      font-size: 0.9rem;
+    }
+    .alert-success { background: #e8f9ed; color: #1d7a35; }
+    .alert-error   { background: #fdecec; color: #b3261e; }
+    .alert-info    { background: #e8f1ff; color: #1d4ed8; }
+    .skeleton {
+      height: 1em;
+      background: linear-gradient(90deg, #f2f2f7 25%, #e5e5ea 50%, #f2f2f7 75%);
+      background-size: 200% 100%;
+      border-radius: 4px;
+      animation: shimmer 1.4s infinite;
+    }
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="billing-shell">
+    <div class="billing-header">
+      <h1>Billing &amp; Usage</h1>
+      <a href="/index.html">← Back to Workbench</a>
+    </div>
+
+    <div id="alert-zone"></div>
+
+    <div class="billing-grid">
+      <!-- Wallet card -->
+      <div class="card">
+        <h2>Credit Balance</h2>
+        <div class="balance-display" id="balance-display">$—.——</div>
+        <div class="balance-sub" id="balance-sub">Lifetime spent: —</div>
+      </div>
+
+      <!-- Subscription card -->
+      <div class="card">
+        <h2>Subscription</h2>
+        <div class="plan-display" id="plan-display">Loading…</div>
+        <div class="plan-meter"><div class="plan-meter-fill" id="plan-meter-fill" style="width: 0%"></div></div>
+        <div class="plan-meta">
+          <span id="plan-meta-used">— / — minutes</span>
+          <span id="plan-meta-renew"></span>
+        </div>
+        <button class="btn btn-secondary btn-block" id="manage-billing-btn" style="display:none;">Manage Subscription</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 16px;">
+      <h2>Top Up Credits</h2>
+      <div class="pack-grid" id="pack-grid"></div>
+    </div>
+
+    <div class="card" style="margin-top: 16px;">
+      <h2>Subscription Plans</h2>
+      <div class="plan-grid" id="plan-grid"></div>
+    </div>
+
+    <div class="card" style="margin-top: 16px;">
+      <h2>Recent Usage (last 30 days)</h2>
+      <table class="usage" id="usage-table">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Provider</th>
+            <th>Audio</th>
+            <th class="num">Cost</th>
+          </tr>
+        </thead>
+        <tbody id="usage-tbody">
+          <tr><td colspan="4">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script type="module" src="/src/billing.js"></script>
+</body>
+</html>

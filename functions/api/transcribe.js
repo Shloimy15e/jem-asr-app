@@ -2,11 +2,22 @@
 // POST /api/transcribe
 // Supports: gemini (Vertex AI service-account OR Gemini API key), mendel
 // Whisper uses /api/align directly with mode:'transcribe'
+//
+// Billing integration (April 2026):
+//   When the request includes a Bearer token, we resolve the caller's org,
+//   pre-flight against credits/subscription, run the provider, then meter the
+//   actual cost via finalizeUsage. Anonymous (no-bearer) requests still work
+//   for internal staff flows that already enforce auth elsewhere.
+
+import {
+  getCallerUser, getCallerOrg, preflight, startUsage, finalizeUsage, failUsage,
+  sbFetch,
+} from './billing/_lib.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
 function arrayBufferToBase64(buffer) {
@@ -175,10 +186,31 @@ function extractGeminiText(data) {
   return text.trim();
 }
 
+// Pull token usage out of a Gemini response. Both Vertex AI and the public API
+// return usageMetadata; field names differ slightly between SDK versions so we
+// accept the union.
+function extractGeminiUsage(data) {
+  const u = data?.usageMetadata || data?.usage_metadata || {};
+  return {
+    input_tokens:  u.promptTokenCount ?? u.prompt_token_count ?? null,
+    output_tokens: u.candidatesTokenCount ?? u.candidates_token_count ?? null,
+    audio_tokens:  u.audioTokenCount ?? u.audio_token_count ?? null,
+  };
+}
+
 /**
  * Gemini via Vertex AI endpoint (service account auth).
  * Used for fine-tuned models deployed on GCP Vertex AI.
  */
+// Estimate audio duration from base64 size as a rough fallback when the
+// caller doesn't pass it. ~16 kbps for 16-bit/16k mono PCM, ~32 kbps for
+// MP3/AAC. We use 32 kbps as a conservative middle estimate.
+function estimateAudioSeconds(base64Len, format) {
+  const bytes = (base64Len * 3) / 4;
+  const kbps = (format === '.wav') ? 256 : 32;
+  return Math.max(1, Math.round(bytes / ((kbps * 1024) / 8)));
+}
+
 async function handleGeminiVertex(audio, payload, saJson) {
   const { gemini_project_id, gemini_region, gemini_endpoint_id } = payload;
   if (!gemini_endpoint_id) throw { status: 500, message: 'Missing gemini_endpoint_id — set it in ASR Settings' };
@@ -205,7 +237,7 @@ async function handleGeminiVertex(audio, payload, saJson) {
   if (!resp.ok) {
     throw { status: resp.status, message: data.error?.message || `Vertex AI error ${resp.status}` };
   }
-  return extractGeminiText(data);
+  return { text: extractGeminiText(data), usage: extractGeminiUsage(data) };
 }
 
 /**
@@ -231,16 +263,16 @@ async function handleGeminiApiKey(audio, payload) {
   if (!resp.ok) {
     throw { status: resp.status, message: data.error?.message || `Gemini API error ${resp.status}` };
   }
-  return extractGeminiText(data);
+  return { text: extractGeminiText(data), usage: extractGeminiUsage(data) };
 }
 
 async function handleGemini(audio, payload, env) {
   // Secrets come from Cloudflare Worker env, never from the request payload
   if (env.GEMINI_SA_JSON) {
-    return handleGeminiVertex(audio, payload, env.GEMINI_SA_JSON);
+    return { ...(await handleGeminiVertex(audio, payload, env.GEMINI_SA_JSON)), provider: 'gemini-vertex' };
   }
   if (env.GEMINI_API_KEY) {
-    return handleGeminiApiKey(audio, { ...payload, gemini_api_key: env.GEMINI_API_KEY });
+    return { ...(await handleGeminiApiKey(audio, { ...payload, gemini_api_key: env.GEMINI_API_KEY })), provider: 'gemini' };
   }
   throw { status: 500, message: 'Gemini credentials not configured — set GEMINI_SA_JSON (or GEMINI_API_KEY) as a Cloudflare Worker secret' };
 }
@@ -293,10 +325,28 @@ async function handleMendel(audio, payload, env) {
   if (typeof text !== 'string') {
     throw { status: 502, message: 'Unexpected Mendel response: ' + JSON.stringify(data).slice(0, 300) };
   }
-  return text.trim();
+  return { text: text.trim(), usage: { audio_seconds: data?.duration || null, request_count: 1 } };
+}
+
+// ── Optional billing wrapper (only fires when caller is authed) ──────────
+
+async function tryResolveBillingContext(request, env, payload) {
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_KEY) return null;
+  const auth = request.headers.get('authorization');
+  if (!auth) return null;  // unauthed flow — staff/internal usage, no metering
+
+  const { userId, email, accessToken } = await getCallerUser(request, env);
+  const orgId = await getCallerOrg(env, accessToken, payload.org_id || null);
+  const orgs = await sbFetch(env, `organizations?id=eq.${orgId}&select=default_markup_pct`);
+  const markupPct = Number(orgs?.[0]?.default_markup_pct ?? 30);
+  return { userId, email, accessToken, orgId, markupPct };
 }
 
 export async function onRequestPost(context) {
+  let billing = null;
+  let usageId = null;
+  let providerUsage = null;
+
   try {
     const payload = await context.request.json();
     const { provider } = payload;
@@ -304,22 +354,66 @@ export async function onRequestPost(context) {
 
     if (!provider) return errorResponse(400, 'Missing provider');
 
-    const audio = await resolveAudio(payload, env);
+    // Optional billing context — only present when caller is authed
+    billing = await tryResolveBillingContext(context.request, env, payload).catch(err => {
+      // If auth header was passed but invalid, surface the 401
+      throw err;
+    });
 
-    let text;
+    const audio = await resolveAudio(payload, env);
+    const audioSeconds = payload.audio_duration_seconds || estimateAudioSeconds(audio.base64.length, audio.format);
+
+    if (billing) {
+      const pre = await preflight(env, billing.orgId, audioSeconds);
+      if (!pre.allowed) {
+        return errorResponse(402, 'Insufficient credits or no active subscription. Top up at /billing.html', { balance_micro_usd: pre.balance_micro_usd });
+      }
+      usageId = await startUsage(env, {
+        orgId: billing.orgId,
+        userId: billing.userId,
+        audioId: payload.audio_id || null,
+        provider,
+        modelId: payload.gemini_model_id || payload.mendel_model || null,
+        audioSeconds,
+      });
+      billing.chargeTo = pre.charge_to;
+    }
+
+    let result;
     if (provider === 'gemini') {
-      text = await handleGemini(audio, payload, env);
+      result = await handleGemini(audio, payload, env);
     } else if (provider === 'mendel') {
-      text = await handleMendel(audio, payload, env);
+      result = await handleMendel(audio, payload, env);
+      result.provider = 'mendel';
     } else {
       return errorResponse(400, `Unknown provider: ${provider}. Use gemini or mendel.`);
     }
 
-    return new Response(JSON.stringify({ text }), {
+    if (billing && usageId) {
+      providerUsage = {
+        provider: result.provider || provider,
+        model_id: payload.gemini_model_id || payload.mendel_model || null,
+        audio_seconds: audioSeconds,
+        request_count: 1,
+        ...(result.usage || {}),
+      };
+      await finalizeUsage(env, {
+        orgId: billing.orgId,
+        usageId,
+        providerUsage,
+        markupPct: billing.markupPct,
+        chargeTo: billing.chargeTo,
+      }).catch(err => console.error('[billing] finalize failed:', err));
+    }
+
+    return new Response(JSON.stringify({ text: result.text, usage_id: usageId || undefined }), {
       status: 200,
       headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
     });
   } catch (err) {
+    if (usageId) {
+      await failUsage(context.env, usageId, err.message || String(err));
+    }
     const status = (typeof err.status === 'number') ? err.status : 502;
     const message = err.message || 'Transcription failed';
     return errorResponse(status, message);
