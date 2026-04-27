@@ -978,12 +978,17 @@ label, .login-field label, .asr-form-label, .asr-config-label {
   font-size: 12.5px;
 }
 
+/* Important: legacy style.css sets `position: sticky; top: 0; z-index:50`
+ * on .data-table th, which overlaps the new sticky topbar. Explicitly
+ * cancel that here so the column header scrolls naturally with the
+ * table — that's the user's "still stuck" complaint. */
+.data-table th,
 .data-table thead th,
 .admin-table thead th,
 .benchmark-table thead th {
-  position: sticky;
-  top: var(--topbar-height);
-  z-index: 10;
+  position: static !important;
+  top: auto !important;
+  z-index: auto !important;
   background: var(--surface-2);
   border-bottom: 1px solid var(--border);
   padding: 10px 12px;
@@ -994,6 +999,16 @@ label, .login-field label, .asr-form-label, .asr-config-label {
   letter-spacing: 0.04em;
   color: var(--text-tertiary);
   white-space: nowrap;
+}
+
+/* Sticky-left Actions column needs to keep its sticky behavior (it sticks
+ * horizontally on table scroll), so we re-enable position:sticky for that
+ * specific cell. */
+.data-table th.cell-actions,
+.data-table td.cell-actions {
+  position: sticky !important;
+  inset-inline-start: 0;
+  z-index: 5;
 }
 
 .data-table tbody td,
