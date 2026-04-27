@@ -1730,6 +1730,38 @@ function updateTable() {
       : `${rows.length} of ${totalAudio} files`;
   }
 
+  // Empty state — when no rows after filters, show a friendly panel
+  // instead of an empty table.
+  if (rows.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.innerHTML = `
+      <span class="empty-state__icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" width="22" height="22"
+             aria-hidden="true">
+          <circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>
+        </svg>
+      </span>
+      <div class="empty-state__title">No files match your filters</div>
+      <div class="empty-state__detail">Try clearing one of the active filters
+        or use the Search box at the top of the page.</div>`;
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'action-btn action-btn-primary';
+    reset.style.marginTop = '12px';
+    reset.textContent = 'Reset filters';
+    reset.addEventListener('click', () => {
+      document.getElementById('btn-reset-filters')?.click();
+    });
+    empty.appendChild(reset);
+    _container.appendChild(empty);
+    // Apply faceted counts even when empty (so user can see other options
+    // would have results).
+    applyFacetCountsToStatusFilter(computeStatusFacets());
+    return;
+  }
+
   // Build and append table
   const table = buildTable(rows);
   _container.appendChild(table);
