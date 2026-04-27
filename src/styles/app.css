@@ -1385,7 +1385,42 @@ kbd {
   padding: 0 10px;
   font-size: 12px;
 }
-.bulk-action-bar .btn:hover { background: rgba(255,255,255,.18); }
+.bulk-action-bar .btn:hover,
+.bulk-action-bar .action-btn:hover { background: rgba(255,255,255,.18); }
+.bulk-action-bar .action-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.bulk-action-bar .action-btn-primary:hover {
+  background: var(--accent-strong, #0052cc);
+}
+.bulk-action-bar .action-btn-danger {
+  background: rgba(255, 70, 80, 0.18);
+  border-color: rgba(255, 70, 80, 0.36);
+  color: #ffd3d3;
+}
+.bulk-action-bar .action-btn-danger:hover {
+  background: rgba(255, 70, 80, 0.32);
+  color: #fff;
+}
+.bulk-action-bar .bulk-count {
+  font-weight: 600;
+  font-size: 12px;
+  padding-inline-end: 6px;
+  border-inline-end: 1px solid rgba(255,255,255,.2);
+  margin-inline-end: 2px;
+}
+.bulk-action-bar .action-btn svg { color: currentColor; }
+@media (max-width: 720px) {
+  .bulk-action-bar {
+    flex-wrap: wrap;
+    border-radius: 14px;
+    padding: 6px 10px;
+    gap: 6px;
+    justify-content: center;
+  }
+  .bulk-action-bar .action-btn { padding: 0 8px; }
+}
 
 /* =================================================================
    17. Responsive niceties

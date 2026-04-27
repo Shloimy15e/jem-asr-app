@@ -1813,9 +1813,86 @@ function buildBulkBar() {
   });
   bar.appendChild(cleanBtn);
 
-  // Clear selection
+  // ── New bulk actions (favorites / copy / open / export) ───────
+  const favBtn = document.createElement('button');
+  favBtn.className = 'action-btn';
+  favBtn.title = 'Toggle favorite on every selected row';
+  favBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>Favorite';
+  favBtn.addEventListener('click', () => {
+    const state = getState();
+    const favs = { ...(state.favorites || {}) };
+    // If majority of selection isn't favorited, add; otherwise remove
+    const ids = [...selectedIds];
+    const favCount = ids.filter(id => favs[id]).length;
+    const adding = favCount < ids.length / 2;
+    for (const id of ids) {
+      if (adding) favs[id] = true; else delete favs[id];
+    }
+    updateState('favorites', null, favs);
+    updateTable();
+    if (window.__jemToast) {
+      window.__jemToast.success((adding ? 'Added ' : 'Removed ') + ids.length + ' file' + (ids.length === 1 ? '' : 's') + (adding ? ' to' : ' from') + ' favorites');
+    }
+  });
+  bar.appendChild(favBtn);
+
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'action-btn';
+  copyBtn.title = 'Copy selected IDs to clipboard (newline-separated)';
+  copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy IDs';
+  copyBtn.addEventListener('click', () => {
+    const ids = [...selectedIds];
+    const text = ids.join('\n');
+    (navigator.clipboard?.writeText(text) || Promise.reject()).then(
+      () => window.__jemToast?.success('Copied ' + ids.length + ' ID' + (ids.length === 1 ? '' : 's')),
+      () => window.__jemToast?.error('Copy failed')
+    );
+  });
+  bar.appendChild(copyBtn);
+
+  const openBtn = document.createElement('button');
+  openBtn.className = 'action-btn';
+  openBtn.title = 'Open every selected file in a new tab';
+  openBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open all';
+  openBtn.addEventListener('click', () => {
+    const ids = [...selectedIds];
+    if (ids.length > 10) {
+      if (!confirm('Open ' + ids.length + ' new tabs? Your browser may block some.')) return;
+    }
+    for (const id of ids) {
+      window.open('/detail.html?id=' + encodeURIComponent(id), '_blank', 'noopener');
+    }
+  });
+  bar.appendChild(openBtn);
+
+  const exportBtn = document.createElement('button');
+  exportBtn.className = 'action-btn';
+  exportBtn.title = 'Export only the selected rows as CSV';
+  exportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export';
+  exportBtn.addEventListener('click', async () => {
+    try {
+      const { exportCSV } = await import('./utils.js');
+      const state = getState();
+      const ids = new Set(selectedIds);
+      const rows = (state.audio || [])
+        .filter(a => ids.has(a.id))
+        .map(getRowData);
+      exportCSV(rows, getVisibleColumns().filter(c => !['checkbox', 'actions'].includes(c.key)));
+      window.__jemToast?.success('Exported ' + rows.length + ' row' + (rows.length === 1 ? '' : 's'));
+    } catch (err) {
+      window.__jemToast?.error('Export failed: ' + (err?.message || err));
+    }
+  });
+  bar.appendChild(exportBtn);
+
+  // ── Spacer + Clear (right-aligned) ─────────────────────────────
+  const spacer = document.createElement('span');
+  spacer.style.flex = '1';
+  bar.appendChild(spacer);
+
   const clearBtn = document.createElement('button');
   clearBtn.className = 'action-btn';
+  clearBtn.title = 'Deselect all (Esc)';
   clearBtn.textContent = 'Clear';
   clearBtn.addEventListener('click', () => {
     selectedIds.clear();
