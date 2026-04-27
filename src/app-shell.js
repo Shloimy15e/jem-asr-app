@@ -5,7 +5,7 @@
 //
 // Pages do not need to know about layout-shell or icons directly.
 import { icons, iconEl } from './icons.js';
-import { mountDrawerToggle, setDrawerContent, buildDrawerSections } from './layout-shell.js';
+import { mountDrawerToggle, setShellSections } from './layout-shell.js';
 
 const NAV = [
   { label: 'Audio',         icon: 'audio',    href: '/index.html',         match: ['/', '/index.html'] },
@@ -83,7 +83,7 @@ function buildContextualNav() {
     });
   }
 
-  return buildDrawerSections(sections);
+  return sections;
 }
 
 // Map of toolbar button id → icon name
@@ -130,6 +130,11 @@ function mountSkipLink() {
   document.body.insertBefore(link, document.body.firstChild);
 }
 
+function refreshShell() {
+  setShellSections(buildContextualNav());
+  decorateToolbarButtons();
+}
+
 let _initialised = false;
 export function initAppShell() {
   if (_initialised) return;
@@ -138,16 +143,12 @@ export function initAppShell() {
   const header = document.querySelector('.app-header');
   if (!header) return;
   mountDrawerToggle(header, 'Open navigation');
-  setDrawerContent(buildContextualNav());
-  decorateToolbarButtons();
+  refreshShell();
 
   // If admin button becomes visible later (after auth), refresh nav
   const adminBtn = document.getElementById('btn-admin');
   if (adminBtn) {
-    const obs = new MutationObserver(() => {
-      setDrawerContent(buildContextualNav());
-      decorateToolbarButtons();
-    });
+    const obs = new MutationObserver(() => refreshShell());
     obs.observe(adminBtn, { attributes: true, attributeFilter: ['style', 'class'] });
   }
 }

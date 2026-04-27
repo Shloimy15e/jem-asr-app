@@ -1,11 +1,12 @@
-// Tiny layout shell helpers: a single contextual side drawer + topbar
-// drawer-toggle button. Lazy-mounts on first call. Pages call:
+// Layout shell helpers:
+//   • Persistent left RAIL on desktop (>= 1024px), with brand + nav + user
+//   • Slide-in DRAWER on mobile/tablet (< 1024px), opened via a hamburger
+//   • Both share the same content tree from buildDrawerSections()
 //
-//   import { mountDrawerToggle, openDrawer, setDrawerContent } from './layout-shell.js';
-//   mountDrawerToggle(headerEl, 'Filters');
-//   setDrawerContent(buildFiltersPanel());
-//
-// The drawer body accepts arbitrary DOM nodes — pages own the contents.
+// Pages call:
+//   import { mountDrawerToggle, setDrawerContent } from './layout-shell.js';
+//   mountDrawerToggle(headerEl, 'Open menu');
+//   setDrawerContent(buildDrawerSections([...]));
 
 import { icons } from './icons.js';
 
@@ -13,6 +14,8 @@ let _drawer = null;
 let _backdrop = null;
 let _toggleBtn = null;
 let _contentSlot = null;
+let _rail = null;
+let _railContent = null;
 
 function ensureDrawer() {
   if (_drawer) return;
@@ -38,6 +41,126 @@ function ensureDrawer() {
   });
 }
 
+function ensureRail() {
+  if (_rail) return;
+  _rail = document.createElement('aside');
+  _rail.className = 'app-rail';
+  _railContent = document.createElement('div');
+  _railContent.style.cssText = 'display:flex;flex-direction:column;height:100%;gap:0;';
+  _rail.appendChild(_railContent);
+  // Insert as the first body child so the CSS grid puts it in `rail` area
+  document.body.insertBefore(_rail, document.body.firstChild);
+}
+
+function buildBrandHeader() {
+  const wrap = document.createElement('a');
+  wrap.className = 'app-rail__brand';
+  wrap.href = '/';
+  wrap.style.textDecoration = 'none';
+  wrap.style.color = 'inherit';
+  const mark = document.createElement('span');
+  mark.className = 'app-rail__brand-mark';
+  mark.innerHTML = `<svg viewBox='0 0 24 24' fill='currentColor' aria-hidden='true'>
+    <rect x='3' y='10' width='2.4' height='4' rx='1.2'/>
+    <rect x='7' y='7'  width='2.4' height='10' rx='1.2'/>
+    <rect x='11' y='4' width='2.4' height='16' rx='1.2'/>
+    <rect x='15' y='7' width='2.4' height='10' rx='1.2'/>
+    <rect x='19' y='10' width='2.4' height='4' rx='1.2'/>
+  </svg>`;
+  const text = document.createElement('span');
+  text.textContent = 'JEM ASR';
+  wrap.append(mark, text);
+  return wrap;
+}
+
+function getUserDisplay() {
+  // Best-effort lookup from common globals / DOM hints
+  let email = null;
+  try {
+    const ls = JSON.parse(localStorage.getItem('jem-asr-current-user') || 'null');
+    if (ls && ls.email) email = ls.email;
+  } catch (_) {}
+  if (!email) {
+    const m = document.querySelector('[data-user-email]');
+    if (m) email = m.getAttribute('data-user-email');
+  }
+  if (!email) email = '';
+  const initials = email
+    ? email.replace(/@.*/, '').split(/[._-]/).filter(Boolean)
+        .slice(0, 2).map(s => s[0].toUpperCase()).join('') || email[0].toUpperCase()
+    : '?';
+  return { email, initials };
+}
+
+function buildUserCard() {
+  const card = document.createElement('div');
+  card.className = 'app-rail__user';
+  const { email, initials } = getUserDisplay();
+  const av = document.createElement('div');
+  av.className = 'app-rail__avatar';
+  av.textContent = initials;
+  const meta = document.createElement('div');
+  meta.className = 'app-rail__user-meta';
+  const name = document.createElement('div');
+  name.className = 'app-rail__user-name';
+  name.textContent = email || 'Signed in';
+  const role = document.createElement('div');
+  role.className = 'app-rail__user-role';
+  role.textContent = 'Workbench user';
+  meta.append(name, role);
+  card.append(av, meta);
+  return card;
+}
+
+function renderRailFromSections(sections) {
+  ensureRail();
+  _railContent.innerHTML = '';
+  _railContent.appendChild(buildBrandHeader());
+  for (const sec of sections) {
+    const block = document.createElement('div');
+    block.className = 'app-rail__section';
+    if (sec.heading) {
+      const h = document.createElement('div');
+      h.className = 'app-rail__heading';
+      h.textContent = sec.heading;
+      block.appendChild(h);
+    }
+    for (const item of (sec.items || [])) {
+      let el;
+      if (item.href) {
+        el = document.createElement('a');
+        el.href = item.href;
+      } else {
+        el = document.createElement('button');
+        el.type = 'button';
+      }
+      el.className = 'app-rail__link';
+      if (item.active) el.classList.add('is-active');
+      if (item.icon && icons[item.icon]) {
+        const i = document.createElement('span');
+        i.style.display = 'inline-flex';
+        i.innerHTML = icons[item.icon]();
+        el.appendChild(i);
+      }
+      const txt = document.createElement('span');
+      txt.textContent = item.label;
+      el.appendChild(txt);
+      if (item.onClick) {
+        el.addEventListener('click', (e) => {
+          const r = item.onClick(e);
+          if (r === false) e.preventDefault();
+        });
+      }
+      block.appendChild(el);
+    }
+    _railContent.appendChild(block);
+  }
+  const spacer = document.createElement('div');
+  spacer.className = 'app-rail__spacer';
+  _railContent.appendChild(spacer);
+  _railContent.appendChild(buildUserCard());
+}
+
 export function setDrawerContent(node) {
   ensureDrawer();
   _contentSlot.innerHTML = '';
@@ -46,6 +169,15 @@ export function setDrawerContent(node) {
   } else if (node instanceof Node) {
     _contentSlot.appendChild(node);
   }
+}
+
+// New: set the same content tree on BOTH the rail (desktop) and drawer
+// (mobile). Pages should prefer this over setDrawerContent.
+export function setShellSections(sections) {
+  // Drawer
+  setDrawerContent(buildDrawerSections(sections));
+  // Rail (desktop)
+  renderRailFromSections(sections);
 }
 
 export function openDrawer() {
