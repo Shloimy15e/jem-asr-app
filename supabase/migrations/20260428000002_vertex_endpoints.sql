@@ -72,7 +72,7 @@ VALUES
   ('Jem 1 V1 — ckpt 1 (early)',   'jem-chabad', 'us-central1', '1597423819146919936', 'gemini-2.5-pro', '8638531751817248768', 'v1', 1,  FALSE, 'Earliest V1 checkpoint'),
   -- V2: tuned on top of V1 ckpt 9 (tuning job 8161620782292664320)
   ('Jem 1 V2 — final (ckpt 9)',   'jem-chabad', 'us-central1', '5055062433060618240', 'gemini-2.5-pro', '8161620782292664320', 'v2', 9,  TRUE,  'V2 final — best Yiddish performance (default)'),
-  ('Jem 1 V2 — ckpt 8',           'jem-chabad', 'us-central1', '7387844026910638080', 'gemini-2.5-pro', '8161620782292664320', 'v2', 8,  FALSE, NULL),
+  ('Jem 1 V2 — ckpt 8',           'jem-chabad', 'us-central1', '738784402691063808',  'gemini-2.5-pro', '8161620782292664320', 'v2', 8,  FALSE, NULL),
   ('Jem 1 V2 — ckpt 7',           'jem-chabad', 'us-central1', '2102952877319258112', 'gemini-2.5-pro', '8161620782292664320', 'v2', 7,  FALSE, NULL),
   ('Jem 1 V2 — ckpt 6',           'jem-chabad', 'us-central1', '5908916774912393216', 'gemini-2.5-pro', '8161620782292664320', 'v2', 6,  FALSE, NULL),
   ('Jem 1 V2 — ckpt 5',           'jem-chabad', 'us-central1', '4647908879248654336', 'gemini-2.5-pro', '8161620782292664320', 'v2', 5,  FALSE, NULL),
