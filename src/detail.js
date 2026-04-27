@@ -327,6 +327,59 @@ function renderDetailPage(audioId, audio, state, container) {
     if (e.key === 'Enter') { e.preventDefault(); title.blur(); }
   });
   titleBar.appendChild(title);
+
+  // Prev / Next sibling navigation (J / K keyboard) — uses the natural
+  // order of state.audio so users can sweep through the library without
+  // bouncing to the table page.
+  const navWrap = document.createElement('span');
+  navWrap.className = 'detail-prevnext';
+  const allIds = (state.audio || []).map(a => a.id);
+  const idx = allIds.indexOf(audioId);
+  const prevId = idx > 0 ? allIds[idx - 1] : null;
+  const nextId = idx >= 0 && idx < allIds.length - 1 ? allIds[idx + 1] : null;
+  function goTo(id) {
+    if (!id) return;
+    window.location.href = `/detail.html?id=${encodeURIComponent(id)}`;
+  }
+  const prevBtn = document.createElement('button');
+  prevBtn.type = 'button';
+  prevBtn.className = 'detail-prevnext__btn';
+  prevBtn.disabled = !prevId;
+  prevBtn.title = prevId ? `Previous: ${(state.audio.find(a=>a.id===prevId)||{}).name || prevId} (K)` : 'No previous file';
+  prevBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>';
+  prevBtn.addEventListener('click', () => goTo(prevId));
+  const counter = document.createElement('span');
+  counter.className = 'detail-prevnext__counter';
+  counter.textContent = idx >= 0 ? `${idx + 1} / ${allIds.length}` : '';
+  const nextBtn = document.createElement('button');
+  nextBtn.type = 'button';
+  nextBtn.className = 'detail-prevnext__btn';
+  nextBtn.disabled = !nextId;
+  nextBtn.title = nextId ? `Next: ${(state.audio.find(a=>a.id===nextId)||{}).name || nextId} (J)` : 'No next file';
+  nextBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+  nextBtn.addEventListener('click', () => goTo(nextId));
+  navWrap.appendChild(prevBtn);
+  navWrap.appendChild(counter);
+  navWrap.appendChild(nextBtn);
+  titleBar.appendChild(navWrap);
+
+  // J / K keyboard shortcuts (only when not typing in an editor)
+  if (!window._detailPrevNextWired) {
+    window._detailPrevNextWired = true;
+    document.addEventListener('keydown', (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (t && (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) return;
+      if (e.key === 'j' || e.key === 'J') {
+        const btn = document.querySelector('.detail-prevnext__btn:nth-child(3)');
+        if (btn && !btn.disabled) { e.preventDefault(); btn.click(); }
+      } else if (e.key === 'k' || e.key === 'K') {
+        const btn = document.querySelector('.detail-prevnext__btn:nth-child(1)');
+        if (btn && !btn.disabled) { e.preventDefault(); btn.click(); }
+      }
+    });
+  }
+
   // Pipeline progress indicator
   titleBar.appendChild(renderDetailPipeline(audioId));
   // Save indicator chip (right-aligned)

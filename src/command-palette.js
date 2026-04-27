@@ -274,6 +274,9 @@ const CHEATS = [
   { keys: ['↵'],                 label: 'Select / confirm' },
   { keys: ['⌘', 'S'],            label: 'Force-save (detail editor)' },
   { keys: ['Space'],             label: 'Play / pause audio (detail page)' },
+  { keys: ['J'],                 label: 'Next file (detail page)' },
+  { keys: ['K'],                 label: 'Previous file (detail page)' },
+  { keys: ['→', 'Enter'],        label: 'Open highlighted row in new tab (table)' },
 ];
 
 let _sheet = null;

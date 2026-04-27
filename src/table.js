@@ -484,6 +484,85 @@ function renderSavedViewsBar() {
   }
 }
 
+// ── Active filter chips strip ──────────────────────────────────────
+// Renders a row of small chips just above the data table summarising
+// every active filter. Each chip has an × to remove just that filter.
+// Visible only when at least one filter is active.
+let _filterChipsEl = null;
+function ensureFilterChipsHost() {
+  if (_filterChipsEl && document.body.contains(_filterChipsEl)) return;
+  const anchor = _container;
+  if (!anchor || !anchor.parentElement) return;
+  _filterChipsEl = document.createElement('div');
+  _filterChipsEl.className = 'filter-chips';
+  anchor.parentElement.insertBefore(_filterChipsEl, anchor);
+}
+function clearStatus()      { statusFilter = []; }
+function clearConfidence()  { filterConfidence = ''; }
+function clearFifty()       { fiftyFilter = ''; }
+function clearFavorites()   { favoritesFilter = ''; }
+function clearYear()        { filterYear = ''; }
+function clearMonth()       { filterMonth = ''; }
+function clearType()        { filterType = ''; }
+function clearSearch()      { searchTerm = ''; }
+function syncControlsAndUpdate() {
+  // Reuse applyView's UI sync by snapshotting current state.
+  applyView({ id: '_internal', label: '', state: snapshotCurrentState() });
+}
+function renderFilterChips() {
+  ensureFilterChipsHost();
+  if (!_filterChipsEl) return;
+  _filterChipsEl.innerHTML = '';
+
+  const chips = [];
+  for (const s of statusFilter) {
+    chips.push({ label: 'Status: ' + s.charAt(0).toUpperCase() + s.slice(1),
+      onClear: () => { statusFilter = statusFilter.filter(v => v !== s); syncControlsAndUpdate(); } });
+  }
+  if (filterConfidence) chips.push({ label: 'Confidence: ' + filterConfidence, onClear: () => { clearConfidence(); syncControlsAndUpdate(); } });
+  if (fiftyFilter)      chips.push({ label: '50hr: ' + fiftyFilter,            onClear: () => { clearFifty();      syncControlsAndUpdate(); } });
+  if (favoritesFilter)  chips.push({ label: 'Favorites only',                  onClear: () => { clearFavorites();  syncControlsAndUpdate(); } });
+  if (filterYear)       chips.push({ label: 'Year: ' + filterYear,             onClear: () => { clearYear();       syncControlsAndUpdate(); } });
+  if (filterMonth)      chips.push({ label: 'Month: ' + filterMonth,           onClear: () => { clearMonth();      syncControlsAndUpdate(); } });
+  if (filterType)       chips.push({ label: 'Type: ' + filterType,             onClear: () => { clearType();       syncControlsAndUpdate(); } });
+  if (searchTerm)       chips.push({ label: '"' + searchTerm + '"',            onClear: () => { clearSearch();     syncControlsAndUpdate(); } });
+
+  if (chips.length === 0) {
+    _filterChipsEl.style.display = 'none';
+    return;
+  }
+  _filterChipsEl.style.display = '';
+
+  const lead = document.createElement('span');
+  lead.className = 'filter-chips__lead';
+  lead.textContent = 'Filters:';
+  _filterChipsEl.appendChild(lead);
+
+  for (const c of chips) {
+    const chip = document.createElement('span');
+    chip.className = 'filter-chip';
+    const txt = document.createElement('span');
+    txt.textContent = c.label;
+    chip.appendChild(txt);
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'filter-chip__x';
+    x.setAttribute('aria-label', 'Remove filter ' + c.label);
+    x.textContent = '×';
+    x.addEventListener('click', c.onClear);
+    chip.appendChild(x);
+    _filterChipsEl.appendChild(chip);
+  }
+  if (chips.length > 1) {
+    const all = document.createElement('button');
+    all.type = 'button';
+    all.className = 'filter-chip filter-chip--clear-all';
+    all.textContent = 'Clear all';
+    all.addEventListener('click', () => document.getElementById('btn-reset-filters')?.click());
+    _filterChipsEl.appendChild(all);
+  }
+}
+
 // ── Faceted counts: compute audios per status (ignoring the status
 // filter itself) so checkbox labels can show "Mapped (247)". Considers
 // active 50hr / fav / search / year / month / type filters so counts
@@ -2043,6 +2122,8 @@ function updateTable() {
     // Apply faceted counts even when empty (so user can see other options
     // would have results).
     applyFacetCountsToStatusFilter(computeStatusFacets());
+    renderSavedViewsBar();
+    renderFilterChips();
     return;
   }
 
@@ -2066,6 +2147,8 @@ function updateTable() {
   applyFacetCountsToStatusFilter(computeStatusFacets());
   // Refresh which saved view (if any) matches the current state
   renderSavedViewsBar();
+  // Active filter chips above the table
+  renderFilterChips();
 }
 
 export { renderTable, updateTable, getSelectedRows };

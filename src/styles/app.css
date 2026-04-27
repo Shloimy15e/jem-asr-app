@@ -1811,6 +1811,68 @@ kbd {
 }
 
 /* =================================================================
+   22c. Active filter chips (above the table)
+   ================================================================= */
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: var(--sp-3) var(--sp-4) 0;
+  font-size: 12px;
+}
+.filter-chips__lead {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-inline-end: 4px;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 4px 0 10px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border: 1px solid var(--accent-dim-strong);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.filter-chip__x {
+  background: transparent;
+  border: 0;
+  width: 18px; height: 18px;
+  line-height: 1;
+  font-size: 14px;
+  color: inherit;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-grid;
+  place-items: center;
+  opacity: 0.7;
+}
+.filter-chip__x:hover {
+  background: rgba(0, 102, 255, .15);
+  opacity: 1;
+}
+.filter-chip--clear-all {
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0 10px;
+}
+.filter-chip--clear-all:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--text-tertiary);
+}
+
+/* =================================================================
    22b. Row context menu (right-click on table rows)
    ================================================================= */
 .ctx-menu {
@@ -1863,6 +1925,46 @@ kbd {
   height: 1px;
   background: var(--border);
   margin: 4px 4px;
+}
+
+/* =================================================================
+   25. Detail page Prev/Next navigation
+   ================================================================= */
+.detail-prevnext {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: var(--sp-3);
+  padding: 0 6px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.detail-prevnext__btn {
+  width: 28px; height: 28px;
+  display: inline-grid;
+  place-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.detail-prevnext__btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--border);
+}
+.detail-prevnext__btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.detail-prevnext__counter {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  min-width: 60px;
+  text-align: center;
 }
 
 /* =================================================================
