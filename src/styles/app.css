@@ -873,9 +873,6 @@ label, .login-field label, .asr-form-label, .asr-config-label {
   padding: var(--sp-3) var(--sp-4);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: var(--topbar-height);
-  z-index: 40;
 }
 .filter-bar[aria-expanded="true"],
 .filter-bar.is-open { display: flex; }
@@ -908,9 +905,6 @@ label, .login-field label, .asr-form-label, .asr-config-label {
   padding: 0 var(--sp-4);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: var(--topbar-height);
-  z-index: 41;
 }
 .tab-btn {
   position: relative;
@@ -935,11 +929,7 @@ label, .login-field label, .asr-form-label, .asr-config-label {
   border-radius: 999px;
 }
 
-/* When tab-bar is present, stick filter-bar below it */
-.tab-bar + #btn-filter-toggle + .filter-bar,
-.tab-bar ~ .filter-bar {
-  top: calc(var(--topbar-height) + 41px);
-}
+
 
 /* =================================================================
    9. Cards / panels
@@ -1004,7 +994,7 @@ label, .login-field label, .asr-form-label, .asr-config-label {
 .admin-table thead th,
 .benchmark-table thead th {
   position: sticky;
-  top: calc(var(--topbar-height) + 41px);
+  top: var(--topbar-height);
   z-index: 10;
   background: var(--surface-2);
   border-bottom: 1px solid var(--border);
