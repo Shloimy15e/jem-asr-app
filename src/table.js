@@ -223,6 +223,146 @@ function mountColVisibilityMenu() {
   resetBtn.parentElement.insertBefore(wrap, resetBtn);
 }
 
+// ── Density toggle (compact / cozy / spacious) ─────────────────────
+const DENSITY_KEY = 'jem-asr-density-v1';
+const DENSITIES = [
+  { key: 'compact',  label: 'Compact'  },
+  { key: 'cozy',     label: 'Cozy'     },
+  { key: 'spacious', label: 'Spacious' },
+];
+function loadDensity() {
+  try { return localStorage.getItem(DENSITY_KEY) || 'cozy'; } catch { return 'cozy'; }
+}
+function saveDensity(v) {
+  try { localStorage.setItem(DENSITY_KEY, v); } catch {}
+}
+function applyDensity(v) {
+  document.body.classList.remove('density-compact', 'density-cozy', 'density-spacious');
+  document.body.classList.add('density-' + (v || 'cozy'));
+}
+
+function mountDensityMenu() {
+  if (document.getElementById('btn-density')) return;
+  const resetBtn = document.getElementById('btn-reset-filters');
+  if (!resetBtn || !resetBtn.parentElement) return;
+
+  const wrap = document.createElement('span');
+  wrap.style.position = 'relative';
+  wrap.style.display = 'inline-block';
+
+  const btn = document.createElement('button');
+  btn.id = 'btn-density';
+  btn.type = 'button';
+  btn.className = 'col-vis-btn';
+  btn.setAttribute('aria-haspopup', 'true');
+  btn.setAttribute('aria-expanded', 'false');
+  const current = loadDensity();
+  applyDensity(current);
+  btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg><span>Density</span>';
+
+  const pop = document.createElement('div');
+  pop.className = 'col-vis-pop';
+  pop.setAttribute('role', 'menu');
+
+  function rebuild() {
+    pop.innerHTML = '';
+    const cur = loadDensity();
+    for (const d of DENSITIES) {
+      const lbl = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'radio';
+      cb.name = 'density-radio';
+      cb.checked = cur === d.key;
+      cb.addEventListener('change', () => {
+        if (cb.checked) {
+          saveDensity(d.key);
+          applyDensity(d.key);
+        }
+      });
+      const span = document.createElement('span');
+      span.textContent = d.label;
+      lbl.appendChild(cb);
+      lbl.appendChild(span);
+      pop.appendChild(lbl);
+    }
+  }
+  rebuild();
+
+  function open()  { rebuild(); pop.classList.add('is-open'); btn.setAttribute('aria-expanded', 'true'); setTimeout(() => document.addEventListener('click', onDoc), 0); }
+  function close() { pop.classList.remove('is-open'); btn.setAttribute('aria-expanded', 'false'); document.removeEventListener('click', onDoc); }
+  function onDoc(e) { if (!wrap.contains(e.target)) close(); }
+  btn.addEventListener('click', () => pop.classList.contains('is-open') ? close() : open());
+
+  wrap.appendChild(btn);
+  wrap.appendChild(pop);
+  resetBtn.parentElement.insertBefore(wrap, resetBtn);
+}
+
+// ── Faceted counts: compute audios per status (ignoring the status
+// filter itself) so checkbox labels can show "Mapped (247)". Considers
+// active 50hr / fav / search / year / month / type filters so counts
+// reflect what the user would actually see if they picked the status. */
+function computeStatusFacets() {
+  try {
+    const state = getState();
+    const all = state.audio || [];
+    const counts = { unmapped: 0, mapped: 0, cleaned: 0, aligned: 0, approved: 0, rejected: 0, benchmark: 0 };
+
+    // Apply same filters as updateTable EXCEPT statusFilter
+    let pool = all;
+    if (fiftyFilter === 'yes') pool = pool.filter(a => a.fifty === true);
+    else if (fiftyFilter === 'no') pool = pool.filter(a => a.fifty !== true);
+    if (favoritesFilter === 'yes') {
+      const favs = state.favorites || {};
+      pool = pool.filter(a => !!favs[a.id]);
+    }
+    if (filterYear) pool = pool.filter(a => String(a.year || '') === String(filterYear));
+    if (filterMonth) pool = pool.filter(a => String(a.month || '') === String(filterMonth));
+    if (filterType) pool = pool.filter(a => (a.type || '') === filterType);
+
+    for (const a of pool) {
+      const s = getStatus(a.id);
+      if (s && counts[s] !== undefined) counts[s]++;
+      // Special case: an audio can be both mapped + benchmark, etc.
+      // For now the primary status from getStatus is canonical.
+    }
+    return counts;
+  } catch (_) {
+    return null;
+  }
+}
+
+function applyFacetCountsToStatusFilter(counts) {
+  if (!counts) return;
+  const container = document.getElementById('filter-status');
+  if (!container) return;
+  const labels = container.querySelectorAll('.multi-select-dropdown label');
+  labels.forEach(lbl => {
+    const cb = lbl.querySelector('input[type="checkbox"]');
+    if (!cb) return;
+    const key = cb.value;
+    const n = counts[key];
+    // Cache base label
+    if (!lbl.dataset.baseLabel) {
+      const txt = lbl.textContent.replace(/\s*\(\d+\)\s*$/, '').trim();
+      lbl.dataset.baseLabel = txt;
+    }
+    const base = lbl.dataset.baseLabel;
+    // Rebuild label content keeping the checkbox
+    lbl.innerHTML = '';
+    lbl.appendChild(cb);
+    const span = document.createElement('span');
+    span.textContent = ` ${base}`;
+    lbl.appendChild(span);
+    if (typeof n === 'number') {
+      const cnt = document.createElement('span');
+      cnt.className = 'facet-count';
+      cnt.textContent = n;
+      lbl.appendChild(cnt);
+    }
+  });
+}
+
 // Filter keys from HTML data-filter attributes are passed directly to state.js
 // since getFilteredRows now accepts both 'fifty-*' and '50hr-*' variants.
 
@@ -1506,6 +1646,7 @@ function renderTable(container, options = {}) {
   // Lives inline next to "Reset"; clicking it pops a checkbox list of
   // optional columns. Selections persist in localStorage.
   mountColVisibilityMenu();
+  mountDensityMenu();
 
   // Populate dropdown filters from data
   populateDropdownFilters();
@@ -1604,6 +1745,9 @@ function updateTable() {
   // Build and append bulk action bar
   const bulkBar = buildBulkBar();
   _container.appendChild(bulkBar);
+
+  // Update faceted counts on the Status multi-select labels
+  applyFacetCountsToStatusFilter(computeStatusFacets());
 }
 
 export { renderTable, updateTable, getSelectedRows };

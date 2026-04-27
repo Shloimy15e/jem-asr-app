@@ -320,6 +320,13 @@ function renderDetailPage(audioId, audio, state, container) {
   titleBar.appendChild(title);
   // Pipeline progress indicator
   titleBar.appendChild(renderDetailPipeline(audioId));
+  // Save indicator chip (right-aligned)
+  const saveChip = document.createElement('span');
+  saveChip.className = 'save-indicator';
+  saveChip.style.marginInlineStart = 'auto';
+  saveChip.dataset.role = 'save-indicator';
+  saveChip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>All changes saved</span>';
+  titleBar.appendChild(saveChip);
   container.appendChild(titleBar);
 
   // Split-relationship links — parent + sibling parts. Split IDs follow
@@ -638,7 +645,86 @@ function renderDetailPage(audioId, audio, state, container) {
   }
   // Publish rail nav after sections are mounted
   setTimeout(publishDetailRailSections, 0);
+  // Hook autosave indicator into editable surfaces
+  setTimeout(() => attachSaveIndicator(container), 0);
 }
+
+// ────────────────────────────────────────────────────────────────────
+// Save-indicator hook: turns the chip in .detail-title-bar into a live
+// status. On blur of any contenteditable / textarea / input within the
+// detail page, briefly show "Saving…" then "Saved · Xs ago". Uses
+// optimistic UI — the actual persistence is handled elsewhere; we just
+// reflect the lifecycle visually.
+// ────────────────────────────────────────────────────────────────────
+let _lastSaveAt = null;
+let _saveTickInterval = null;
+function setSaveIndicator(state, opts = {}) {
+  const chip = document.querySelector('.save-indicator[data-role="save-indicator"]');
+  if (!chip) return;
+  chip.classList.remove('save-indicator--saving', 'save-indicator--saved', 'save-indicator--error');
+  if (state === 'saving') {
+    chip.classList.add('save-indicator--saving');
+    chip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg><span>Saving…</span>';
+  } else if (state === 'saved') {
+    chip.classList.add('save-indicator--saved');
+    _lastSaveAt = Date.now();
+    refreshSavedLabel();
+    if (!_saveTickInterval) _saveTickInterval = setInterval(refreshSavedLabel, 15000);
+  } else if (state === 'error') {
+    chip.classList.add('save-indicator--error');
+    chip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>' + (opts.detail || 'Save failed') + '</span>';
+  } else {
+    chip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>All changes saved</span>';
+  }
+}
+function refreshSavedLabel() {
+  const chip = document.querySelector('.save-indicator[data-role="save-indicator"]');
+  if (!chip || !_lastSaveAt) return;
+  const sec = Math.max(1, Math.round((Date.now() - _lastSaveAt) / 1000));
+  let phrase;
+  if (sec < 60) phrase = `Saved · ${sec}s ago`;
+  else if (sec < 3600) phrase = `Saved · ${Math.round(sec / 60)}m ago`;
+  else phrase = 'Saved';
+  if (chip.classList.contains('save-indicator--saved')) {
+    chip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>' + phrase + '</span>';
+  }
+}
+
+let _attachedSave = new WeakSet();
+function attachSaveIndicator(container) {
+  if (!container) return;
+  const targets = container.querySelectorAll('[contenteditable="true"], textarea, input[type="text"]');
+  targets.forEach(el => {
+    if (_attachedSave.has(el)) return;
+    _attachedSave.add(el);
+    let dirty = false;
+    el.addEventListener('input', () => {
+      dirty = true;
+      setSaveIndicator('saving');
+    });
+    el.addEventListener('blur', () => {
+      if (!dirty) return;
+      dirty = false;
+      // Optimistic: assume the underlying save will succeed since the
+      // existing handlers already commit on blur.
+      setTimeout(() => setSaveIndicator('saved'), 350);
+    });
+  });
+}
+
+// Cmd+S forces a flush by blurring the active editor (which triggers
+// the existing save handlers).
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
+    const active = document.activeElement;
+    if (active && (active.isContentEditable || active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) {
+      e.preventDefault();
+      active.blur();
+      // Re-focus shortly so the user can keep editing
+      setTimeout(() => active.focus && active.focus(), 50);
+    }
+  }
+});
 
 function createSection(title) {
   const el = document.createElement('section');

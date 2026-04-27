@@ -1804,6 +1804,38 @@ kbd {
 }
 
 /* =================================================================
+   23a. Density variants for the data table
+   (toggle via the Density menu in the filter bar)
+   ================================================================= */
+body.density-compact .data-table thead th { padding: 7px 10px; font-size: 11px; }
+body.density-compact .data-table tbody td { padding: 4px 10px; font-size: 12px; }
+
+body.density-cozy .data-table thead th { padding: 10px 12px; }
+body.density-cozy .data-table tbody td { padding: 9px 12px; }
+
+body.density-spacious .data-table thead th { padding: 14px 14px; font-size: 12px; }
+body.density-spacious .data-table tbody td { padding: 13px 14px; font-size: 13px; }
+
+/* Facet counts on Status multi-select */
+.multi-select-dropdown label .facet-count {
+  margin-inline-start: auto;
+  background: var(--surface-3);
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+.multi-select-dropdown label {
+  justify-content: flex-start;
+  width: 100%;
+}
+.multi-select-dropdown label > span:not(.facet-count) {
+  flex: 1;
+}
+
+/* =================================================================
    24a. Cmd+K search hint button in topbar
    ================================================================= */
 .cmdk-hint {
