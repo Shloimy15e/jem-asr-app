@@ -298,6 +298,192 @@ function mountDensityMenu() {
   resetBtn.parentElement.insertBefore(wrap, resetBtn);
 }
 
+// ── Saved views (pinned pills above the filter bar) ───────────────
+// A "view" is a snapshot of the filter state: status, confidence, fifty,
+// favorites, year, month, type, search. Click to apply. Built-in views
+// cover the most common annotation flows; the user can save the current
+// state as a custom view, persisted to localStorage.
+
+const VIEW_KEY = 'jem-asr-saved-views-v1';
+const ACTIVE_VIEW_KEY = 'jem-asr-active-view-v1';
+
+const BUILTIN_VIEWS = [
+  { id: '_all',          label: 'All',           builtin: true,
+    state: { status: [], confidence: '', fifty: '', favorites: '', year: '', month: '', type: '', search: '' } },
+  { id: '_unmapped',     label: 'Unmapped',      builtin: true,
+    state: { status: ['unmapped'], confidence: '', fifty: '', favorites: '', year: '', month: '', type: '', search: '' } },
+  { id: '_needs-clean',  label: 'Needs cleaning',builtin: true,
+    state: { status: ['mapped'], confidence: '', fifty: '', favorites: '', year: '', month: '', type: '', search: '' } },
+  { id: '_needs-align',  label: 'Needs alignment', builtin: true,
+    state: { status: ['cleaned'], confidence: '', fifty: '', favorites: '', year: '', month: '', type: '', search: '' } },
+  { id: '_approved',     label: 'Approved',      builtin: true,
+    state: { status: ['approved'], confidence: '', fifty: '', favorites: '', year: '', month: '', type: '', search: '' } },
+  { id: '_rejected',     label: 'Rejected',      builtin: true,
+    state: { status: ['rejected'], confidence: '', fifty: '', favorites: '', year: '', month: '', type: '', search: '' } },
+  { id: '_favorites',    label: 'Favorites',     builtin: true,
+    state: { status: [], confidence: '', fifty: '', favorites: 'yes', year: '', month: '', type: '', search: '' } },
+];
+
+function loadUserViews() {
+  try {
+    const raw = localStorage.getItem(VIEW_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+function saveUserViews(views) {
+  try { localStorage.setItem(VIEW_KEY, JSON.stringify(views)); } catch {}
+}
+function getActiveViewId() {
+  try { return localStorage.getItem(ACTIVE_VIEW_KEY) || ''; } catch { return ''; }
+}
+function setActiveViewId(id) {
+  try { id ? localStorage.setItem(ACTIVE_VIEW_KEY, id) : localStorage.removeItem(ACTIVE_VIEW_KEY); } catch {}
+}
+
+function snapshotCurrentState() {
+  return {
+    status: [...statusFilter],
+    confidence: filterConfidence,
+    fifty: fiftyFilter,
+    favorites: favoritesFilter,
+    year: filterYear,
+    month: filterMonth,
+    type: filterType,
+    search: searchTerm,
+  };
+}
+function statesEqual(a, b) {
+  if (!a || !b) return false;
+  const sa = [...(a.status || [])].sort().join(',');
+  const sb = [...(b.status || [])].sort().join(',');
+  return sa === sb && a.confidence === b.confidence &&
+    a.fifty === b.fifty && a.favorites === b.favorites &&
+    a.year === b.year && a.month === b.month &&
+    a.type === b.type && (a.search || '') === (b.search || '');
+}
+function applyView(view) {
+  if (!view) return;
+  const s = view.state || {};
+  statusFilter = [...(s.status || [])];
+  filterConfidence = s.confidence || '';
+  fiftyFilter = s.fifty || '';
+  favoritesFilter = s.favorites || '';
+  filterYear = s.year || '';
+  filterMonth = s.month || '';
+  filterType = s.type || '';
+  searchTerm = s.search || '';
+  currentPage = 1;
+  selectedIds.clear();
+
+  // Sync UI controls
+  const statusContainer = document.getElementById('filter-status');
+  if (statusContainer) {
+    const checks = statusContainer.querySelectorAll('input[type="checkbox"]');
+    checks.forEach(cb => { cb.checked = statusFilter.includes(cb.value); });
+    const btn = statusContainer.querySelector('.multi-select-btn');
+    if (btn) updateMultiSelectLabel(btn, statusFilter, 'All Statuses');
+  }
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+  set('filter-confidence', filterConfidence);
+  set('filter-fifty', fiftyFilter);
+  set('filter-favorites', favoritesFilter);
+  set('filter-year', filterYear);
+  set('filter-month', filterMonth);
+  set('filter-type', filterType);
+  const search = document.getElementById('search-input');
+  if (search) search.value = searchTerm;
+
+  setActiveViewId(view.id);
+  updateURL();
+  updateTable();
+  renderSavedViewsBar();
+}
+
+function findMatchingView() {
+  const cur = snapshotCurrentState();
+  const all = [...BUILTIN_VIEWS, ...loadUserViews()];
+  return all.find(v => statesEqual(v.state, cur));
+}
+
+let _viewsBar = null;
+function ensureSavedViewsBar() {
+  if (_viewsBar && document.body.contains(_viewsBar)) return;
+  // Insert before the #btn-filter-toggle (or filter-bar if missing)
+  const anchor = document.getElementById('btn-filter-toggle')
+              || document.getElementById('filter-bar');
+  if (!anchor || !anchor.parentElement) return;
+  _viewsBar = document.createElement('div');
+  _viewsBar.className = 'saved-views';
+  anchor.parentElement.insertBefore(_viewsBar, anchor);
+}
+
+function renderSavedViewsBar() {
+  ensureSavedViewsBar();
+  if (!_viewsBar) return;
+  _viewsBar.innerHTML = '';
+
+  const all = [...BUILTIN_VIEWS, ...loadUserViews()];
+  const matched = findMatchingView();
+  const activeId = matched ? matched.id : '';
+  setActiveViewId(activeId);
+
+  for (const v of all) {
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'saved-view-pill' + (v.id === activeId ? ' is-active' : '');
+    pill.textContent = v.label;
+    pill.title = v.builtin ? 'Built-in view' : 'Custom view (right-click to delete)';
+    pill.addEventListener('click', () => applyView(v));
+    if (!v.builtin) {
+      pill.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (confirm(`Delete saved view "${v.label}"?`)) {
+          const remaining = loadUserViews().filter(u => u.id !== v.id);
+          saveUserViews(remaining);
+          renderSavedViewsBar();
+        }
+      });
+      const x = document.createElement('span');
+      x.className = 'saved-view-pill__x';
+      x.textContent = '×';
+      x.title = 'Delete view';
+      x.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (confirm(`Delete saved view "${v.label}"?`)) {
+          const remaining = loadUserViews().filter(u => u.id !== v.id);
+          saveUserViews(remaining);
+          renderSavedViewsBar();
+        }
+      });
+      pill.appendChild(x);
+    }
+    _viewsBar.appendChild(pill);
+  }
+
+  // "+ Save current view" button — appears only when current state
+  // doesn't already match a known view.
+  if (!matched) {
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'saved-view-pill saved-view-pill--save';
+    save.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span>Save view</span>';
+    save.addEventListener('click', () => {
+      const name = prompt('Name this view (e.g. "Needs review · 2024"):');
+      if (!name || !name.trim()) return;
+      const id = 'u_' + Date.now().toString(36);
+      const view = { id, label: name.trim(), builtin: false, state: snapshotCurrentState() };
+      const list = loadUserViews();
+      list.push(view);
+      saveUserViews(list);
+      setActiveViewId(id);
+      renderSavedViewsBar();
+    });
+    _viewsBar.appendChild(save);
+  }
+}
+
 // ── Faceted counts: compute audios per status (ignoring the status
 // filter itself) so checkbox labels can show "Mapped (247)". Considers
 // active 50hr / fav / search / year / month / type filters so counts
@@ -1647,6 +1833,7 @@ function renderTable(container, options = {}) {
   // optional columns. Selections persist in localStorage.
   mountColVisibilityMenu();
   mountDensityMenu();
+  renderSavedViewsBar();
 
   // Populate dropdown filters from data
   populateDropdownFilters();
@@ -1780,6 +1967,8 @@ function updateTable() {
 
   // Update faceted counts on the Status multi-select labels
   applyFacetCountsToStatusFilter(computeStatusFacets());
+  // Refresh which saved view (if any) matches the current state
+  renderSavedViewsBar();
 }
 
 export { renderTable, updateTable, getSelectedRows };
