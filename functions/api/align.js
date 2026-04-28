@@ -48,6 +48,35 @@ function extractPodSeconds(status) {
   return ms / 1000;
 }
 
+// Kick off a RunPod serverless job and return the job id immediately. Used
+// for transcribe-mode requests where polling >100 s would blow Cloudflare's
+// edge timeout — the browser polls /api/align-status instead.
+async function kickoffRunPodAsync(payload, { endpointId, apiKey, label }) {
+  const input = {
+    mode: payload.mode || 'align',
+    audio_url: payload.audio_url,
+    text: payload.text,
+    language: payload.language || 'yi',
+  };
+  if (payload.trim_start != null) input.trim_start = payload.trim_start;
+  if (payload.trim_end != null && payload.trim_end > 0) input.trim_end = payload.trim_end;
+
+  const runResp = await fetch(`https://api.runpod.ai/v2/${endpointId}/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ input }),
+  });
+  if (!runResp.ok) {
+    const body = await runResp.text().catch(() => '');
+    throw { status: 502, message: `${label} /run failed: ${runResp.status}`, detail: body };
+  }
+  const runData = await runResp.json();
+  if (!runData?.id) {
+    throw { status: 502, message: `${label} /run did not return job id`, detail: runData };
+  }
+  return { job_id: runData.id, endpoint_label: label };
+}
+
 async function forwardToRunPodAsync(payload, { endpointId, apiKey, label }, corsHeaders) {
   const input = {
     mode: payload.mode || 'align',
@@ -280,6 +309,74 @@ export async function onRequestPost(context) {
           JSON.stringify({ error: 'audio_url must use https' }),
           { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
         );
+      }
+
+      // ── transcribe mode: client-driven polling ───────────────────────
+      // Whisper button sends mode='transcribe'. Long audio (>~100 s pod
+      // wallclock) blows Cloudflare's edge timeout if we poll server-side.
+      // Kick off the RunPod job, register a usage row, and hand the job_id
+      // back so /api/align-status can finish the lifecycle.
+      if (payload.mode === 'transcribe') {
+        const env = context.env;
+        const apiKey = env?.RUNPOD_API_KEY;
+        let endpointId, label;
+        if (payload.aligner === 'ivrit-iterative') {
+          endpointId = env?.IVRIT_ENDPOINT_ID; label = 'ivrit-iterative';
+        } else {
+          endpointId = env?.STABLE_TS_ENDPOINT_ID; label = 'stable-ts';
+        }
+        if (!endpointId || !apiKey) {
+          return new Response(
+            JSON.stringify({ error: `${label} not configured: set the corresponding RunPod endpoint id + RUNPOD_API_KEY` }),
+            { status: 500, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
+          );
+        }
+
+        // Billing kickoff (preflight + startUsage). Anonymous callers skip.
+        let usageId = null;
+        let chargeTo = null;
+        const audioSeconds = payload.audio_duration_seconds || null;
+        if (billing) {
+          const pre = await preflight(context.env, billing.orgId, audioSeconds || 0);
+          if (!pre.allowed) {
+            return new Response(
+              JSON.stringify({ error: 'Insufficient credits', balance_micro_usd: pre.balance_micro_usd }),
+              { status: 402, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
+            );
+          }
+          chargeTo = pre.charge_to;
+          usageId = await startUsage(context.env, {
+            orgId: billing.orgId,
+            userId: billing.userId,
+            audioId: payload.audio_id || null,
+            provider: label,
+            modelId: payload.aligner || null,
+            audioSeconds,
+          });
+        }
+
+        let kickoff;
+        try {
+          kickoff = await kickoffRunPodAsync(payload, { endpointId, apiKey, label });
+        } catch (err) {
+          if (usageId) await failUsage(context.env, usageId, err?.message || String(err));
+          return new Response(
+            JSON.stringify({ error: err?.message || 'kickoff failed', detail: err?.detail }),
+            { status: err?.status || 502, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
+          );
+        }
+        console.log('[align] async kickoff', { label, jobId: kickoff.job_id, usageId, audioSeconds });
+        return new Response(JSON.stringify({
+          status: 'processing',
+          job_id: kickoff.job_id,
+          endpoint_label: kickoff.endpoint_label,
+          usage_id: usageId || undefined,
+          charge_to: chargeTo || undefined,
+          audio_seconds: audioSeconds,
+        }), {
+          status: 202,
+          headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+        });
       }
 
       // ── ivrit-iterative path ─────────────────────────────────────────

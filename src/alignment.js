@@ -584,7 +584,47 @@ export async function batchAlign(audioIds, state, onProgress) {
   }
 }
 
-const TRANSCRIBE_ENDPOINT = '/api/transcribe';
+const TRANSCRIBE_ENDPOINT        = '/api/transcribe';
+const TRANSCRIBE_STATUS_ENDPOINT = '/api/transcribe-status';
+const ALIGN_STATUS_ENDPOINT      = '/api/align-status';
+
+// Long-job client polling. Cloudflare's edge cuts off any single Pages
+// Function response after ~100 s, so the worker hands us a job_id and we
+// poll a status endpoint until the provider reports completion. The
+// interval is conservative — Mendel/RunPod jobs typically complete in
+// minutes, not seconds, so we don't waste calls.
+const POLL_INTERVAL_MS = 5000;
+const POLL_MAX_TRIES   = 240;  // 240 × 5s = 20 minutes ceiling
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function pollUntilTerminal(statusUrl, label) {
+  for (let i = 0; i < POLL_MAX_TRIES; i++) {
+    await sleep(POLL_INTERVAL_MS);
+    let resp;
+    try {
+      resp = await fetch(statusUrl, { headers: await billingHeaders() });
+    } catch (err) {
+      // Transient network errors: log & retry. Bail if we've exhausted tries.
+      console.warn(`[${label}] poll fetch error:`, err);
+      continue;
+    }
+    if (resp.status === 402) {
+      // Mid-job credit denial — surface immediately.
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || 'Insufficient credits during job');
+    }
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || `${label} status ${resp.status}`);
+    }
+    const data = await resp.json().catch(() => ({}));
+    if (data.status === 'completed') return data;
+    if (data.status === 'failed') throw new Error(data.error || `${label} job failed`);
+    // status === 'processing' (or anything else) → keep polling
+  }
+  throw new Error(`${label} timed out after ${(POLL_MAX_TRIES * POLL_INTERVAL_MS) / 60000} min of client polling`);
+}
 
 /**
  * Transcribe audio using one of the supported providers.
@@ -608,7 +648,9 @@ export async function transcribeAudio(audioId, audioUrl, config) {
     ? { audio_url: audioResult.audioUrl }
     : { audio_base64: audioResult.base64, audio_format: audioResult.format || '.mp3' };
 
-  // Whisper: route through existing align endpoint with mode:'transcribe' (no text)
+  // Whisper: route through existing align endpoint with mode:'transcribe'.
+  // The worker now kicks off a RunPod job and returns 202 with a job_id;
+  // we poll /api/align-status from the browser until the pod completes.
   if (provider === 'whisper') {
     const response = await fetch(ALIGN_ENDPOINT, {
       method: 'POST',
@@ -626,7 +668,19 @@ export async function transcribeAudio(audioId, audioUrl, config) {
       throw new Error(`Whisper transcription error ${response.status}: ${errText}`);
     }
     const data = await response.json();
-    // stable-whisper returns { text, segments, ... }
+    if (data.status === 'processing' && data.job_id) {
+      const params = new URLSearchParams({
+        job_id: data.job_id,
+        endpoint_label: data.endpoint_label || 'stable-ts',
+        ...(data.usage_id ? { usage_id: data.usage_id } : {}),
+        ...(data.audio_seconds ? { audio_seconds: String(data.audio_seconds) } : {}),
+      });
+      const done = await pollUntilTerminal(`${ALIGN_STATUS_ENDPOINT}?${params}`, 'Whisper');
+      const text = (done.text || done.output?.text || done.output?.full_text || done.output?.transcription || '').trim();
+      if (!text) throw new Error('Whisper completed but returned no text');
+      return text;
+    }
+    // stable-whisper sync return: { text, segments, ... }
     return (data.text || data.full_text || data.transcription || '').trim();
   }
 
@@ -671,5 +725,17 @@ export async function transcribeAudio(audioId, audioUrl, config) {
   }
 
   const data = await response.json();
+  // Mendel async kickoff → poll /api/transcribe-status until completed.
+  if (data.status === 'processing' && data.job_id) {
+    const params = new URLSearchParams({
+      provider,
+      job_id: data.job_id,
+      ...(data.usage_id ? { usage_id: data.usage_id } : {}),
+    });
+    const done = await pollUntilTerminal(`${TRANSCRIBE_STATUS_ENDPOINT}?${params}`, provider);
+    const text = (done.text || '').trim();
+    if (!text) throw new Error(`${provider} completed but returned no text`);
+    return text;
+  }
   return (data.text || '').trim();
 }

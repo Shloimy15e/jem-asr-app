@@ -325,12 +325,31 @@ async function handleMendel(audio, payload, env) {
     throw { status: resp.status, message: msg };
   }
 
-  // Response: { id, status, text, summary, keywords, ... }
-  const text = data.text;
-  if (typeof text !== 'string') {
+  // Mendel response shapes:
+  //   short audio (<5 min)  → { id, status: 'completed', text, duration_seconds, ... }
+  //   long  audio (>=5 min) → { id, status: 'processing', duration_seconds, credits_cost, ... }
+  // For long jobs we return a processing handle so the outer worker can send
+  // the client a job_id; the client then polls /api/transcribe-status until
+  // Mendel reports completed.
+  const status = String(data?.status || '').toLowerCase();
+  const text = typeof data?.text === 'string' ? data.text.trim() : null;
+  if (status === 'processing' || status === 'queued' || status === 'pending') {
+    if (!data?.id) {
+      throw { status: 502, message: 'Mendel returned processing without job id: ' + JSON.stringify(data).slice(0, 300) };
+    }
+    return {
+      processing: true,
+      job_id: data.id,
+      usage: {
+        audio_seconds: data?.duration_seconds || data?.duration || null,
+        request_count: 1,
+      },
+    };
+  }
+  if (text == null) {
     throw { status: 502, message: 'Unexpected Mendel response: ' + JSON.stringify(data).slice(0, 300) };
   }
-  return { text: text.trim(), usage: { audio_seconds: data?.duration || null, request_count: 1 } };
+  return { text, usage: { audio_seconds: data?.duration_seconds || data?.duration || null, request_count: 1 } };
 }
 
 // ── Optional billing wrapper (only fires when caller is authed) ──────────
@@ -402,6 +421,23 @@ export async function onRequestPost(context) {
       result.provider = 'mendel';
     } else {
       return errorResponse(400, `Unknown provider: ${provider}. Use gemini or mendel.`);
+    }
+
+    // Mendel async kickoff path — long audio (>5 min) returns
+    // { id, status:'processing' }. We hand the job_id back to the client so
+    // it can poll /api/transcribe-status without burning a 100s edge timeout.
+    if (result.processing) {
+      console.log('[transcribe] async kickoff', { provider, jobId: result.job_id, usageId, audioSeconds });
+      return new Response(JSON.stringify({
+        status: 'processing',
+        job_id: result.job_id,
+        provider: result.provider || provider,
+        usage_id: usageId || undefined,
+        audio_seconds: audioSeconds,
+      }), {
+        status: 202,
+        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+      });
     }
 
     if (billing && usageId) {
