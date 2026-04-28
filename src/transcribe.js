@@ -192,10 +192,10 @@ function renderTranscribePage(audioId, audio, state, root) {
     head.style.cssText = 'display:flex;align-items:center;gap:8px;';
     const headLabel = document.createElement('div');
     headLabel.style.cssText = 'font-size:0.75rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);';
-    headLabel.textContent = 'Gemini Prompt';
+    headLabel.textContent = 'Bias / Prompt';
     const headHint = document.createElement('div');
     headHint.style.cssText = 'font-size:0.74rem;color:var(--text-muted);';
-    headHint.textContent = '· Whisper / Mendel ignore this';
+    headHint.textContent = '· Gemini uses as prompt; Mendel uses as `context`. Whisper ignores.';
     const expandBtn = document.createElement('button');
     expandBtn.type = 'button';
     expandBtn.className = 'action-btn';

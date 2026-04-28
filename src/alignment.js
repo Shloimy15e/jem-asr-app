@@ -695,14 +695,30 @@ export async function transcribeAudio(audioId, audioUrl, config) {
       gemini_region: config.region || 'us-central1',
       gemini_endpoint_id: config.endpointId,
     };
-    // Optional custom prompt — Worker falls back to default if missing/empty.
+    // Optional per-call user-turn prompt — Worker falls back to default if missing.
     if (typeof config.prompt === 'string' && config.prompt.trim().length > 0) {
       providerPayload.gemini_prompt = config.prompt;
+    }
+    // Optional systemInstruction — sent as a top-level Vertex field, separate
+    // from the user prompt. See buildGeminiRequestBody in functions/api/transcribe.js.
+    if (typeof config.systemInstruction === 'string' && config.systemInstruction.trim().length > 0) {
+      providerPayload.gemini_system_instruction = config.systemInstruction;
     }
   } else if (provider === 'mendel') {
     providerPayload = {
       ...(config.endpoint ? { yl_endpoint: config.endpoint } : {}),
     };
+    // Mendel `context` form field — the YL bias-vocabulary lever (analog of
+    // an OpenAI Whisper initial_prompt). Wired off the same UI textarea as
+    // gemini_prompt so the user only fills it once.
+    if (typeof config.prompt === 'string' && config.prompt.trim().length > 0) {
+      providerPayload.mendel_context = config.prompt;
+    }
+    if (config.rapid === true) providerPayload.mendel_rapid = true;
+    if (config.timestamps === true) providerPayload.mendel_timestamps = true;
+    if (typeof config.language === 'string' && config.language.trim().length > 0) {
+      providerPayload.mendel_language = config.language;
+    }
   } else {
     throw new Error(`Unknown transcription provider: ${provider}`);
   }

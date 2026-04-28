@@ -159,14 +159,21 @@ const MIME_MAP = {
   '.flac': 'audio/flac',
 };
 
-const DEFAULT_GEMINI_PROMPT = 'transcribe this yiddish audio';
+// Default user-turn prompt — tuned for the JEM Chabad Lubavitcher Rebbe
+// transcription corpus. Empirically yields the best WER with the v2-ckpt9
+// fine-tuned endpoint (matches the eval-notebook prompt style).
+const DEFAULT_GEMINI_PROMPT =
+  'Transcribe this audio from the Chabad Lubavitcher Rebbe. ' +
+  'Pay attention to the Chabad Russian Yiddish accent and nuances, ' +
+  'and transcribe as it is written in Russian Yiddish spelling. ' +
+  'Make sure to pay attention to the common lingo used often by the Rebbe.';
 
-function buildGeminiRequestBody(audio, prompt) {
+function buildGeminiRequestBody(audio, prompt, systemInstruction) {
   const mimeType = MIME_MAP[audio.format] || 'audio/mpeg';
   const promptText = (typeof prompt === 'string' && prompt.trim().length > 0)
     ? prompt
     : DEFAULT_GEMINI_PROMPT;
-  return {
+  const body = {
     contents: [{
       role: 'user',
       parts: [
@@ -176,6 +183,15 @@ function buildGeminiRequestBody(audio, prompt) {
     }],
     generationConfig: { temperature: 0, maxOutputTokens: 8192 },
   };
+  // Vertex/Gemini supports a top-level systemInstruction (separate from the
+  // user-turn prompt). Only include when caller actually provided one.
+  if (typeof systemInstruction === 'string' && systemInstruction.trim().length > 0) {
+    body.systemInstruction = {
+      role: 'system',
+      parts: [{ text: systemInstruction.trim() }],
+    };
+  }
+  return body;
 }
 
 function extractGeminiText(data) {
@@ -230,7 +246,7 @@ async function handleGeminiVertex(audio, payload, saJson) {
       'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(buildGeminiRequestBody(audio, payload.gemini_prompt)),
+    body: JSON.stringify(buildGeminiRequestBody(audio, payload.gemini_prompt, payload.gemini_system_instruction)),
   });
 
   const data = await resp.json().catch(() => ({}));
@@ -285,24 +301,54 @@ async function handleGemini(audio, payload, env) {
 async function handleMendel(audio, payload, env) {
   const yl_api_key = env.YL_API_KEY;
   if (!yl_api_key) throw { status: 500, message: 'Mendel API key not configured — set YL_API_KEY as a Cloudflare Worker secret' };
-  const { yl_endpoint } = payload;
+  const {
+    yl_endpoint,
+    mendel_context,         // bias text — same UI textarea as gemini_prompt
+    mendel_rapid,           // boolean → "true"/"false" form field
+    mendel_timestamps,      // boolean → query param ?timestamps=true|false
+    mendel_language,        // optional override; defaults to 'yi'
+    mendel_name,            // optional human label
+  } = payload;
 
   // Sync endpoint handles files up to 5 minutes; longer files use the async endpoint.
-  const endpoint = yl_endpoint || 'https://app.yiddishlabs.com/api/v1/transcriptions/sync';
+  let endpoint = yl_endpoint || 'https://app.yiddishlabs.com/api/v1/transcriptions/sync';
+  // YL exposes timestamps as a query parameter, not a form field.
+  if (typeof mendel_timestamps === 'boolean') {
+    const sep = endpoint.includes('?') ? '&' : '?';
+    endpoint = `${endpoint}${sep}timestamps=${mendel_timestamps ? 'true' : 'false'}`;
+  }
   const mimeType = MIME_MAP[audio.format] || 'audio/mpeg';
   const filename = 'audio' + (audio.format || '.mp3');
+  const language = (typeof mendel_language === 'string' && mendel_language.trim().length > 0)
+    ? mendel_language.trim()
+    : 'yi';
 
-  // Build multipart/form-data — field name is "file" per the Mendel API spec
+  // Build multipart/form-data — field name is "file" per the Mendel API spec.
+  // We append optional fields (context, rapid, name) only when present so we
+  // don't paint zero/empty values into requests that didn't ask for them.
   const boundary = '----FormBoundary' + Date.now().toString(36) + Math.random().toString(36).slice(2);
   const enc = new TextEncoder();
   const audioBytes = Uint8Array.from(atob(audio.base64), c => c.charCodeAt(0));
 
+  const formField = (name, value) =>
+    enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`);
+
   const parts = [
     enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mimeType}\r\n\r\n`),
     audioBytes,
-    enc.encode(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nyi\r\n`),
-    enc.encode(`--${boundary}--\r\n`),
+    enc.encode('\r\n'),
+    formField('language', language),
   ];
+  if (typeof mendel_context === 'string' && mendel_context.trim().length > 0) {
+    parts.push(formField('context', mendel_context.trim()));
+  }
+  if (mendel_rapid === true) {
+    parts.push(formField('rapid', 'true'));
+  }
+  if (typeof mendel_name === 'string' && mendel_name.trim().length > 0) {
+    parts.push(formField('name', mendel_name.trim()));
+  }
+  parts.push(enc.encode(`--${boundary}--\r\n`));
 
   const totalLength = parts.reduce((s, p) => s + p.length, 0);
   const body = new Uint8Array(totalLength);

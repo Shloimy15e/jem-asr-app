@@ -877,17 +877,36 @@ function buildAsrProviderBar(audioId, state, onComplete) {
   label.textContent = 'Generate transcript:';
   bar.appendChild(label);
 
-  // Per-call Gemini prompt — Whisper / Mendel ignore. Compact on the detail
-  // bar; an "Edit fullscreen" link opens an overlay for longer prompts.
-  // Last value persists across pages via the same localStorage key as the
-  // dedicated Transcribe page.
+  // Per-call bias / prompt area — Whisper ignores. Gemini uses it as the
+  // user-turn prompt; Mendel uses it as the YL `context` field. Compact on
+  // the detail bar; an "Edit fullscreen" link opens an overlay for longer
+  // prompts. Last value persists across pages via the same localStorage key
+  // as the dedicated Transcribe page.
   const promptWrap = document.createElement('div');
   promptWrap.style.cssText = 'flex:1;min-width:240px;display:flex;flex-direction:column;gap:4px;';
+  // System instruction (Vertex/Gemini only) — separate top-level field.
+  // Compact one-line input; the fullscreen overlay exposes a multi-line view.
+  const sysInput = document.createElement('input');
+  sysInput.type = 'text';
+  sysInput.className = 'gemini-prompt-input';
+  sysInput.placeholder = 'Optional system instruction (Gemini only) — sets tone/format rules separate from the per-call prompt.';
+  sysInput.title = 'Sent to Vertex as systemInstruction. Mendel and Whisper ignore.';
+  sysInput.style.cssText = 'width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:0.78rem;background:var(--surface);color:var(--text);outline:none;transition:border-color 150ms, box-shadow 150ms;';
+  sysInput.addEventListener('focus', () => { sysInput.style.borderColor = 'var(--accent)'; sysInput.style.boxShadow = '0 0 0 3px var(--accent-dim)'; });
+  sysInput.addEventListener('blur',  () => { sysInput.style.borderColor = 'var(--border)'; sysInput.style.boxShadow = 'none'; });
+  try {
+    const savedSys = localStorage.getItem('jem-asr-last-gemini-system');
+    if (savedSys) sysInput.value = savedSys;
+  } catch {}
+  sysInput.addEventListener('input', () => {
+    try { localStorage.setItem('jem-asr-last-gemini-system', sysInput.value); } catch {}
+  });
+  promptWrap.appendChild(sysInput);
   const promptInput = document.createElement('textarea');
   promptInput.className = 'gemini-prompt-input';
   promptInput.rows = 2;
-  promptInput.placeholder = 'Optional Gemini prompt — leave blank for default. (Whisper / Mendel ignore.)';
-  promptInput.title = 'Custom prompt for Gemini/Vertex; appended as a separate version per run';
+  promptInput.placeholder = 'Optional bias / context — Whisper ignores this; Gemini uses it as the prompt, Mendel uses it as `context` (vocabulary hint).';
+  promptInput.title = 'Used as Gemini prompt and Mendel `context` field. Whisper ignores this.';
   promptInput.style.cssText = 'width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:0.85rem;line-height:1.45;resize:vertical;font-family:inherit;background:var(--surface);color:var(--text);outline:none;transition:border-color 150ms, box-shadow 150ms;';
   promptInput.addEventListener('focus', () => { promptInput.style.borderColor = 'var(--accent)'; promptInput.style.boxShadow = '0 0 0 3px var(--accent-dim)'; });
   promptInput.addEventListener('blur',  () => { promptInput.style.borderColor = 'var(--border)'; promptInput.style.boxShadow = 'none'; });
@@ -1012,6 +1031,25 @@ function buildAsrProviderBar(audioId, state, onComplete) {
           promptLabel = raw.length > 0
             ? (raw.length > 32 ? raw.slice(0, 32) + '\u2026' : raw)
             : 'default';
+          // Optional Vertex systemInstruction — separate from the per-call
+          // user-turn prompt. Read straight off the inline input on the
+          // detail toolbar.
+          const sysRaw = (sysInput?.value || '').trim();
+          if (sysRaw.length > 0) providerCfg.systemInstruction = sysRaw;
+        } else if (key === 'mendel') {
+          // Mendel: route the prompt textarea into YL's `context` bias field,
+          // and pull rapid/timestamps toggles from the persisted settings.
+          const raw = (promptInput?.value || '').trim();
+          if (raw.length > 0) {
+            prompt = raw;
+            promptLabel = raw.length > 32 ? raw.slice(0, 32) + '\u2026' : raw;
+          }
+          const m = providers.mendel || {};
+          providerCfg = {
+            ...(m.endpoint ? { endpoint: m.endpoint } : {}),
+            rapid: m.rapid === true,
+            timestamps: m.timestamps === true,
+          };
         }
         const config = { provider: key, ...providerCfg };
         if (prompt) config.prompt = prompt;

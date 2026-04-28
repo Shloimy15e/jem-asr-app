@@ -392,4 +392,59 @@ export function buildAsrConfigPanel(container) {
   container.appendChild(buildProviderBlock('Mendel — endpoint config', [
     { stateKey: 'mendel', field: 'endpoint', label: 'Endpoint (optional)', placeholder: 'https://app.yiddishlabs.com/api/v1/transcriptions/sync', type: 'text' },
   ]));
+
+  // YL request flags — boolean toggles persisted in transcribeProviders.mendel.
+  // `rapid` = fast lower-latency mode; `timestamps` = keep word timestamps in
+  // the returned text. Defaults match YL's own defaults (both false).
+  container.appendChild(buildMendelToggleBlock());
+}
+
+function buildMendelToggleBlock() {
+  const block = document.createElement('div');
+  block.className = 'asr-provider-block';
+  const title = document.createElement('div');
+  title.className = 'asr-provider-title';
+  title.textContent = 'Mendel — request flags';
+  block.appendChild(title);
+
+  const providers = getState().transcribeProviders || {};
+  const m = providers.mendel || {};
+
+  const mkToggle = (field, label, hint) => {
+    const row = document.createElement('label');
+    row.className = 'asr-config-row';
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;cursor:pointer;';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = m[field] === true;
+    cb.addEventListener('change', () => {
+      const s = getState();
+      if (!s.transcribeProviders) s.transcribeProviders = {};
+      if (!s.transcribeProviders.mendel) s.transcribeProviders.mendel = {};
+      s.transcribeProviders.mendel[field] = cb.checked;
+      updateState('transcribeProviders', null, s.transcribeProviders);
+    });
+    const text = document.createElement('div');
+    text.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
+    const lbl = document.createElement('span');
+    lbl.className = 'asr-config-label';
+    lbl.textContent = label;
+    text.appendChild(lbl);
+    if (hint) {
+      const h = document.createElement('span');
+      h.style.cssText = 'font-size:0.74rem;color:var(--text-muted);line-height:1.4;';
+      h.textContent = hint;
+      text.appendChild(h);
+    }
+    row.appendChild(cb);
+    row.appendChild(text);
+    return row;
+  };
+
+  block.appendChild(mkToggle('rapid', 'Rapid mode',
+    'Sends rapid=true. Lower latency, may trade some quality. Default off.'));
+  block.appendChild(mkToggle('timestamps', 'Keep timestamps in text',
+    'Sends ?timestamps=true. Keeps word-level timestamps inline in the returned text instead of stripping them. Default off.'));
+
+  return block;
 }
