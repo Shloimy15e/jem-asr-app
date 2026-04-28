@@ -60,14 +60,18 @@ let favoritesFilter = ''; // '' = all, 'yes' = favorites only
 let statusFilter = [];  // array of selected statuses, empty = all
 // ── Sort state (persisted) ─────────────────────────────────────────
 const SORT_KEY = 'jem-asr-sort-v1';
+// Default sort: newest uploads first, so a freshly uploaded file sits at
+// the top of the table without manual sorting. Users can override and the
+// override persists.
+const DEFAULT_SORT = { column: 'createdAt', dir: 'desc' };
 function loadSort() {
   try {
     const raw = localStorage.getItem(SORT_KEY);
-    if (!raw) return { column: null, dir: 'asc' };
+    if (!raw) return { ...DEFAULT_SORT };
     const obj = JSON.parse(raw);
     if (obj && typeof obj === 'object') return { column: obj.column || null, dir: obj.dir === 'desc' ? 'desc' : 'asc' };
   } catch {}
-  return { column: null, dir: 'asc' };
+  return { ...DEFAULT_SORT };
 }
 function saveSort(s) {
   try { localStorage.setItem(SORT_KEY, JSON.stringify(s)); } catch {}
@@ -148,6 +152,7 @@ const COLUMNS = [
   { key: 'comments',      label: 'Comments',          sortable: false, showWhen: () => true,  optional: true },
   { key: 'firstLine',     label: 'First 15 Words',    sortable: false, showWhen: () => true,  optional: true },
   { key: 'estMinutes',    label: 'Duration',          sortable: true,  showWhen: () => true,  optional: true },
+  { key: 'createdAt',     label: 'Uploaded',          sortable: true,  showWhen: () => true,  optional: true },
   { key: 'exported',      label: 'Exported',          sortable: true,  showWhen: () => true,  optional: true },
   { key: 'transcript',    label: 'Transcript Name',   sortable: true,  showWhen: () => true,  optional: true },
   { key: 'id',            label: 'ID',                sortable: true,  showWhen: () => true,  optional: true, defaultHidden: true },
@@ -938,6 +943,17 @@ function sortRows(rows) {
       const bv = b.trainingExportedAt ? new Date(b.trainingExportedAt).getTime() : 0;
       return (av - bv) * dir;
     }
+    if (key === 'createdAt') {
+      // Sort by upload timestamp. Rows missing a created_at sink to the
+      // bottom regardless of direction so old pre-column rows don't
+      // pollute either end of the sort.
+      const av = a.createdAt ? new Date(a.createdAt).getTime() : null;
+      const bv = b.createdAt ? new Date(b.createdAt).getTime() : null;
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return (av - bv) * dir;
+    }
     let va = a[key];
     let vb = b[key];
     // Parse numeric-looking values
@@ -1672,6 +1688,33 @@ function buildTable(rows) {
           td.textContent = row.estMinutes || '';
           if (row.estMinutesTitle) td.title = row.estMinutesTitle;
           if (row.isTrimmed) td.style.fontVariantNumeric = 'tabular-nums';
+          break;
+        }
+        case 'createdAt': {
+          // Show a compact relative date for recent uploads ("2h ago",
+          // "3d ago"), and a short absolute date once the row is older
+          // than a week. Full ISO timestamp lives in the tooltip so power
+          // users can see exact upload time.
+          if (row.createdAt) {
+            const d = new Date(row.createdAt);
+            const now = Date.now();
+            const diffSec = Math.max(0, Math.round((now - d.getTime()) / 1000));
+            let label;
+            if (diffSec < 60) label = 'just now';
+            else if (diffSec < 3600) label = `${Math.floor(diffSec / 60)}m ago`;
+            else if (diffSec < 86400) label = `${Math.floor(diffSec / 3600)}h ago`;
+            else if (diffSec < 7 * 86400) label = `${Math.floor(diffSec / 86400)}d ago`;
+            else label = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+            td.textContent = label;
+            td.title = d.toLocaleString();
+            td.style.whiteSpace = 'nowrap';
+            td.style.fontVariantNumeric = 'tabular-nums';
+          } else {
+            const dash = document.createElement('span');
+            dash.style.color = 'var(--text-muted)';
+            dash.textContent = '—';
+            td.appendChild(dash);
+          }
           break;
         }
         case 'actions': {
