@@ -177,6 +177,15 @@ export async function preflight(env, orgId, audioSeconds) {
   });
 }
 
+// transcription_usage.audio_id is a uuid column. The frontend's `audio_id`
+// is a slug-style identifier (e.g. "training-153612-interview-…"), so we
+// only forward it when it parses as a UUID. Otherwise we drop it to null
+// rather than failing the whole usage insert with Postgres 22P02.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function uuidOrNull(v) {
+  return (typeof v === 'string' && UUID_RE.test(v)) ? v : null;
+}
+
 /**
  * Insert a pending transcription_usage row up-front, before calling the provider.
  * Returns the new row's id (UUID). The worker MUST finalize it later.
@@ -187,7 +196,7 @@ export async function startUsage(env, { orgId, userId, audioId, provider, modelI
     body: JSON.stringify({
       org_id: orgId,
       user_id: userId,
-      audio_id: audioId || null,
+      audio_id: uuidOrNull(audioId),
       provider,
       model_id: modelId || null,
       status: 'pending',

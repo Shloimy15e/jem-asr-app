@@ -7,6 +7,7 @@ import { alignRow, transcribeAudio, ALIGNER_OPTIONS, getAlignerChoice, setAligne
 import { createSplitFromAudio } from './split.js';
 import { renderAsrConfig, runBenchmark, renderBenchmarkTable } from './benchmark.js';
 import { buildAsrConfigPanel } from './asr-config.js';
+import { getMergedVertexEndpoints } from './vertex-registry.js';
 
 import { formatConfidence, getConfidenceLevel, generateSRT, generateVTT, downloadFile, diffWords } from './utils.js';
 import { loadAlignmentWords, loadTranscriptText, loadForDetailPage, syncAudioDuration, syncAudioField, loadSegmentApprovals, syncSegmentApproval } from './db.js';
@@ -992,9 +993,12 @@ function buildAsrProviderBar(audioId, state, onComplete) {
         let prompt = null;
         let promptLabel = null;
         if (key === 'gemini') {
+          // Resolve from the merged registry+local list so curated global
+          // endpoints are usable on a fresh hostname (e.g. staging) where
+          // localStorage has no saved custom endpoints yet.
+          const { merged, selected: defaultSel } = await getMergedVertexEndpoints(getState());
           const g = providers.gemini || {};
-          const endpoints = Array.isArray(g.endpoints) ? g.endpoints : [];
-          const selected = endpoints.find(e => e.id === g.selectedId) || endpoints[0];
+          const selected = merged.find(e => e.id === g.selectedId) || defaultSel;
           if (!selected || !selected.projectId || !selected.endpointId) {
             alert('No Gemini endpoint configured. Open ASR Settings to add one.');
             btn.disabled = false;

@@ -357,6 +357,16 @@ export async function onRequestPost(context) {
     const { provider } = payload;
     const env = context.env;
 
+    console.log('[transcribe] req', {
+      provider,
+      hasAudioUrl: !!payload.audio_url,
+      audioUrlHost: payload.audio_url ? (() => { try { return new URL(payload.audio_url).hostname; } catch { return 'invalid'; } })() : null,
+      hasAudioB64: !!payload.audio_base64,
+      gemini_endpoint_id: payload.gemini_endpoint_id || null,
+      gemini_project_id: payload.gemini_project_id || null,
+      audio_id: payload.audio_id || null,
+    });
+
     if (!provider) return errorResponse(400, 'Missing provider');
 
     // Optional billing context — only present when caller is authed
@@ -421,6 +431,7 @@ export async function onRequestPost(context) {
     }
     const status = (typeof err.status === 'number') ? err.status : 502;
     const message = err.message || 'Transcription failed';
+    console.error('[transcribe] fail', { status, message, stack: err.stack || null });
     return errorResponse(status, message);
   }
 }

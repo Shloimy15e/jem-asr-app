@@ -236,6 +236,21 @@ export async function onRequestPost(context) {
   let billing = null;
   try {
     const payload = await context.request.json();
+    console.log('[align] req', {
+      mode: payload.mode || 'align',
+      aligner: payload.aligner || 'stable-ts',
+      hasAudioUrl: !!payload.audio_url,
+      audioUrlHost: payload.audio_url ? (() => { try { return new URL(payload.audio_url).hostname; } catch { return 'invalid'; } })() : null,
+      hasAudioB64: !!payload.audio_base64,
+      hasText: !!payload.text,
+      audio_id: payload.audio_id || null,
+      trim_start: payload.trim_start ?? null,
+      trim_end: payload.trim_end ?? null,
+      stable_ts_endpoint_set: !!context.env?.STABLE_TS_ENDPOINT_ID,
+      stable_ts_trim_endpoint_set: !!context.env?.STABLE_TS_TRIM_ENDPOINT_ID,
+      ivrit_endpoint_set: !!context.env?.IVRIT_ENDPOINT_ID,
+      runpod_key_set: !!context.env?.RUNPOD_API_KEY,
+    });
     billing = await tryResolveBillingContext(context.request, context.env, payload).catch(err => {
       throw err;
     });
@@ -333,6 +348,7 @@ export async function onRequestPost(context) {
       },
     });
   } catch (err) {
+    console.error('[align] fail', { message: err && err.message, stack: err && err.stack });
     return new Response(JSON.stringify({ error: err.message }), {
       status: 502,
       headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
