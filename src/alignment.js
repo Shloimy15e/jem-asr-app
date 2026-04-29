@@ -597,7 +597,30 @@ export async function transcribeAudio(audioId, audioUrl, config) {
   const { provider } = config;
   if (!provider) throw new Error('transcribeAudio: missing provider in config');
 
-  const audioResult = await fetchAudioForAlignment(audioUrl, 0, 0);
+  // Trim handling. Today only Whisper supports server-side trim — the
+  // RunPod stable-ts-trim image runs ffmpeg pre-trim before alignment.
+  // Mendel (YL) and Gemini (Vertex :generateContent) accept no trim
+  // parameters; we'd have to slice the audio before upload. We pass
+  // trim through to Whisper here and surface a clear console warning
+  // for the others so the user knows the trim is being ignored.
+  const trimStart = Number.isFinite(config.trimStart) ? Math.max(0, config.trimStart) : 0;
+  const trimEnd   = Number.isFinite(config.trimEnd)   ? Math.max(0, config.trimEnd)   : 0;
+  const hasTrim   = trimStart > 0 || trimEnd > 0;
+
+  // For Whisper, push the trim through so fetchAudioForAlignment forwards
+  // audio_url + trim params to the Worker (R2) or browser-trims to a WAV
+  // (non-R2). For Mendel/Gemini, deliberately fetch the full file.
+  const audioResult = (provider === 'whisper')
+    ? await fetchAudioForAlignment(audioUrl, trimStart, trimEnd, config.audioDurationSec)
+    : await fetchAudioForAlignment(audioUrl, 0, 0);
+
+  if (hasTrim && provider !== 'whisper') {
+    console.warn(
+      `[transcribe] trim is set (start=${trimStart}, end=${trimEnd}) but provider=${provider} `
+      + `does not support server-side trim — transcribing the entire audio file. `
+      + `(Mendel: YL API has no trim field; Gemini: Vertex fileData has no offset.)`
+    );
+  }
 
   const audioFields = audioResult.audioUrl
     ? { audio_url: audioResult.audioUrl }
@@ -613,6 +636,14 @@ export async function transcribeAudio(audioId, audioUrl, config) {
       body: JSON.stringify({
         mode: 'transcribe',
         ...audioFields,
+        // Forward trim params so the trim pod's ffmpeg pre-trim kicks in.
+        // The Worker's kickoffRunPodAsync passes trim_start / trim_end
+        // straight through to RunPod's input.
+        ...(audioResult.trimStart != null && audioResult.trimStart > 0
+              ? { trim_start: audioResult.trimStart } : {}),
+        ...(audioResult.trimEnd   != null && audioResult.trimEnd   > 0
+              ? { trim_end:   audioResult.trimEnd   } : {}),
+        ...(audioResult.audioDuration ? { audio_duration: audioResult.audioDuration } : {}),
         language: 'yi',
         ...(audioId ? { audio_id: audioId } : {}),
       }),

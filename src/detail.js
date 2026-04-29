@@ -1057,6 +1057,13 @@ function buildAsrProviderBar(audioId, state, onComplete) {
         }
         const config = { provider: key, ...providerCfg };
         if (prompt) config.prompt = prompt;
+        // Thread the user's saved trim into the transcribe config. Whisper
+        // honours it (RunPod stable-ts-trim pod runs ffmpeg pre-trim);
+        // Mendel and Gemini ignore it with a console warning emitted by
+        // transcribeAudio. See per-provider notes there.
+        const trim = getState().trims?.[audioId] || {};
+        if (trim.start && trim.start > 0) config.trimStart = trim.start;
+        if (trim.end   && trim.end   > 0) config.trimEnd   = trim.end;
         const text = await transcribeAudio(audioId, audioUrl, config);
         if (!text) throw new Error('Empty transcription returned');
 
