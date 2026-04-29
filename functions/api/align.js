@@ -1,17 +1,12 @@
 // Proxy alignment requests to avoid CORS issues.
-// POST /api/align -> https://align.kohnai.ai/api/align (stable-ts, untrimmed)
-//                 -> https://api.runpod.ai/v2/$STABLE_TS_TRIM_ENDPOINT_ID/run (stable-ts, trimmed)
+// POST /api/align -> https://api.runpod.ai/v2/$STABLE_TS_TRIM_ENDPOINT_ID/run (stable-ts, all)
 //                 -> https://api.runpod.ai/v2/$IVRIT_ENDPOINT_ID/run (ivrit-iterative)
+//                 -> https://align.kohnai.ai/api/align (legacy fallback when no endpoint id set)
 //
 // Forwards audio_url (+ optional trim_start / trim_end) straight to the pod.
 // The Worker never touches audio bytes — prevents CF error 1102 on long audio.
 
 const ALIGN_ENDPOINT = 'https://align.kohnai.ai/api/align';
-
-// RunPod async /run + polling bounds. 5s intervals × 60 = 5 min total.
-// Browser alignment.js retries on 502/504 so terminal long-audio jobs still land.
-const RUNPOD_POLL_MAX = 60;
-const RUNPOD_POLL_INTERVAL_MS = 5000;
 
 function getAllowedDomains(env) {
   if (env?.ALLOWED_R2_DOMAINS) {
@@ -21,13 +16,16 @@ function getAllowedDomains(env) {
 }
 
 // Forward an already-validated audio_url request to a RunPod serverless
-// endpoint using the async /run + polling protocol. The pod downloads the
-// audio itself, so the Worker never touches bytes.
+// endpoint via /runsync — RunPod holds the connection up to ~90s and returns
+// the result inline when the job completes. Fits cleanly under Cloudflare's
+// ~100s edge timeout (the previous /run + 5-min polling loop did not). For
+// jobs that exceed 90s, RunPod returns 200 with status=IN_PROGRESS and a job
+// id; we map that to 504 so the browser's retry loop kicks in.
 //
 //   label       — used in error messages, e.g. "ivrit-iterative" or "stable-ts-trim"
 //   endpointId  — RunPod serverless endpoint id
 //   apiKey      — RunPod API key (Bearer)
-async function forwardToRunPodAsync(payload, { endpointId, apiKey, label }, corsHeaders) {
+async function forwardToRunPodSync(payload, { endpointId, apiKey, label }, corsHeaders) {
   const input = {
     mode: payload.mode || 'align',
     audio_url: payload.audio_url,
@@ -37,7 +35,7 @@ async function forwardToRunPodAsync(payload, { endpointId, apiKey, label }, cors
   if (payload.trim_start != null) input.trim_start = payload.trim_start;
   if (payload.trim_end != null && payload.trim_end > 0) input.trim_end = payload.trim_end;
 
-  const runResp = await fetch(`https://api.runpod.ai/v2/${endpointId}/run`, {
+  const runResp = await fetch(`https://api.runpod.ai/v2/${endpointId}/runsync`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({ input }),
@@ -45,40 +43,28 @@ async function forwardToRunPodAsync(payload, { endpointId, apiKey, label }, cors
   if (!runResp.ok) {
     const body = await runResp.text().catch(() => '');
     return new Response(
-      JSON.stringify({ error: `${label} /run failed: ${runResp.status}`, detail: body }),
+      JSON.stringify({ error: `${label} /runsync failed: ${runResp.status}`, detail: body }),
       { status: 502, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
     );
   }
   const runData = await runResp.json();
-  if (!runData.id) {
+  if (runData.status === 'COMPLETED') {
+    return new Response(JSON.stringify(runData.output || {}), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+  if (runData.status === 'FAILED' || runData.status === 'CANCELLED') {
     return new Response(
-      JSON.stringify({ error: `${label} /run did not return job id`, detail: runData }),
+      JSON.stringify({ error: `${label} job ${runData.status}`, detail: runData.error || runData }),
       { status: 502, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
     );
   }
-
-  for (let i = 0; i < RUNPOD_POLL_MAX; i++) {
-    await new Promise((r) => setTimeout(r, RUNPOD_POLL_INTERVAL_MS));
-    const statusResp = await fetch(`https://api.runpod.ai/v2/${endpointId}/status/${runData.id}`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (!statusResp.ok) continue;
-    const status = await statusResp.json();
-    if (status.status === 'COMPLETED') {
-      return new Response(JSON.stringify(status.output || {}), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
-      });
-    }
-    if (status.status === 'FAILED' || status.status === 'CANCELLED') {
-      return new Response(
-        JSON.stringify({ error: `${label} job ${status.status}`, detail: status.error || status }),
-        { status: 502, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
-      );
-    }
-  }
+  // IN_QUEUE or IN_PROGRESS — runsync hit its ~90s limit. Surface 504 so the
+  // browser retries; that submits a fresh job, but a warm worker handles it
+  // much faster on the second pass.
   return new Response(
-    JSON.stringify({ error: `${label} job still running after 5 min — retry to resume polling`, jobId: runData.id }),
+    JSON.stringify({ error: `${label} job still running after runsync window — retry`, jobId: runData.id, status: runData.status }),
     { status: 504, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
   );
 }
@@ -92,7 +78,7 @@ async function forwardToIvritPod(payload, env, corsHeaders) {
       { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
     );
   }
-  return forwardToRunPodAsync(payload, { endpointId, apiKey, label: 'ivrit-iterative' }, corsHeaders);
+  return forwardToRunPodSync(payload, { endpointId, apiKey, label: 'ivrit-iterative' }, corsHeaders);
 }
 
 async function forwardToStableTsTrimPod(payload, env, corsHeaders) {
@@ -104,7 +90,7 @@ async function forwardToStableTsTrimPod(payload, env, corsHeaders) {
       { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
     );
   }
-  return forwardToRunPodAsync(payload, { endpointId, apiKey, label: 'stable-ts-trim' }, corsHeaders);
+  return forwardToRunPodSync(payload, { endpointId, apiKey, label: 'stable-ts-trim' }, corsHeaders);
 }
 
 const CORS_HEADERS = {
@@ -152,17 +138,12 @@ export async function onRequestPost(context) {
       }
 
       // ── stable-ts path ───────────────────────────────────────────────
-      // Untrimmed requests go to the original pod at align.kohnai.ai — it
-      // honours audio_url and returns the raw pod output directly.
-      //
-      // Trimmed requests route to the trim-capable pod on RunPod when
-      // STABLE_TS_TRIM_ENDPOINT_ID is set. That image pre-trims audio
-      // with ffmpeg before alignment (the default pod silently ignores
-      // trim_end). When unset, trimmed requests fall back to the default
-      // pod — which works for untrimmed-style alignments but will drift
-      // on large trim_end gaps until the secret is configured.
-      const hasTrim = (payload.trim_start > 0) || (payload.trim_end > 0);
-      if (hasTrim && context.env?.STABLE_TS_TRIM_ENDPOINT_ID) {
+      // Route all stable-ts traffic (trimmed and untrimmed) to the
+      // RunPod trim pod when STABLE_TS_TRIM_ENDPOINT_ID is set. The
+      // image handles untrimmed audio fine (trim params are optional).
+      // Falls back to align.kohnai.ai only when the endpoint isn't
+      // configured — that pod has historically been flaky.
+      if (context.env?.STABLE_TS_TRIM_ENDPOINT_ID) {
         return forwardToStableTsTrimPod(payload, context.env, CORS_HEADERS);
       }
       const forwardPayload = { ...payload };

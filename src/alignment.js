@@ -257,7 +257,7 @@ export async function doAlignRequest(requestBody, chunkLabel, onProgress) {
       throw new Error(`Alignment network error after ${MAX_RETRIES} attempts: ${err.message}`);
     }
     clearTimeout(timeoutId);
-    if (response.status === 502 || response.status === 504) {
+    if (response.status === 502 || response.status === 504 || response.status === 524) {
       console.warn(`[Align${chunkLabel}] Got ${response.status} on attempt ${attempt}/${MAX_RETRIES} — retrying in ${RETRY_DELAY_MS / 1000}s...`);
       if (attempt < MAX_RETRIES) {
         if (onProgress) onProgress(attempt, MAX_RETRIES);
