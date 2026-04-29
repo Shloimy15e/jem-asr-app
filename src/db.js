@@ -597,6 +597,7 @@ export async function loadFromSupabase(libraryId = null) {
       trimEnd: a.trim_end || 0,
       trainingExportedAt: a.training_exported_at || null,
       trainingExportedBy: a.training_exported_by || null,
+      createdAt: a.created_at || null,
     }));
 
     const trims = {};
@@ -741,6 +742,7 @@ export async function loadForDetailPage(audioId, libraryId = null) {
       trimStart: a.trim_start || 0, trimEnd: a.trim_end || 0,
       trainingExportedAt: a.training_exported_at || null,
       trainingExportedBy: a.training_exported_by || null,
+      createdAt: a.created_at || null,
     }));
 
     const trims = {};
