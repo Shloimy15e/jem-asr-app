@@ -1101,6 +1101,15 @@ function buildAsrProviderBar(audioId, state, onComplete) {
         }
         btn.textContent = `${btnLabel} — failed`;
         btn.disabled = false;
+        const msg = err?.message || String(err);
+        // Hover-tooltip carries the full message so the user always has
+        // visibility into the failure cause without opening devtools.
+        btn.title = msg;
+        // Surface infra-saturation errors (RunPod queue, YL plan cap) as a
+        // brief alert so they're impossible to miss.
+        if (typeof window !== 'undefined' && /saturated|concurrent|queue|too many/i.test(msg)) {
+          window.alert(`${btnLabel}: ${msg}`);
+        }
       }
     });
 

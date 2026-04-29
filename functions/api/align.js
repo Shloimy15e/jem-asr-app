@@ -48,6 +48,16 @@ function extractPodSeconds(status) {
   return ms / 1000;
 }
 
+// RunPod's serverless /run endpoint returns 429 ("too many requests in
+// queue") when its in-flight queue is saturated. The queue drains as
+// workers pick up jobs, so a short retry-with-backoff usually clears it.
+// We cap total wait at ~12 s so the kickoff stays well inside the
+// Cloudflare Pages 60 s edge cap and surfaces a clean error if the queue
+// is genuinely stuck.
+const RUNPOD_429_RETRY_DELAYS_MS = [1000, 2500, 4000, 5000];
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 // Kick off a RunPod serverless job and return the job id immediately. Used
 // for transcribe-mode requests where polling >100 s would blow Cloudflare's
 // edge timeout — the browser polls /api/align-status instead.
@@ -61,13 +71,51 @@ async function kickoffRunPodAsync(payload, { endpointId, apiKey, label }) {
   if (payload.trim_start != null) input.trim_start = payload.trim_start;
   if (payload.trim_end != null && payload.trim_end > 0) input.trim_end = payload.trim_end;
 
-  const runResp = await fetch(`https://api.runpod.ai/v2/${endpointId}/run`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ input }),
-  });
+  let runResp;
+  let body = '';
+  let attempt = 0;
+  for (;;) {
+    runResp = await fetch(`https://api.runpod.ai/v2/${endpointId}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ input }),
+    });
+    if (runResp.status !== 429) break;
+    body = await runResp.text().catch(() => '');
+    if (attempt >= RUNPOD_429_RETRY_DELAYS_MS.length) {
+      console.warn(`[align] ${label} /run 429 after ${attempt + 1} attempts; giving up`);
+      // Fall through with the final 429 response captured in body.
+      break;
+    }
+    const wait = RUNPOD_429_RETRY_DELAYS_MS[attempt];
+    console.warn(`[align] ${label} /run 429 (queue saturated); retrying in ${wait}ms (attempt ${attempt + 1}/${RUNPOD_429_RETRY_DELAYS_MS.length})`);
+    await sleep(wait);
+    attempt++;
+  }
   if (!runResp.ok) {
-    const body = await runResp.text().catch(() => '');
+    if (!body) body = await runResp.text().catch(() => '');
+    if (runResp.status === 429) {
+      // Friendly, actionable error with live queue depth from /health so
+      // the user can tell at-a-glance whether to wait or whether all
+      // workers are down.
+      const health = await fetchRunPodHealth(endpointId, apiKey).catch(() => null);
+      let suffix = '';
+      if (health) {
+        const w = health.workers || {};
+        const j = health.jobs || {};
+        const ready = w.ready ?? '?';
+        const running = w.running ?? '?';
+        const total = w.idle != null && w.ready != null ? (w.ready + (w.idle || 0)) : (w.ready ?? '?');
+        const inq = j.inQueue ?? j.in_queue ?? '?';
+        const inProg = j.inProgress ?? j.in_progress ?? '?';
+        suffix = ` (workers ready=${ready}, running=${running}, total=${total}; jobs in_queue=${inq}, in_progress=${inProg})`;
+      }
+      throw {
+        status: 503,
+        message: `${label} RunPod queue is saturated${suffix} — too many in-flight jobs. Retry in 30–60s, or scale up RunPod workers.`,
+        detail: body,
+      };
+    }
     throw { status: 502, message: `${label} /run failed: ${runResp.status}`, detail: body };
   }
   const runData = await runResp.json();
@@ -75,6 +123,18 @@ async function kickoffRunPodAsync(payload, { endpointId, apiKey, label }) {
     throw { status: 502, message: `${label} /run did not return job id`, detail: runData };
   }
   return { job_id: runData.id, endpoint_label: label };
+}
+
+// RunPod serverless `/health` returns worker + job counters. Used to enrich
+// 429 error messages so the operator can tell whether the queue is just
+// momentarily backed up (workers running, queue draining) vs. a hard
+// outage (workers ready=0).
+async function fetchRunPodHealth(endpointId, apiKey) {
+  const resp = await fetch(`https://api.runpod.ai/v2/${endpointId}/health`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  if (!resp.ok) return null;
+  return resp.json().catch(() => null);
 }
 
 async function forwardToRunPodAsync(payload, { endpointId, apiKey, label }, corsHeaders) {
@@ -87,13 +147,34 @@ async function forwardToRunPodAsync(payload, { endpointId, apiKey, label }, cors
   if (payload.trim_start != null) input.trim_start = payload.trim_start;
   if (payload.trim_end != null && payload.trim_end > 0) input.trim_end = payload.trim_end;
 
-  const runResp = await fetch(`https://api.runpod.ai/v2/${endpointId}/run`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ input }),
-  });
+  let runResp;
+  let body = '';
+  let attempt = 0;
+  for (;;) {
+    runResp = await fetch(`https://api.runpod.ai/v2/${endpointId}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ input }),
+    });
+    if (runResp.status !== 429) break;
+    body = await runResp.text().catch(() => '');
+    if (attempt >= RUNPOD_429_RETRY_DELAYS_MS.length) break;
+    const wait = RUNPOD_429_RETRY_DELAYS_MS[attempt];
+    console.warn(`[align/forward] ${label} /run 429; retrying in ${wait}ms (${attempt + 1}/${RUNPOD_429_RETRY_DELAYS_MS.length})`);
+    await sleep(wait);
+    attempt++;
+  }
   if (!runResp.ok) {
-    const body = await runResp.text().catch(() => '');
+    if (!body) body = await runResp.text().catch(() => '');
+    if (runResp.status === 429) {
+      return new Response(
+        JSON.stringify({
+          error: `${label} RunPod queue is saturated — too many in-flight jobs. Retry in 30–60s, or scale up RunPod workers.`,
+          detail: body,
+        }),
+        { status: 503, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
+      );
+    }
     return new Response(
       JSON.stringify({ error: `${label} /run failed: ${runResp.status}`, detail: body }),
       { status: 502, headers: { 'Content-Type': 'application/json', ...corsHeaders } },

@@ -688,6 +688,11 @@ export async function transcribeAudio(audioId, audioUrl, config) {
     });
     if (response.status === 402) await throwForResponse(response, 'Whisper');
     if (!response.ok) {
+      // Surface the JSON error.message verbatim when the Worker emitted one
+      // (e.g. the 503 "RunPod queue saturated" message) so the user sees a
+      // useful, actionable string instead of a status-prefixed text dump.
+      const errJson = await response.clone().json().catch(() => null);
+      if (errJson && errJson.error) throw new Error(errJson.error);
       const errText = await response.text().catch(() => '');
       throw new Error(`Whisper transcription error ${response.status}: ${errText}`);
     }
