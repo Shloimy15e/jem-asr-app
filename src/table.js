@@ -119,6 +119,7 @@ const COLUMNS = [
   { key: 'type',          label: 'Type',              sortable: true,  showWhen: () => true },
   { key: 'sichaNum',      label: 'No.',               sortable: true,  showWhen: () => true },
   { key: 'estMinutes',    label: 'Duration',          sortable: true,  showWhen: () => true },
+  { key: 'createdAt',     label: 'Uploaded',          sortable: true,  showWhen: () => true },
   { key: 'firstLine',     label: 'First 15 Words',    sortable: false, showWhen: () => true },
   { key: 'transcript',    label: 'Transcript Name',   sortable: true,  showWhen: () => true },
   { key: 'comments',      label: 'Comments',          sortable: false, showWhen: () => true },
@@ -171,6 +172,7 @@ function getRowData(audio) {
     type: (state.audioTypes && state.audioTypes[id]) || audio.type || '',
     sichaNum: parseSichaNum(audio.name) || '',
     estMinutes: audio.estMinutes != null ? audio.estMinutes + ' min' : '',
+    createdAt: audio.createdAt || null,
     firstLine: transcript ? truncateWords(transcript.firstLine || '', 15) : '',
     transcript: transcript ? transcript.name : '',
     matchConf: mapping ? formatConfidence(mapping.confidence) : '',
@@ -249,6 +251,17 @@ function sortRows(rows) {
   const key = currentSort.column;
   const dir = currentSort.dir === 'asc' ? 1 : -1;
   return [...rows].sort((a, b) => {
+    if (key === 'createdAt') {
+      // Sort by upload timestamp. Rows missing a created_at sink to the
+      // bottom regardless of direction so old pre-column rows don't
+      // pollute either end of the sort.
+      const av = a.createdAt ? new Date(a.createdAt).getTime() : null;
+      const bv = b.createdAt ? new Date(b.createdAt).getTime() : null;
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return (av - bv) * dir;
+    }
     let va = a[key];
     let vb = b[key];
     // Parse numeric-looking values
@@ -864,6 +877,33 @@ function buildTable(rows) {
             fiftyBadge.textContent = '50hr';
             fiftyBadge.style.marginLeft = '4px';
             td.appendChild(fiftyBadge);
+          }
+          break;
+        }
+        case 'createdAt': {
+          // Show a compact relative date for recent uploads ("2h ago",
+          // "3d ago"), and a short absolute date once the row is older
+          // than a week. Full ISO timestamp lives in the tooltip so power
+          // users can see exact upload time.
+          if (row.createdAt) {
+            const d = new Date(row.createdAt);
+            const now = Date.now();
+            const diffSec = Math.max(0, Math.round((now - d.getTime()) / 1000));
+            let label;
+            if (diffSec < 60) label = 'just now';
+            else if (diffSec < 3600) label = `${Math.floor(diffSec / 60)}m ago`;
+            else if (diffSec < 86400) label = `${Math.floor(diffSec / 3600)}h ago`;
+            else if (diffSec < 7 * 86400) label = `${Math.floor(diffSec / 86400)}d ago`;
+            else label = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+            td.textContent = label;
+            td.title = d.toLocaleString();
+            td.style.whiteSpace = 'nowrap';
+            td.style.fontVariantNumeric = 'tabular-nums';
+          } else {
+            const dash = document.createElement('span');
+            dash.style.color = 'var(--text-muted)';
+            dash.textContent = '—';
+            td.appendChild(dash);
           }
           break;
         }
