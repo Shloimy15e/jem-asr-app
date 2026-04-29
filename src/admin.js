@@ -336,6 +336,47 @@ function renderUploadPanel(container, adminLibs) {
   desc.textContent = 'Upload audio or transcript files directly to a library\'s R2 bucket. Uploaded files are immediately available in the library.';
   container.appendChild(desc);
 
+  // ── Sub-tab switcher: Single | Bulk ────────────────────────────────────
+  const subTabs = document.createElement('div');
+  subTabs.className = 'admin-tabs';
+  subTabs.style.marginBottom = '1rem';
+
+  const singleTabBtn = document.createElement('button');
+  singleTabBtn.className = 'admin-tab active';
+  singleTabBtn.textContent = 'Single File';
+
+  const bulkTabBtn = document.createElement('button');
+  bulkTabBtn.className = 'admin-tab';
+  bulkTabBtn.textContent = 'Bulk Audio + Transcripts';
+
+  subTabs.appendChild(singleTabBtn);
+  subTabs.appendChild(bulkTabBtn);
+  container.appendChild(subTabs);
+
+  const singlePanel = document.createElement('div');
+  const bulkPanel = document.createElement('div');
+  bulkPanel.style.display = 'none';
+  container.appendChild(singlePanel);
+  container.appendChild(bulkPanel);
+
+  singleTabBtn.addEventListener('click', () => {
+    singleTabBtn.classList.add('active');
+    bulkTabBtn.classList.remove('active');
+    singlePanel.style.display = '';
+    bulkPanel.style.display = 'none';
+  });
+  bulkTabBtn.addEventListener('click', () => {
+    bulkTabBtn.classList.add('active');
+    singleTabBtn.classList.remove('active');
+    bulkPanel.style.display = '';
+    singlePanel.style.display = 'none';
+  });
+
+  renderSingleUploadForm(singlePanel, adminLibs);
+  renderBulkUploadForm(bulkPanel, adminLibs);
+}
+
+function renderSingleUploadForm(container, adminLibs) {
   const form = document.createElement('div');
   form.className = 'admin-form';
   form.style.maxWidth = '560px';
@@ -562,6 +603,438 @@ function renderUploadPanel(container, adminLibs) {
       uploadBtn.textContent = 'Upload';
     }
   });
+}
+
+// ── Bulk upload form ─────────────────────────────────────────────────────────
+//
+// Lets an admin pick many audio files at once and, per-row, attach a transcript
+// via:
+//   - File upload (.docx → parsed via mammoth, .txt → used as-is)
+//   - Pasted text
+//   - None
+// On "Upload All": each audio is uploaded to R2 (presigned PUT), each transcript
+// is uploaded as a UTF-8 .txt to R2, then audio_files + transcripts rows are
+// inserted and a mapping is created linking them.
+
+function renderBulkUploadForm(container, adminLibs) {
+  container.innerHTML = '';
+
+  const intro = document.createElement('p');
+  intro.className = 'text-secondary';
+  intro.style.cssText = 'font-size:0.85rem;margin-bottom:0.75rem;';
+  intro.textContent = 'Pick multiple audio files. For each one, optionally attach a transcript by uploading a Word/.docx, .txt, or pasting the text.';
+  container.appendChild(intro);
+
+  // ── Library picker ──────────────────────────────────────────────────────
+  const libRow = document.createElement('div');
+  libRow.className = 'admin-form-row';
+  libRow.style.maxWidth = '320px';
+  const libLabel = document.createElement('label');
+  libLabel.textContent = 'Library';
+  const libSelect = document.createElement('select');
+  libSelect.className = 'filter-select';
+  for (const lib of adminLibs) {
+    const opt = document.createElement('option');
+    opt.value = lib.id;
+    opt.textContent = lib.name;
+    libSelect.appendChild(opt);
+  }
+  libRow.appendChild(libLabel);
+  libRow.appendChild(libSelect);
+  container.appendChild(libRow);
+
+  // ── Audio multi-file picker ─────────────────────────────────────────────
+  const audioRow = document.createElement('div');
+  audioRow.className = 'admin-form-row';
+  audioRow.style.marginTop = '12px';
+  const audioLabel = document.createElement('label');
+  audioLabel.textContent = 'Audio Files (select multiple)';
+  const audioInput = document.createElement('input');
+  audioInput.type = 'file';
+  audioInput.className = 'admin-input';
+  audioInput.multiple = true;
+  audioInput.accept = '.mp3,.wav,.m4a,.ogg,.flac';
+  audioRow.appendChild(audioLabel);
+  audioRow.appendChild(audioInput);
+  container.appendChild(audioRow);
+
+  // ── Rows container (one per audio file) ─────────────────────────────────
+  const rowsList = document.createElement('div');
+  rowsList.style.cssText = 'display:flex;flex-direction:column;gap:10px;margin-top:14px;';
+  container.appendChild(rowsList);
+
+  // Each row state lives in `rowEntries`. fileEntry shape:
+  //   { audioFile, displayName, recId, mode: 'none'|'file'|'paste',
+  //     transcriptFile, transcriptFileName, pastedText, parsedText, parseStatus, rowEl }
+  const rowEntries = [];
+
+  audioInput.addEventListener('change', () => {
+    rowEntries.length = 0;
+    rowsList.innerHTML = '';
+    const files = Array.from(audioInput.files || []);
+    if (files.length === 0) return;
+
+    for (const f of files) {
+      const entry = createBulkRow(f, libSelect.value);
+      rowEntries.push(entry);
+      rowsList.appendChild(entry.rowEl);
+    }
+  });
+
+  // Re-stamp rec IDs when library changes (because IDs are prefixed with library)
+  libSelect.addEventListener('change', () => {
+    for (const e of rowEntries) {
+      const basename = e.audioFile.name.replace(/\.[^.]+$/, '');
+      const slug = basename.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      e.recId = `${libSelect.value}-${slug}-${Date.now().toString(36)}`;
+      if (e.idInput) e.idInput.value = e.recId;
+    }
+  });
+
+  // ── Upload All button + status ──────────────────────────────────────────
+  const uploadBtn = document.createElement('button');
+  uploadBtn.className = 'action-btn action-btn-primary';
+  uploadBtn.style.marginTop = '14px';
+  uploadBtn.textContent = 'Upload All';
+  container.appendChild(uploadBtn);
+
+  const statusEl = document.createElement('div');
+  statusEl.style.marginTop = '10px';
+  container.appendChild(statusEl);
+
+  uploadBtn.addEventListener('click', async () => {
+    statusEl.textContent = '';
+    statusEl.style.color = '';
+
+    if (rowEntries.length === 0) {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'Select audio files first.';
+      return;
+    }
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'Not authenticated. Please sign in again.';
+      return;
+    }
+
+    const libId = libSelect.value;
+    uploadBtn.disabled = true;
+
+    let okCount = 0;
+    const errors = [];
+
+    for (let i = 0; i < rowEntries.length; i++) {
+      const entry = rowEntries[i];
+      uploadBtn.textContent = `Uploading ${i + 1} / ${rowEntries.length}…`;
+      entry.setStatus('Uploading audio…', 'work');
+
+      try {
+        // 1) Get the transcript text up front (so we fail fast before audio upload)
+        let transcriptText = null;
+        if (entry.mode === 'paste') {
+          transcriptText = (entry.pastedText || '').trim();
+          if (!transcriptText) throw new Error('Pasted transcript is empty');
+        } else if (entry.mode === 'file') {
+          if (!entry.transcriptFile) throw new Error('No transcript file selected');
+          transcriptText = await extractTextFromFile(entry.transcriptFile);
+          if (!transcriptText.trim()) throw new Error('Transcript file produced empty text');
+        }
+
+        // 2) Upload audio
+        const audioName = entry.displayName.value.trim() || entry.audioFile.name.replace(/\.[^.]+$/, '');
+        const audioRecId = entry.idInput.value.trim() || entry.recId;
+        const audioUrl = await uploadFileToR2(entry.audioFile, libId, session.access_token);
+
+        // 3) Insert audio_files row
+        {
+          const { error } = await supabase.from('audio_files').insert({
+            id: audioRecId,
+            name: audioName,
+            r2_link: audioUrl,
+            library_id: libId,
+            is_selected_50hr: false,
+            is_benchmark: false,
+          });
+          if (error) throw new Error('Audio DB insert failed: ' + error.message);
+        }
+        logActivity('file_uploaded', audioRecId, audioName, { type: 'audio', libraryId: libId });
+
+        // 4) If a transcript was provided, upload it + insert + map
+        if (transcriptText) {
+          entry.setStatus('Uploading transcript…', 'work');
+          const transcriptRecId = `${audioRecId}-transcript`;
+          const transcriptName = `${audioName} — transcript`;
+          const txtBlob = new Blob([transcriptText], { type: 'text/plain; charset=utf-8' });
+          const txtFile = new File([txtBlob], `${audioRecId}.txt`, { type: 'text/plain; charset=utf-8' });
+          const transcriptUrl = await uploadFileToR2(txtFile, libId, session.access_token);
+
+          {
+            const { error } = await supabase.from('transcripts').insert({
+              id: transcriptRecId,
+              name: transcriptName,
+              r2_transcript_link: transcriptUrl,
+              text: transcriptText,
+              library_id: libId,
+            });
+            if (error) throw new Error('Transcript DB insert failed: ' + error.message);
+          }
+          logActivity('file_uploaded', transcriptRecId, transcriptName, { type: 'transcript', libraryId: libId });
+
+          // Mapping: link audio → transcript at confidence 1 (manually paired)
+          {
+            const { error } = await supabase.from('mappings').insert({
+              audio_id: audioRecId,
+              transcript_id: transcriptRecId,
+              confidence: 1,
+              match_reason: 'bulk-upload paired',
+              confirmed_by: session.user?.email || null,
+              library_id: libId,
+            });
+            if (error) throw new Error('Mapping insert failed: ' + error.message);
+          }
+          logActivity('mapping_confirmed', audioRecId, audioName, { transcriptId: transcriptRecId });
+        }
+
+        entry.setStatus('Done', 'ok');
+        okCount++;
+      } catch (err) {
+        entry.setStatus('Error: ' + err.message, 'err');
+        errors.push(`${entry.audioFile.name}: ${err.message}`);
+      }
+    }
+
+    uploadBtn.disabled = false;
+    uploadBtn.textContent = 'Upload All';
+    if (errors.length === 0) {
+      statusEl.style.color = 'var(--green)';
+      statusEl.textContent = `All ${okCount} files uploaded successfully.`;
+    } else {
+      statusEl.style.color = okCount > 0 ? 'var(--orange)' : 'var(--red)';
+      statusEl.innerHTML = `${okCount} succeeded, ${errors.length} failed.<br><span class="text-secondary" style="font-size:0.8rem">${esc(errors.join('  •  '))}</span>`;
+    }
+  });
+}
+
+// Build a single row in the bulk-upload list. Returns an entry object with
+// references to its inputs and a setStatus(text, kind) helper.
+function createBulkRow(audioFile, libId) {
+  const entry = {
+    audioFile,
+    displayName: null,
+    idInput: null,
+    recId: '',
+    mode: 'none',
+    transcriptFile: null,
+    pastedText: '',
+    rowEl: null,
+    setStatus: () => {},
+  };
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 14px;background:var(--surface);';
+
+  const head = document.createElement('div');
+  head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;';
+  const title = document.createElement('div');
+  title.style.cssText = 'font-weight:600;font-size:0.9rem;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  title.textContent = `🎵 ${audioFile.name}`;
+  title.title = audioFile.name;
+  const sizeLabel = document.createElement('span');
+  sizeLabel.className = 'text-secondary';
+  sizeLabel.style.fontSize = '0.78rem';
+  sizeLabel.textContent = `${(audioFile.size / 1024 / 1024).toFixed(1)} MB`;
+  head.appendChild(title);
+  head.appendChild(sizeLabel);
+  wrap.appendChild(head);
+
+  // Display name + Record ID inputs (compact two-column)
+  const metaRow = document.createElement('div');
+  metaRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;';
+
+  const nameWrap = document.createElement('div');
+  const nameLab = document.createElement('label');
+  nameLab.textContent = 'Display Name';
+  nameLab.style.cssText = 'font-size:0.74rem;font-weight:600;color:var(--text-secondary);display:block;margin-bottom:3px;';
+  const nameInput = document.createElement('input');
+  nameInput.className = 'admin-input';
+  const baseName = audioFile.name.replace(/\.[^.]+$/, '');
+  nameInput.value = baseName;
+  nameWrap.appendChild(nameLab);
+  nameWrap.appendChild(nameInput);
+
+  const idWrap = document.createElement('div');
+  const idLab = document.createElement('label');
+  idLab.textContent = 'Record ID';
+  idLab.style.cssText = 'font-size:0.74rem;font-weight:600;color:var(--text-secondary);display:block;margin-bottom:3px;';
+  const idInput = document.createElement('input');
+  idInput.className = 'admin-input';
+  const slug = baseName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const recId = `${libId}-${slug}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+  idInput.value = recId;
+  idWrap.appendChild(idLab);
+  idWrap.appendChild(idInput);
+
+  metaRow.appendChild(nameWrap);
+  metaRow.appendChild(idWrap);
+  wrap.appendChild(metaRow);
+
+  entry.displayName = nameInput;
+  entry.idInput = idInput;
+  entry.recId = recId;
+
+  // ── Transcript section ──────────────────────────────────────────────────
+  const trWrap = document.createElement('div');
+  trWrap.style.cssText = 'border-top:1px dashed var(--border);padding-top:10px;';
+
+  const trHead = document.createElement('div');
+  trHead.style.cssText = 'display:flex;align-items:center;gap:14px;margin-bottom:8px;flex-wrap:wrap;';
+  const trLabel = document.createElement('span');
+  trLabel.style.cssText = 'font-size:0.78rem;font-weight:600;color:var(--text-secondary);';
+  trLabel.textContent = 'Transcript:';
+  trHead.appendChild(trLabel);
+
+  const radioGroupName = `tr-mode-${recId}`;
+  const modes = [
+    { value: 'none',  label: 'None' },
+    { value: 'file',  label: 'Upload .docx / .txt' },
+    { value: 'paste', label: 'Paste text' },
+  ];
+  for (const m of modes) {
+    const radioLab = document.createElement('label');
+    radioLab.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:0.82rem;cursor:pointer;';
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = radioGroupName;
+    radio.value = m.value;
+    if (m.value === 'none') radio.checked = true;
+    radio.addEventListener('change', () => {
+      if (radio.checked) {
+        entry.mode = m.value;
+        fileBlock.style.display = m.value === 'file' ? '' : 'none';
+        pasteBlock.style.display = m.value === 'paste' ? '' : 'none';
+      }
+    });
+    radioLab.appendChild(radio);
+    radioLab.appendChild(document.createTextNode(m.label));
+    trHead.appendChild(radioLab);
+  }
+  trWrap.appendChild(trHead);
+
+  // File picker block
+  const fileBlock = document.createElement('div');
+  fileBlock.style.display = 'none';
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.className = 'admin-input';
+  fileInput.accept = '.docx,.txt,.doc';
+  const fileInfo = document.createElement('div');
+  fileInfo.className = 'text-secondary';
+  fileInfo.style.cssText = 'font-size:0.75rem;margin-top:4px;';
+  fileInput.addEventListener('change', async () => {
+    const f = fileInput.files?.[0];
+    entry.transcriptFile = f || null;
+    if (!f) { fileInfo.textContent = ''; return; }
+    fileInfo.textContent = 'Parsing…';
+    try {
+      const text = await extractTextFromFile(f);
+      const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
+      fileInfo.style.color = 'var(--green)';
+      fileInfo.textContent = `✓ Parsed ${wordCount.toLocaleString()} words from ${f.name}`;
+    } catch (err) {
+      fileInfo.style.color = 'var(--red)';
+      fileInfo.textContent = '✗ ' + err.message;
+    }
+  });
+  fileBlock.appendChild(fileInput);
+  fileBlock.appendChild(fileInfo);
+  trWrap.appendChild(fileBlock);
+
+  // Paste block
+  const pasteBlock = document.createElement('div');
+  pasteBlock.style.display = 'none';
+  const pasteArea = document.createElement('textarea');
+  pasteArea.className = 'admin-input';
+  pasteArea.rows = 6;
+  pasteArea.placeholder = 'Paste transcript text here…';
+  pasteArea.style.cssText = 'font-family:inherit;resize:vertical;direction:rtl;text-align:right;';
+  pasteArea.addEventListener('input', () => {
+    entry.pastedText = pasteArea.value;
+  });
+  pasteBlock.appendChild(pasteArea);
+  trWrap.appendChild(pasteBlock);
+
+  wrap.appendChild(trWrap);
+
+  // Status line
+  const statusLine = document.createElement('div');
+  statusLine.style.cssText = 'margin-top:8px;font-size:0.78rem;min-height:1em;';
+  wrap.appendChild(statusLine);
+
+  entry.setStatus = (text, kind) => {
+    statusLine.textContent = text || '';
+    if (kind === 'ok')   statusLine.style.color = 'var(--green)';
+    else if (kind === 'err')  statusLine.style.color = 'var(--red)';
+    else if (kind === 'work') statusLine.style.color = 'var(--accent)';
+    else statusLine.style.color = '';
+  };
+
+  entry.rowEl = wrap;
+  return entry;
+}
+
+// Read text from a Word/.docx, .txt, or .doc file. Word docs are parsed via
+// mammoth (loaded on demand to keep the admin bundle small). .txt files are
+// read as UTF-8.
+async function extractTextFromFile(file) {
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith('.docx')) {
+    const { default: mammoth } = await import('mammoth');
+    const buf = await file.arrayBuffer();
+    const result = await mammoth.extractRawText({ arrayBuffer: buf });
+    return result.value || '';
+  }
+  if (lower.endsWith('.txt')) {
+    return await file.text();
+  }
+  if (lower.endsWith('.doc')) {
+    throw new Error('Legacy .doc not supported — please save as .docx or .txt');
+  }
+  return await file.text();
+}
+
+// Upload a File or Blob to R2 via the presigned-PUT flow used by the single
+// upload form. Returns the public R2 URL of the uploaded object.
+async function uploadFileToR2(file, libId, accessToken) {
+  const safeFilename = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const key = `${libId}/${safeFilename}`;
+
+  const signRes = await fetch('/api/upload-url', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ key, contentType: file.type || 'application/octet-stream' }),
+  });
+  const signText = await signRes.text();
+  let signed;
+  try { signed = JSON.parse(signText); } catch {
+    throw new Error(`sign URL HTTP ${signRes.status}: ${signText.slice(0, 200)}`);
+  }
+  if (!signRes.ok) throw new Error(signed.error || `sign URL HTTP ${signRes.status}`);
+
+  const putRes = await fetch(signed.url, {
+    method: 'PUT',
+    headers: { 'Content-Type': signed.contentType },
+    body: file,
+  });
+  if (!putRes.ok) {
+    const body = await putRes.text().catch(() => '');
+    throw new Error(`R2 PUT failed HTTP ${putRes.status}: ${body.slice(0, 200)}`);
+  }
+  return signed.publicUrl;
 }
 
 // ── Activity panel ───────────────────────────────────────────────────────────
