@@ -863,6 +863,11 @@ function getRowData(audio) {
     isSelected50hr: !!audio.isSelected50hr,
     trainingExportedAt: audio.trainingExportedAt || null,
     trainingExportedBy: audio.trainingExportedBy || null,
+    // Upload date — sourced from audio_files.created_at (mapped on the
+    // audio object in db.js). Without this passthrough, the 'Uploaded'
+    // column and createdAt sort fall through to placeholder/empty,
+    // matching the bug fixed by main's PR #28 (e393089).
+    createdAt: audio.createdAt || null,
   };
 }
 
