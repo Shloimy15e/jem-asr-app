@@ -404,11 +404,23 @@ export async function onRequestPost(context) {
         if (payload.aligner === 'ivrit-iterative') {
           endpointId = env?.IVRIT_ENDPOINT_ID; label = 'ivrit-iterative';
         } else {
-          endpointId = env?.STABLE_TS_ENDPOINT_ID; label = 'stable-ts';
+          // Match main's routing (commit dc556e6): all stable-ts traffic
+          // (trimmed AND untrimmed) goes to the trim pod. The trim image
+          // handles untrimmed audio fine (trim params are optional) and the
+          // legacy STABLE_TS pod / align.kohnai.ai chain is dead. Only fall
+          // back to STABLE_TS_ENDPOINT_ID if the trim secret isn't set.
+          // The label is the *resolved* endpoint id family — /api/align-status
+          // uses it to route the /status/{jobId} lookup to the right pod, so
+          // it must match the endpoint we actually kicked off against.
+          if (env?.STABLE_TS_TRIM_ENDPOINT_ID) {
+            endpointId = env.STABLE_TS_TRIM_ENDPOINT_ID; label = 'stable-ts-trim';
+          } else {
+            endpointId = env?.STABLE_TS_ENDPOINT_ID;     label = 'stable-ts';
+          }
         }
         if (!endpointId || !apiKey) {
           return new Response(
-            JSON.stringify({ error: `${label} not configured: set the corresponding RunPod endpoint id + RUNPOD_API_KEY` }),
+            JSON.stringify({ error: `${label} not configured: set STABLE_TS_TRIM_ENDPOINT_ID + RUNPOD_API_KEY in Pages env` }),
             { status: 500, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
           );
         }
@@ -469,29 +481,26 @@ export async function onRequestPost(context) {
       }
 
       // ── stable-ts path ───────────────────────────────────────────────
-      // Untrimmed requests go to the original pod at align.kohnai.ai — it
-      // honours audio_url and returns the raw pod output directly.
-      //
-      // Trimmed requests route to the trim-capable pod on RunPod when
-      // STABLE_TS_TRIM_ENDPOINT_ID is set. That image pre-trims audio
-      // with ffmpeg before alignment (the default pod silently ignores
-      // trim_end). When unset, trimmed requests fall back to the default
-      // pod — which works for untrimmed-style alignments but will drift
-      // on large trim_end gaps until the secret is configured.
-      const hasTrim = (payload.trim_start > 0) || (payload.trim_end > 0);
-      if (hasTrim && context.env?.STABLE_TS_TRIM_ENDPOINT_ID) {
+      // Match main's routing (commit dc556e6 / PR #27): all stable-ts
+      // traffic — trimmed AND untrimmed — goes to the RunPod trim pod
+      // when STABLE_TS_TRIM_ENDPOINT_ID is set. The image handles both
+      // (trim params are optional). align.kohnai.ai is a dead origin
+      // (POST returns 502 in ~180ms regardless of payload), so the
+      // legacy fallback below is reached only when no RunPod endpoint
+      // is configured.
+      if (context.env?.STABLE_TS_TRIM_ENDPOINT_ID) {
         const resp = await forwardToStableTsTrimPod(payload, context.env, CORS_HEADERS);
         return wrapWithMetering(resp, { env: context.env, billing, payload, providerLabel: 'stable-ts' });
       }
-      // Prefer async polling against the stable-ts pod when configured —
-      // avoids the synchronous align.kohnai.ai chain that hits the 100s
-      // CF wall-clock cap on cold starts.
+      // Secondary fallback: the legacy untrimmed RunPod pod, kept for
+      // environments where only STABLE_TS_ENDPOINT_ID is set.
       if (context.env?.STABLE_TS_ENDPOINT_ID) {
         const resp = await forwardToStableTsPod(payload, context.env, CORS_HEADERS);
         return wrapWithMetering(resp, { env: context.env, billing, payload, providerLabel: 'stable-ts' });
       }
-      // Legacy fallback: synchronous chain via align.kohnai.ai. Kept for
-      // backward compatibility when STABLE_TS_ENDPOINT_ID isn't set.
+      // Last-resort fallback: align.kohnai.ai. Origin is currently dead
+      // upstream (502s) — this branch only fires when no RunPod endpoint
+      // is configured. Left in place so error messages stay diagnosable.
       const forwardPayload = { ...payload };
       delete forwardPayload.audio_duration; // pod doesn't use this
       const resp = await fetch(ALIGN_ENDPOINT, {
