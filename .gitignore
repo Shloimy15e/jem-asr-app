@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .env
+**/.sa-key.json
+*.sa-key.json
 tmp-audio/
 .wrangler/
 training/checkpoints/

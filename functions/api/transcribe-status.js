@@ -47,11 +47,84 @@ export async function onRequestGet(context) {
     const usageId = url.searchParams.get('usage_id') || null;
 
     if (!jobId) return json({ error: 'Missing job_id' }, 400);
-    if (provider !== 'mendel') {
+    if (provider !== 'mendel' && provider !== 'gemini') {
       return json({ error: `Unsupported provider for transcribe-status: ${provider}` }, 400);
     }
 
     const env = context.env;
+
+    // ── Gemini: read consumer-written state from KV ──────────────────
+    if (provider === 'gemini') {
+      if (!env.GEMINI_RESULTS) return json({ error: 'GEMINI_RESULTS KV not bound' }, 500);
+
+      const raw = await env.GEMINI_RESULTS.get(`gemini:${jobId}`);
+      if (!raw) {
+        // Treat unknown jobs as still-processing for the first ~30s; after
+        // that the queue almost certainly delivered them so missing key
+        // means the consumer never recorded anything (or KV TTL expired).
+        return json({ status: 'processing', job_id: jobId, stage: 'unknown' }, 200);
+      }
+      let kv;
+      try { kv = JSON.parse(raw); } catch {
+        return json({ status: 'failed', error: 'corrupt KV entry', job_id: jobId }, 200);
+      }
+
+      // Optional billing finalization on first observation of `completed`.
+      // We use audio_seconds from the consumer's usage if Vertex returned it,
+      // otherwise fall back to the duration the client sent at kickoff.
+      const usageIdQ = url.searchParams.get('usage_id') || null;
+      if (kv.status === 'completed' && usageIdQ) {
+        const auth = context.request.headers.get('authorization');
+        if (auth) {
+          try {
+            const { userId, accessToken } = await getCallerUser(context.request, env);
+            const orgId = await getCallerOrg(env, accessToken, null);
+            const orgs = await sbFetch(env, `organizations?id=eq.${orgId}&select=default_markup_pct`);
+            const markupPct = Number(orgs?.[0]?.default_markup_pct ?? 30);
+            const audioSecondsHint = Number(url.searchParams.get('audio_seconds')) || 0;
+            const pre = await preflight(env, orgId, audioSecondsHint).catch(() => null);
+            await finalizeUsage(env, {
+              orgId,
+              usageId: usageIdQ,
+              providerUsage: {
+                provider: 'gemini',
+                model_id: null,
+                audio_seconds: audioSecondsHint || null,
+                request_count: 1,
+                ...(kv.usage || {}),
+              },
+              markupPct,
+              chargeTo: pre?.charge_to || 'wallet',
+            }).catch(err => console.error('[transcribe-status] gemini finalize failed:', err));
+          } catch (e) {
+            console.error('[transcribe-status] gemini billing-finalize:', e);
+          }
+        }
+      }
+
+      if (kv.status === 'completed') {
+        return json({
+          status: 'completed',
+          text: kv.text,
+          usage_id: usageIdQ || undefined,
+          gs_uri: kv.gs_uri,
+          elapsed_ms: kv.elapsed_ms,
+        }, 200);
+      }
+      if (kv.status === 'failed') {
+        return json({
+          status: 'failed',
+          error: kv.error || 'gemini job failed',
+          usage_id: usageIdQ || undefined,
+        }, 200);
+      }
+      return json({
+        status: 'processing',
+        job_id: jobId,
+        stage: kv.stage || 'queued',
+      }, 200);
+    }
+
     if (!env.YL_API_KEY) return json({ error: 'Mendel API key not configured' }, 500);
 
     // Auth + org for finalizeUsage. We tolerate "no auth" only when there's

@@ -5,3 +5,17 @@ pages_build_output_dir = "./dist"
 [[r2_buckets]]
 binding = "R2_BUCKET"
 bucket_name = "jem-asr-audio"
+
+# Gemini async results store. Written by the consumer worker
+# (workers/gemini-consumer), read by /api/transcribe-status when
+# provider=gemini.
+[[kv_namespaces]]
+binding = "GEMINI_RESULTS"
+id = "429fcd3f658f48e6b643cf265a56e9fa"
+
+# Producer binding for the Gemini long-audio async pipeline.
+# Pages enqueues a job to this queue; the consumer worker
+# (workers/gemini-consumer) handles R2 -> GCS -> Vertex.
+[[queues.producers]]
+queue = "gemini-asr-jobs"
+binding = "GEMINI_QUEUE"

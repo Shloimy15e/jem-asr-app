@@ -1,0 +1,31 @@
+name = "jem-asr-gemini-consumer"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# This worker is the long-audio Gemini pipeline. It consumes from the
+# `gemini-asr-jobs` queue and runs the slow R2 -> GCS -> Vertex chain
+# without the 60s wall-clock cap that Pages Functions enforce.
+#
+# Per-message budget:
+#   - Workers Paid plan: 15 min CPU per message, but Vertex inference
+#     itself rarely exceeds 2-3 min for our audio sizes.
+
+[[queues.consumers]]
+queue = "gemini-asr-jobs"
+max_batch_size = 1            # one job at a time per invocation
+max_batch_timeout = 1
+max_retries = 2
+dead_letter_queue = "gemini-asr-jobs-dlq"
+
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "jem-asr-audio"
+
+[[kv_namespaces]]
+binding = "GEMINI_RESULTS"
+id = "429fcd3f658f48e6b643cf265a56e9fa"
+
+# Secrets set via:
+#   wrangler secret put GEMINI_SA_JSON --name jem-asr-gemini-consumer
+[vars]
+GCS_BUCKET = "jem-chabad-asr-uploads"

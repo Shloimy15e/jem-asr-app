@@ -298,6 +298,64 @@ async function handleGemini(audio, payload, env) {
   throw { status: 500, message: 'Gemini credentials not configured — set GEMINI_SA_JSON (or GEMINI_API_KEY / GOOGLE_API_KEY) as a Cloudflare Worker secret' };
 }
 
+// Async Gemini kickoff: instead of running Vertex inline (60s edge cap) we
+// enqueue a job onto the gemini-asr-jobs queue. The consumer worker
+// (workers/gemini-consumer) handles R2 -> GCS -> Vertex without the cap
+// and writes the result to the GEMINI_RESULTS KV under `gemini:<jobId>`.
+//
+// We only take this path when the audio is referenced by URL — base64 in the
+// request body would force us to materialize the bytes here just to re-encode
+// them onto the queue, defeating the point.
+async function kickoffGeminiAsync(payload, env) {
+  if (!env.GEMINI_QUEUE) {
+    throw { status: 500, message: 'GEMINI_QUEUE not bound — async Gemini path unavailable' };
+  }
+  if (!env.GEMINI_RESULTS) {
+    throw { status: 500, message: 'GEMINI_RESULTS KV not bound — async Gemini path unavailable' };
+  }
+  if (!payload.audio_url) {
+    throw { status: 400, message: 'Async Gemini path requires audio_url (R2). audio_base64 not supported here.' };
+  }
+  let parsedUrl;
+  try { parsedUrl = new URL(payload.audio_url); } catch {
+    throw { status: 400, message: 'Invalid audio_url' };
+  }
+  const allowedDomains = getAllowedDomains(env);
+  if (!allowedDomains.includes(parsedUrl.hostname)) {
+    throw { status: 400, message: `audio_url domain not in allowed list (${parsedUrl.hostname})` };
+  }
+  // The R2 object key is the path component (without leading slash).
+  // The consumer prefers reading via the R2 binding when the key is set.
+  const audioKey = decodeURIComponent(parsedUrl.pathname.replace(/^\/+/, '')) || null;
+
+  const jobId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  // Seed the KV state so the very first poll has something to read.
+  await env.GEMINI_RESULTS.put(`gemini:${jobId}`, JSON.stringify({
+    status: 'queued',
+    queued_at: new Date().toISOString(),
+  }), { expirationTtl: 7 * 24 * 60 * 60 });
+
+  // Forward only what the consumer needs — strip secrets/billing context,
+  // keep just the Vertex routing knobs and prompts.
+  await env.GEMINI_QUEUE.send({
+    jobId,
+    audio_url: payload.audio_url,
+    audio_key: audioKey,
+    audio_format: payload.audio_format || null,
+    gemini_endpoint_id: payload.gemini_endpoint_id || null,
+    gemini_project_id:  payload.gemini_project_id  || null,
+    gemini_region:      payload.gemini_region      || null,
+    gemini_prompt:      typeof payload.gemini_prompt === 'string' ? payload.gemini_prompt : null,
+    gemini_system_instruction:
+      typeof payload.gemini_system_instruction === 'string' ? payload.gemini_system_instruction : null,
+  });
+
+  return { jobId };
+}
+
 async function handleMendel(audio, payload, env) {
   const yl_api_key = env.YL_API_KEY;
   if (!yl_api_key) throw { status: 500, message: 'Mendel API key not configured — set YL_API_KEY as a Cloudflare Worker secret' };
@@ -439,6 +497,47 @@ export async function onRequestPost(context) {
       // If auth header was passed but invalid, surface the 401
       throw err;
     });
+
+    // ── Gemini async fast-path ────────────────────────────────────────
+    // When the queue + KV are bound and the caller passed an audio_url
+    // (the normal R2 path), enqueue and return 202 immediately. The
+    // consumer worker handles the slow R2->GCS->Vertex chain without the
+    // 60s edge cap. This replaces the old browser-side chunking entirely.
+    if (provider === 'gemini' && env.GEMINI_QUEUE && env.GEMINI_RESULTS && payload.audio_url) {
+      const audioSeconds = Number(payload.audio_duration_seconds) || null;
+
+      if (billing) {
+        // We don't know exact usage yet, but preflight against the audio
+        // duration the client estimated. Final metering happens in
+        // /api/transcribe-status when the consumer reports `completed`.
+        const pre = await preflight(env, billing.orgId, audioSeconds || 60);
+        if (!pre.allowed) {
+          return errorResponse(402, 'Insufficient credits or no active subscription. Top up at /billing.html', { balance_micro_usd: pre.balance_micro_usd });
+        }
+        usageId = await startUsage(env, {
+          orgId: billing.orgId,
+          userId: billing.userId,
+          audioId: payload.audio_id || null,
+          provider: 'gemini',
+          modelId: payload.gemini_model_id || null,
+          audioSeconds: audioSeconds || 60,
+        });
+        billing.chargeTo = pre.charge_to;
+      }
+
+      const { jobId } = await kickoffGeminiAsync(payload, env);
+      console.log('[transcribe] gemini async kickoff', { jobId, usageId, audioSeconds });
+      return new Response(JSON.stringify({
+        status: 'processing',
+        job_id: jobId,
+        provider: 'gemini',
+        usage_id: usageId || undefined,
+        audio_seconds: audioSeconds,
+      }), {
+        status: 202,
+        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+      });
+    }
 
     const audio = await resolveAudio(payload, env);
     const audioSeconds = payload.audio_duration_seconds || estimateAudioSeconds(audio.base64.length, audio.format);
