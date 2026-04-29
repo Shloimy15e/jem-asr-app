@@ -588,6 +588,21 @@ const TRANSCRIBE_ENDPOINT        = '/api/transcribe';
 const TRANSCRIBE_STATUS_ENDPOINT = '/api/transcribe-status';
 const ALIGN_STATUS_ENDPOINT      = '/api/align-status';
 
+// ── Gemini long-audio chunking ───────────────────────────────────────────
+// Cloudflare Pages Functions cap each request at ~60 s wall time. Vertex
+// fine-tuned-endpoint inference (e.g. Jem-1 V2 ckpt9) is far slower than
+// base Gemini and an 8-min audio already exceeds the cap. We therefore
+// split anything past ~5 min in the browser into ≤5-min slices, upload
+// each slice to R2 directly (presigned PUT, no proxy-traversed body),
+// then call /api/transcribe with the chunk's R2 URL so the JSON body
+// stays small. The Worker fetches the chunk server-side.
+//
+// Boundary words may overlap or drop a syllable; that is the known
+// trade-off until we move to the Vertex Files API + GCS.
+const GEMINI_CHUNK_THRESHOLD_SEC = 5 * 60;
+const GEMINI_CHUNK_SECONDS       = 5 * 60;
+const GEMINI_CALL_TIMEOUT_MS     = 65 * 1000;
+
 // Long-job client polling. Cloudflare's edge cuts off any single Pages
 // Function response after ~100 s, so the worker hands us a job_id and we
 // poll a status endpoint until the provider reports completion. The
@@ -641,6 +656,15 @@ async function pollUntilTerminal(statusUrl, label) {
 export async function transcribeAudio(audioId, audioUrl, config) {
   const { provider } = config;
   if (!provider) throw new Error('transcribeAudio: missing provider in config');
+
+  // Gemini long-audio short-circuit. Anything past the CF 60s budget is
+  // chunked browser-side; we send N parallel inline_data WAV calls and
+  // concatenate the transcripts. See GEMINI_CHUNK_THRESHOLD_SEC above.
+  if (provider === 'gemini'
+      && typeof config.audioDurationSec === 'number'
+      && config.audioDurationSec > GEMINI_CHUNK_THRESHOLD_SEC) {
+    return transcribeGeminiChunked(audioId, audioUrl, config);
+  }
 
   const audioResult = await fetchAudioForAlignment(audioUrl, 0, 0);
 
@@ -723,16 +747,33 @@ export async function transcribeAudio(audioId, audioUrl, config) {
     throw new Error(`Unknown transcription provider: ${provider}`);
   }
 
-  const response = await fetch(TRANSCRIBE_ENDPOINT, {
-    method: 'POST',
-    headers: await billingHeaders(),
-    body: JSON.stringify({
-      provider,
-      ...audioFields,
-      ...providerPayload,
-      ...(audioId ? { audio_id: audioId } : {}),
-    }),
-  });
+  // 65s abort guard — strictly longer than the CF 60s edge cap so the
+  // Worker's own timeout response (if any) wins, but still bounded so a
+  // hung Vertex/Mendel call surfaces as a user-visible failure instead of
+  // leaving the button disabled forever.
+  const ctrl = (provider === 'gemini') ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), GEMINI_CALL_TIMEOUT_MS) : null;
+  let response;
+  try {
+    response = await fetch(TRANSCRIBE_ENDPOINT, {
+      method: 'POST',
+      headers: await billingHeaders(),
+      body: JSON.stringify({
+        provider,
+        ...audioFields,
+        ...providerPayload,
+        ...(audioId ? { audio_id: audioId } : {}),
+      }),
+      ...(ctrl ? { signal: ctrl.signal } : {}),
+    });
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      throw new Error(`${provider} timed out after ${GEMINI_CALL_TIMEOUT_MS / 1000}s — audio may be too long for a single Vertex call. Try a shorter clip or wait for the chunked path.`);
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 
   if (response.status === 402) await throwForResponse(response, provider);
   if (!response.ok) {
@@ -754,4 +795,162 @@ export async function transcribeAudio(audioId, audioUrl, config) {
     return text;
   }
   return (data.text || '').trim();
+}
+
+// ── Gemini chunked path ─────────────────────────────────────────────────
+// For audio longer than GEMINI_CHUNK_THRESHOLD_SEC we decode the file in
+// the browser, slice it into ≤3-min WAVs, upload each chunk to R2 via a
+// presigned PUT, then call /api/transcribe with the chunk's R2 URL. The
+// JSON body to the Worker stays small (~200 B) so corporate proxies that
+// throttle large multi-megabyte POSTs don't choke. Worker side-fetches
+// the chunk from R2 for inline_data.
+//
+// All chunks share the same Vertex endpoint + prompt; results are
+// concatenated in order with single newlines so the user sees one
+// transcript per file (matching the single-call shape).
+
+async function blobToBase64NoPrefix(blob) {
+  return blobToBase64(blob);
+}
+
+async function uploadChunkToR2(wavBlob, key) {
+  const token = await getAccessToken().catch(() => null);
+  if (!token) throw new Error('Sign-in required to upload chunks (no Supabase token)');
+  // Step 1: ask the Worker for a presigned PUT URL.
+  const resp = await fetch('/api/upload-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ key, contentType: 'audio/wav' }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to get presigned URL: ${resp.status}`);
+  }
+  const { url, publicUrl } = await resp.json();
+  // Step 2: PUT the WAV directly to R2 (bypasses the Pages Function so
+  // the user's outbound proxy sees only host=…r2.cloudflarestorage.com).
+  const putResp = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'audio/wav' },
+    body: wavBlob,
+  });
+  if (!putResp.ok) {
+    const txt = await putResp.text().catch(() => '');
+    throw new Error(`R2 PUT failed (${putResp.status}): ${txt.slice(0, 200)}`);
+  }
+  return publicUrl;
+}
+
+async function transcribeOneGeminiChunkByUrl(chunkUrl, providerPayload, audioId, chunkLabel) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), GEMINI_CALL_TIMEOUT_MS);
+  try {
+    const resp = await fetch(TRANSCRIBE_ENDPOINT, {
+      method: 'POST',
+      headers: await billingHeaders(),
+      body: JSON.stringify({
+        provider: 'gemini',
+        audio_url: chunkUrl,
+        ...providerPayload,
+        ...(audioId ? { audio_id: audioId } : {}),
+      }),
+      signal: ctrl.signal,
+    });
+    if (resp.status === 402) await throwForResponse(resp, 'Gemini');
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || `Gemini chunk ${chunkLabel} failed: ${resp.status}`);
+    }
+    const data = await resp.json();
+    return (data.text || '').trim();
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      throw new Error(`Gemini chunk ${chunkLabel} timed out after ${GEMINI_CALL_TIMEOUT_MS / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function transcribeGeminiChunked(audioId, audioUrl, config) {
+  if (!config.endpointId) throw new Error('Gemini requires an Endpoint ID — set it in ASR Settings');
+  const totalSec = Math.max(1, Number(config.audioDurationSec) || 0);
+  const chunkCount = Math.ceil(totalSec / GEMINI_CHUNK_SECONDS);
+
+  console.log(`[Gemini] chunked path: ${totalSec.toFixed(0)}s → ${chunkCount} chunks of ≤${GEMINI_CHUNK_SECONDS}s`);
+
+  const decoded = await fetchAndDecodeFullAudio(audioUrl);
+
+  // Slice each chunk to a 16 kHz mono WAV and upload to R2 sequentially
+  // (decode is single-threaded; uploads can pipeline but we keep it simple).
+  const runId = Date.now().toString(36);
+  const chunks = [];
+  for (let i = 0; i < chunkCount; i++) {
+    const start = i * GEMINI_CHUNK_SECONDS;
+    const end   = Math.min(totalSec, (i + 1) * GEMINI_CHUNK_SECONDS);
+    const wavBlob = await sliceToWavBlob(decoded, start, end);
+    const key = `gemini-chunks/${audioId || 'unknown'}/${runId}-${String(i).padStart(2, '0')}.wav`;
+    const chunkUrl = await uploadChunkToR2(wavBlob, key);
+    chunks.push({ index: i, chunkUrl, label: `${i + 1}/${chunkCount}` });
+    console.log(`[Gemini] uploaded chunk ${i + 1}/${chunkCount} → ${chunkUrl}`);
+  }
+
+  const providerPayload = {
+    gemini_project_id: config.projectId || '',
+    gemini_region: config.region || 'us-central1',
+    gemini_endpoint_id: config.endpointId,
+  };
+  if (typeof config.prompt === 'string' && config.prompt.trim().length > 0) {
+    providerPayload.gemini_prompt = config.prompt;
+  }
+  if (typeof config.systemInstruction === 'string' && config.systemInstruction.trim().length > 0) {
+    providerPayload.gemini_system_instruction = config.systemInstruction;
+  }
+
+  const texts = await Promise.all(chunks.map(c =>
+    transcribeOneGeminiChunkByUrl(c.chunkUrl, providerPayload, audioId, c.label)
+      .then(text => {
+        console.log(`[Gemini] chunk ${c.label} → ${text.length}c`);
+        return { index: c.index, text };
+      })
+  ));
+
+  texts.sort((a, b) => a.index - b.index);
+  const joined = texts.map(t => t.text).filter(Boolean).join('\n').trim();
+  if (!joined) throw new Error('Gemini chunked path returned no text');
+  return joined;
+}
+
+// Slice an AudioBuffer into a 16 kHz mono WAV Blob (similar to
+// sliceToWavBase64 but returning the Blob so we can PUT it to R2 without
+// the base64 inflation step).
+async function sliceToWavBlob(audioBuffer, startSec, endSec) {
+  const sr = audioBuffer.sampleRate;
+  const startSample = Math.floor(startSec * sr);
+  const endSample = endSec > 0
+    ? Math.min(Math.floor(endSec * sr), audioBuffer.length)
+    : audioBuffer.length;
+  const sliceLen = Math.max(1, endSample - startSample);
+
+  const TARGET_SR = 16000;
+  const targetLen = Math.ceil(sliceLen / sr * TARGET_SR);
+  const offCtx = new OfflineAudioContext(1, targetLen, TARGET_SR);
+  const tmpBuf = new AudioBuffer({
+    length: sliceLen,
+    numberOfChannels: audioBuffer.numberOfChannels,
+    sampleRate: sr,
+  });
+  for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+    tmpBuf.copyToChannel(
+      audioBuffer.getChannelData(ch).subarray(startSample, startSample + sliceLen),
+      ch,
+    );
+  }
+  const src = offCtx.createBufferSource();
+  src.buffer = tmpBuf;
+  src.connect(offCtx.destination);
+  src.start();
+  const resampled = await offCtx.startRendering();
+  return audioBufferToWavBlob(resampled);
 }

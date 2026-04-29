@@ -1025,6 +1025,10 @@ function buildAsrProviderBar(audioId, state, onComplete) {
             return;
           }
           providerCfg = { projectId: selected.projectId, region: selected.region, endpointId: selected.endpointId };
+          // Pass the audio duration so transcribeAudio can route long files
+          // (>9 min) through the browser-side chunked path that avoids the
+          // Cloudflare Pages 60-s edge timeout on Vertex inline_data calls.
+          if (audio?.estMinutes) providerCfg.audioDurationSec = audio.estMinutes * 60;
           saveModel = `gemini-${geminiSlug(selected)}`;
           const raw = (promptInput?.value || '').trim();
           prompt = raw.length > 0 ? raw : null;
