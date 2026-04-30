@@ -974,30 +974,55 @@ function buildAsrProviderBar(audioId, state, onComplete) {
     btn.textContent = btnLabel;
 
     // For Gemini, a dropdown next to the button lets the user pick which
-    // tuned endpoint to use, out of the list configured in ASR Settings.
+    // tuned endpoint to use. Merges the curated global registry (loaded
+    // from /api/vertex-endpoints) with the user's locally-saved endpoints
+    // so newly-registered endpoints (e.g. Think Partnership Yiddish)
+    // appear without requiring the user to re-add them to ASR Settings.
+    // Renders asynchronously: we create the placeholder up-front and
+    // populate options once the merge resolves.
     let geminiPicker = null;
     if (key === 'gemini') {
-      const providers = getState().transcribeProviders || {};
-      const g = providers.gemini || { endpoints: [], selectedId: null };
-      const endpoints = Array.isArray(g.endpoints) ? g.endpoints : [];
-      if (endpoints.length > 0) {
-        geminiPicker = document.createElement('select');
-        geminiPicker.className = 'gemini-endpoint-picker';
-        geminiPicker.style.cssText = 'padding:3px 6px;border:1px solid var(--border,#ccc);border-radius:6px;font-size:0.8rem;background:#fff;';
-        geminiPicker.setAttribute('aria-label', 'Select Gemini endpoint');
-        endpoints.forEach((ep) => {
-          const opt = document.createElement('option');
-          opt.value = ep.id;
-          opt.textContent = ep.name || `Endpoint ${ep.endpointId?.slice(-6) || '?'}`;
-          if (ep.id === g.selectedId) opt.selected = true;
-          geminiPicker.appendChild(opt);
-        });
-        geminiPicker.addEventListener('change', (e) => {
-          const s = getState();
-          s.transcribeProviders.gemini.selectedId = e.target.value;
-          updateState('transcribeProviders', null, s.transcribeProviders);
-        });
-      }
+      geminiPicker = document.createElement('select');
+      geminiPicker.className = 'gemini-endpoint-picker';
+      geminiPicker.style.cssText = 'padding:3px 6px;border:1px solid var(--border,#ccc);border-radius:6px;font-size:0.8rem;background:#fff;';
+      geminiPicker.setAttribute('aria-label', 'Select Gemini endpoint');
+      const loadingOpt = document.createElement('option');
+      loadingOpt.textContent = 'Loading endpoints…';
+      loadingOpt.disabled = true;
+      geminiPicker.appendChild(loadingOpt);
+      (async () => {
+        try {
+          const { merged, selected } = await getMergedVertexEndpoints(getState());
+          if (!merged.length) { geminiPicker.style.display = 'none'; return; }
+          geminiPicker.innerHTML = '';
+          const g0 = getState().transcribeProviders?.gemini || {};
+          const selectedId = g0.selectedId || selected?.id || merged[0].id;
+          merged.forEach((ep) => {
+            const opt = document.createElement('option');
+            opt.value = ep.id;
+            opt.textContent = ep.name || `Endpoint ${ep.endpointId?.slice(-6) || '?'}`;
+            if (ep.id === selectedId) opt.selected = true;
+            geminiPicker.appendChild(opt);
+          });
+          // Persist the resolved selection so subsequent renders (and the
+          // top-of-page dropdown) stay in sync.
+          const s0 = getState();
+          if (!s0.transcribeProviders.gemini) s0.transcribeProviders.gemini = { endpoints: [], selectedId: null };
+          if (s0.transcribeProviders.gemini.selectedId !== selectedId) {
+            s0.transcribeProviders.gemini.selectedId = selectedId;
+            updateState('transcribeProviders', null, s0.transcribeProviders);
+          }
+        } catch (err) {
+          console.warn('[detail] failed to load gemini endpoints:', err);
+          geminiPicker.style.display = 'none';
+        }
+      })();
+      geminiPicker.addEventListener('change', (e) => {
+        const s = getState();
+        if (!s.transcribeProviders.gemini) s.transcribeProviders.gemini = { endpoints: [], selectedId: null };
+        s.transcribeProviders.gemini.selectedId = e.target.value;
+        updateState('transcribeProviders', null, s.transcribeProviders);
+      });
     }
 
     btn.addEventListener('click', async () => {
@@ -2343,8 +2368,10 @@ function renderUnifiedWorkSection(audioId, state, container, pageContainer, play
       if (!a) return;
       const parent = state.audio.find(x => x.id === audioId);
       if (!parent) return;
-      const confirmMsg = `Create a new Part from "${a.word}" at ${fmtSec(a.time)}?\n\n` +
-        `The new record will share the same audio file but start at ${fmtSec(a.time)} with the remaining ${a.tailLen} words as its cleaned text. The current record is unchanged.`;
+      const confirmMsg = `Split this audio at "${a.word}" (${fmtSec(a.time)})?\n\n` +
+        `Current record will be trimmed to 0:00–${fmtSec(a.time)} and keep the head words.\n` +
+        `A new Part record will cover ${fmtSec(a.time)}–end with the remaining ${a.tailLen} words.\n\n` +
+        `Both records share the same audio file. All transcript versions on the current record will be split too.`;
       if (!confirm(confirmMsg)) return;
       splitBtn.disabled = true;
       splitBtn.textContent = 'Creating…';
