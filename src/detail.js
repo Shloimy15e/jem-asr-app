@@ -3469,15 +3469,44 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   editorDiv.dir = 'rtl';
   editorDiv.spellcheck = false;
 
-  // Editor renders the user's edited text (what was sent to the aligner),
-  // unchanged by reconciliation. Plain text only — no inline chips.
-  // Each sentence (period-terminated) renders on its own line for readability.
+  // Editor renders the active version's text. When the active version is
+  // 'edited' the editor stays editable + autosaves. For any other version
+  // (ASR runs from Whisper / Mendel / Gemini, or 'cleaned') we display the
+  // raw text read-only — without this, the version-picker dropdown was
+  // effectively a no-op for ASR runs because the editor always rebuilt
+  // from the 'edited' version, leaving users unable to view the new ASR
+  // outputs except via the side-by-side diff panel.
+  function pickEditorVersion() {
+    const versions = getVersions(audioId);
+    const activeId = activeVersionRef?.id;
+    const active = activeId ? versions.find(v => v.id === activeId) : null;
+    if (active && typeof active.text === 'string' && active.text.trim().length > 0) {
+      return active;
+    }
+    return versions.find(v => v.type === 'edited');
+  }
   function buildEditorContent() {
     editorDiv.innerHTML = '';
-    const editedVersion = getVersions(audioId).find(v => v.type === 'edited');
+    const chosen = pickEditorVersion();
     const alignmentJoined = segments.flat().map(w => w.word || w.text || '').join(' ');
-    const editedText = (editedVersion?.text || alignmentJoined || '').trim();
-    const lines = editedText
+    const text = (chosen?.text || alignmentJoined || '').trim();
+    // ASR / cleaned versions don't have alignment for their exact wording,
+    // so editing them inline would silently get auto-saved into the wrong
+    // version slot. Make the editor read-only for non-edited versions and
+    // show a small banner so the affordance is obvious.
+    const readOnly = chosen && chosen.type !== 'edited';
+    editorDiv.contentEditable = (readOnly || _viewMode !== 'edited') ? 'false' : 'true';
+    editorDiv.style.opacity = readOnly ? '0.92' : '';
+    if (readOnly) {
+      const banner = document.createElement('div');
+      banner.style.cssText = 'padding:6px 10px;margin-bottom:8px;font-size:0.78rem;background:#fff8e6;border:1px solid #f0c987;border-radius:6px;color:#7a4f00;';
+      const label = chosen.type === 'asr'
+        ? `Viewing ASR output (${chosen.model || 'unknown'}) — read-only. Switch to "Edited" in the dropdown to edit.`
+        : `Viewing ${chosen.type} version — read-only. Switch to "Edited" in the dropdown to edit.`;
+      banner.textContent = label;
+      editorDiv.appendChild(banner);
+    }
+    const lines = text
       .split(/\n+/)
       .flatMap(line => {
         const parts = line.split(/(?<=\.)\s+/).map(p => p.trim()).filter(Boolean);
@@ -3487,7 +3516,7 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       if (line) editorDiv.appendChild(document.createTextNode(line));
       if (idx < lines.length - 1) editorDiv.appendChild(document.createElement('br'));
     });
-    refreshEditorWordCount(editedText);
+    refreshEditorWordCount(text);
   }
   buildEditorContent();
   applyEditorFontSize();
