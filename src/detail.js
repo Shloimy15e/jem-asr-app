@@ -3365,48 +3365,94 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
   if (playPauseBtn) toolbar.appendChild(playPauseBtn);
 
   // View toggle — Edited (editable, with timestamps) vs Manual (readonly original)
-  let _viewMode = 'edited';
-  const editedToggleBtn = document.createElement('button');
-  const manualToggleBtn = document.createElement('button');
-  editedToggleBtn.textContent = 'Edited';
-  manualToggleBtn.textContent = 'Manual (original)';
-  function refreshToggle() {
-    editedToggleBtn.className = _viewMode === 'edited' ? 'action-btn action-btn-primary' : 'action-btn';
-    manualToggleBtn.className = _viewMode === 'manual' ? 'action-btn action-btn-primary' : 'action-btn';
-  }
-  refreshToggle();
-  editedToggleBtn.addEventListener('click', () => {
-    if (_viewMode === 'edited') return;
-    _viewMode = 'edited';
-    refreshToggle();
-    editorDiv.contentEditable = 'true';
-    editorDiv.style.opacity = '';
-    buildEditorContent();
-  });
-  manualToggleBtn.addEventListener('click', async () => {
-    if (_viewMode === 'manual') return;
-    _viewMode = 'manual';
-    refreshToggle();
-    editorDiv.contentEditable = 'false';
-    editorDiv.style.opacity = '0.85';
-    editorDiv.innerHTML = '';
-    editorDiv.textContent = 'Loading original...';
-    const text = await getManualText();
-    editorDiv.innerHTML = '';
-    const manualText = text || '(No original transcript available)';
-    const manualLines = manualText
-      .split(/\n+/)
-      .flatMap(line => {
-        const parts = line.split(/(?<=\.)\s+/).map(p => p.trim()).filter(Boolean);
-        return parts.length > 0 ? parts : [line];
+  // ── Version pills (right next to the editor) ────────────────────
+  // Renders one button per available version: Edited, Manual, Cleaned,
+  // and one per unique ASR model (Whisper, Mendel, Gemini-<endpoint>).
+  // For ASR models with multiple runs (e.g. several Gemini prompts),
+  // this picks the latest run; the full top-of-page dropdown still
+  // lists every individual run for granular access.
+  // Compute _viewMode BEFORE building pills so the active-pill highlight
+  // reflects what's currently selected on first render.
+  const _activeVersionForMode = activeVersionRef?.id
+    ? getVersions(audioId).find(v => v.id === activeVersionRef.id)
+    : null;
+  let _viewMode = (_activeVersionForMode && _activeVersionForMode.type === 'edited') ? 'edited' : 'version';
+  const versionPillsWrap = document.createElement('div');
+  versionPillsWrap.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
+  toolbar.appendChild(versionPillsWrap);
+
+  function buildVersionPills() {
+    versionPillsWrap.innerHTML = '';
+    const all = getVersions(audioId);
+
+    // Helper: human label for an ASR model id ("gemini-jem-1-v2-final-ckpt-9" -> "Gemini").
+    function asrLabel(model) {
+      if (!model) return 'ASR';
+      if (model === 'whisper') return 'Whisper';
+      if (model === 'mendel')  return 'Mendel';
+      if (model.startsWith('gemini')) return 'Gemini';
+      return model.charAt(0).toUpperCase() + model.slice(1);
+    }
+
+    // Build the pill list, in display order.
+    const pills = [];
+    const edited = all.find(v => v.type === 'edited');
+    if (edited) pills.push({ label: 'Edited', version: edited, mode: 'edited' });
+
+    const manual = all.find(v => v.type === 'manual');
+    if (manual) pills.push({ label: 'Manual', version: manual, mode: 'version' });
+
+    const cleaned = all.find(v => v.type === 'cleaned');
+    if (cleaned) pills.push({ label: 'Cleaned', version: cleaned, mode: 'version' });
+
+    // ASR: one pill per unique model, preferring the latest run (by createdAt
+    // / runId) so reruns swap into the same pill rather than spawning new ones.
+    const asrByModel = new Map();
+    for (const v of all) {
+      if (v.type !== 'asr' || !v.text || !v.text.trim()) continue;
+      const k = v.model || 'asr';
+      const ts = Date.parse(v.createdAt || '') || (parseInt(v.runId || '0', 10)) || 0;
+      const cur = asrByModel.get(k);
+      if (!cur || (Date.parse(cur.createdAt || '') || parseInt(cur.runId || '0', 10) || 0) < ts) {
+        asrByModel.set(k, v);
+      }
+    }
+    // Stable preferred ordering for the common providers, then anything else.
+    const preferred = ['whisper', 'mendel'];
+    const orderedModels = [
+      ...preferred.filter(p => asrByModel.has(p)),
+      ...Array.from(asrByModel.keys()).filter(k => k.startsWith('gemini')),
+      ...Array.from(asrByModel.keys()).filter(k => !preferred.includes(k) && !k.startsWith('gemini')),
+    ];
+    for (const k of orderedModels) {
+      const v = asrByModel.get(k);
+      pills.push({ label: asrLabel(k), version: v, mode: 'version' });
+    }
+
+    if (pills.length === 0) return;
+
+    pills.forEach(p => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = p.label;
+      const isActive = p.mode === 'edited'
+        ? (_viewMode === 'edited' && activeVersionRef?.id === p.version.id)
+        : (_viewMode === 'version' && activeVersionRef?.id === p.version.id);
+      btn.className = isActive ? 'action-btn action-btn-primary' : 'action-btn';
+      btn.addEventListener('click', () => {
+        // Switch the global picker state so the top-of-page dropdown +
+        // diff panel stay in sync, then re-render the whole detail page.
+        _pickedVersionByAudio.set(audioId, p.version.id);
+        if (activeVersionRef) activeVersionRef.id = p.version.id;
+        const s = getState();
+        renderDetailPage(audioId, s.audio.find(a => a.id === audioId), s, pageContainer);
       });
-    manualLines.forEach((line, idx) => {
-      if (line) editorDiv.appendChild(document.createTextNode(line));
-      if (idx < manualLines.length - 1) editorDiv.appendChild(document.createElement('br'));
+      versionPillsWrap.appendChild(btn);
     });
-  });
-  toolbar.appendChild(editedToggleBtn);
-  toolbar.appendChild(manualToggleBtn);
+  }
+  buildVersionPills();
+
+  // _viewMode was already computed above for pill highlighting. No-op here.
 
   // Font size control — persists in localStorage
   const FONT_SIZE_KEY = 'editor-font-size';
@@ -3501,8 +3547,8 @@ function renderWordView(audioId, cleaning, alignment, container, pageContainer, 
       const banner = document.createElement('div');
       banner.style.cssText = 'padding:6px 10px;margin-bottom:8px;font-size:0.78rem;background:#fff8e6;border:1px solid #f0c987;border-radius:6px;color:#7a4f00;';
       const label = chosen.type === 'asr'
-        ? `Viewing ASR output (${chosen.model || 'unknown'}) — read-only. Switch to "Edited" in the dropdown to edit.`
-        : `Viewing ${chosen.type} version — read-only. Switch to "Edited" in the dropdown to edit.`;
+        ? `Viewing ASR output (${chosen.model || 'unknown'}) — read-only. Click "Edited" above to edit.`
+        : `Viewing ${chosen.type} version — read-only. Click "Edited" above to edit.`;
       banner.textContent = label;
       editorDiv.appendChild(banner);
     }
