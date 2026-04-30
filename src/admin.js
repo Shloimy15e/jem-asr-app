@@ -415,6 +415,32 @@ function renderSingleUploadForm(container, adminLibs) {
   typeRow.appendChild(typeSelect);
   form.appendChild(typeRow);
 
+  // ── Source (transcript only): File vs Paste ───────────────────────────
+  const sourceRow = document.createElement('div');
+  sourceRow.className = 'admin-form-row';
+  sourceRow.style.display = 'none';
+  const sourceLabel = document.createElement('label');
+  sourceLabel.textContent = 'Source';
+  const sourceWrap = document.createElement('div');
+  sourceWrap.style.cssText = 'display:flex;gap:14px;align-items:center;flex-wrap:wrap;';
+  const sourceRadios = {};
+  for (const [val, label] of [['file', 'Upload .docx / .txt'], ['paste', 'Paste text']]) {
+    const lab = document.createElement('label');
+    lab.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:0.85rem;cursor:pointer;font-weight:400;color:var(--text);text-transform:none;letter-spacing:0;';
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'single-transcript-source';
+    radio.value = val;
+    if (val === 'file') radio.checked = true;
+    sourceRadios[val] = radio;
+    lab.appendChild(radio);
+    lab.appendChild(document.createTextNode(label));
+    sourceWrap.appendChild(lab);
+  }
+  sourceRow.appendChild(sourceLabel);
+  sourceRow.appendChild(sourceWrap);
+  form.appendChild(sourceRow);
+
   // ── File input ────────────────────────────────────────────────────────
   const fileRow = document.createElement('div');
   fileRow.className = 'admin-form-row';
@@ -423,10 +449,29 @@ function renderSingleUploadForm(container, adminLibs) {
   const fileInput = document.createElement('input');
   fileInput.type = 'file';
   fileInput.className = 'admin-input';
-  fileInput.accept = '.mp3,.wav,.m4a,.ogg,.flac,.txt';
+  fileInput.accept = '.mp3,.wav,.m4a,.ogg,.flac';
+  const fileInfo = document.createElement('div');
+  fileInfo.className = 'text-secondary';
+  fileInfo.style.cssText = 'font-size:0.75rem;margin-top:4px;min-height:1em;';
   fileRow.appendChild(fileLabel);
   fileRow.appendChild(fileInput);
+  fileRow.appendChild(fileInfo);
   form.appendChild(fileRow);
+
+  // ── Paste textarea (transcript + paste mode only) ─────────────────────
+  const pasteRow = document.createElement('div');
+  pasteRow.className = 'admin-form-row';
+  pasteRow.style.display = 'none';
+  const pasteLabel = document.createElement('label');
+  pasteLabel.textContent = 'Transcript Text';
+  const pasteArea = document.createElement('textarea');
+  pasteArea.className = 'admin-input';
+  pasteArea.rows = 8;
+  pasteArea.placeholder = 'Paste transcript text here…';
+  pasteArea.style.cssText = 'font-family:inherit;resize:vertical;direction:rtl;text-align:right;';
+  pasteRow.appendChild(pasteLabel);
+  pasteRow.appendChild(pasteArea);
+  form.appendChild(pasteRow);
 
   // ── Display name ──────────────────────────────────────────────────────
   const nameRow = document.createElement('div');
@@ -462,9 +507,18 @@ function renderSingleUploadForm(container, adminLibs) {
   idRow.appendChild(idWrap);
   form.appendChild(idRow);
 
-  // Auto-fill name + ID when file is picked
-  fileInput.addEventListener('change', () => {
+  // Returns 'file' or 'paste' — the active transcript source mode.
+  // For 'audio' type, this is always 'file'.
+  function currentSource() {
+    if (typeSelect.value !== 'transcript') return 'file';
+    return Object.values(sourceRadios).find(r => r.checked)?.value || 'file';
+  }
+
+  // Auto-fill name + ID when file is picked. For .docx, also preview parsed text.
+  fileInput.addEventListener('change', async () => {
     const f = fileInput.files?.[0];
+    fileInfo.textContent = '';
+    fileInfo.style.color = '';
     if (!f) return;
     const basename = f.name.replace(/\.[^.]+$/, '');
     if (!nameInput.value) nameInput.value = basename;
@@ -473,15 +527,55 @@ function renderSingleUploadForm(container, adminLibs) {
       const slug = basename.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
       idInput.value = `${libId}-${slug}-${Date.now().toString(36)}`;
     }
+    // For transcript .docx: parse + show word count so the user knows it worked
+    if (typeSelect.value === 'transcript' && f.name.toLowerCase().endsWith('.docx')) {
+      fileInfo.textContent = 'Parsing…';
+      try {
+        const text = await extractTextFromFile(f);
+        const wc = text.trim().split(/\s+/).filter(Boolean).length;
+        fileInfo.style.color = 'var(--green)';
+        fileInfo.textContent = `✓ Parsed ${wc.toLocaleString()} words from ${f.name}`;
+      } catch (err) {
+        fileInfo.style.color = 'var(--red)';
+        fileInfo.textContent = '✗ ' + err.message;
+      }
+    }
   });
 
-  // Update accept attr when type changes
+  // Update accept attr + section visibility when type changes
+  function applyTypeUI() {
+    const isTranscript = typeSelect.value === 'transcript';
+    sourceRow.style.display = isTranscript ? '' : 'none';
+    const src = currentSource();
+    if (isTranscript && src === 'paste') {
+      fileRow.style.display = 'none';
+      pasteRow.style.display = '';
+    } else {
+      fileRow.style.display = '';
+      pasteRow.style.display = 'none';
+    }
+    fileInput.accept = isTranscript ? '.docx,.txt' : '.mp3,.wav,.m4a,.ogg,.flac';
+  }
+
   typeSelect.addEventListener('change', () => {
-    fileInput.accept = typeSelect.value === 'audio' ? '.mp3,.wav,.m4a,.ogg,.flac' : '.txt';
+    applyTypeUI();
     fileInput.value = '';
+    fileInfo.textContent = '';
+    pasteArea.value = '';
     nameInput.value = '';
     idInput.value = '';
   });
+
+  for (const r of Object.values(sourceRadios)) {
+    r.addEventListener('change', () => {
+      applyTypeUI();
+      // Reset both inputs when source switches; keep name/ID since the user may
+      // have already typed them.
+      fileInput.value = '';
+      fileInfo.textContent = '';
+      pasteArea.value = '';
+    });
+  }
 
   // ── Upload button + progress ──────────────────────────────────────────
   const uploadBtn = document.createElement('button');
@@ -500,20 +594,55 @@ function renderSingleUploadForm(container, adminLibs) {
     statusEl.textContent = '';
     statusEl.style.color = '';
 
-    const file = fileInput.files?.[0];
-    if (!file) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Select a file first.'; return; }
+    const libId = libSelect.value;
+    const type  = typeSelect.value;
+    const src   = currentSource();
 
-    const libId   = libSelect.value;
-    const type    = typeSelect.value;
-    const name    = nameInput.value.trim() || file.name.replace(/\.[^.]+$/, '');
-    const recId   = idInput.value.trim() || `${libId}-${Date.now().toString(36)}`;
+    // Validate inputs per mode + collect the "thing to upload" (a File/Blob)
+    // and the transcript text (only for transcript type).
+    let uploadFile = null;     // File or File-like Blob to send to R2
+    let transcriptText = null; // populated when type === 'transcript'
+    let nameFallback = '';     // used if user left Display Name blank
 
-    // Build R2 key: libraryId/filename
-    const ext = file.name.includes('.') ? file.name.slice(file.name.lastIndexOf('.')) : '';
-    const safeFilename = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    if (type === 'audio') {
+      uploadFile = fileInput.files?.[0];
+      if (!uploadFile) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Select a file first.'; return; }
+      nameFallback = uploadFile.name.replace(/\.[^.]+$/, '');
+    } else if (src === 'paste') {
+      transcriptText = pasteArea.value.trim();
+      if (!transcriptText) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Paste transcript text first.'; return; }
+      const fallbackId = idInput.value.trim() || nameInput.value.trim() || `transcript-${Date.now().toString(36)}`;
+      const safe = fallbackId.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const blob = new Blob([transcriptText], { type: 'text/plain; charset=utf-8' });
+      uploadFile = new File([blob], `${safe}.txt`, { type: 'text/plain; charset=utf-8' });
+      nameFallback = nameInput.value.trim() || `Pasted transcript ${new Date().toISOString().slice(0, 10)}`;
+    } else {
+      // Transcript + file mode (.txt or .docx)
+      const picked = fileInput.files?.[0];
+      if (!picked) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Select a file first.'; return; }
+      nameFallback = picked.name.replace(/\.[^.]+$/, '');
+      const lower = picked.name.toLowerCase();
+      if (lower.endsWith('.docx')) {
+        try { transcriptText = await extractTextFromFile(picked); }
+        catch (err) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Parse failed: ' + err.message; return; }
+        if (!transcriptText.trim()) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Parsed .docx is empty.'; return; }
+        const txtName = picked.name.replace(/\.docx$/i, '.txt');
+        const blob = new Blob([transcriptText], { type: 'text/plain; charset=utf-8' });
+        uploadFile = new File([blob], txtName, { type: 'text/plain; charset=utf-8' });
+      } else {
+        // .txt — keep existing behavior (upload file as-is). Also read text so
+        // we can populate the `text` column for faster downstream loads.
+        uploadFile = picked;
+        try { transcriptText = await picked.text(); } catch { transcriptText = null; }
+      }
+    }
+
+    const name  = nameInput.value.trim() || nameFallback;
+    const recId = idInput.value.trim() || `${libId}-${Date.now().toString(36)}`;
+
+    const safeFilename = uploadFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
     const key = `${libId}/${safeFilename}`;
 
-    // Get Supabase session JWT for auth
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) {
       statusEl.style.color = 'var(--red)';
@@ -526,19 +655,13 @@ function renderSingleUploadForm(container, adminLibs) {
     statusEl.textContent = 'Uploading to R2…';
 
     try {
-      // Upload goes browser → R2 directly via a presigned PUT URL. We avoid
-      // the Worker path entirely because CF Pages caps both the inbound
-      // request body (~100 MB) and the Worker wall time (~30s), which
-      // blew up large MP3 uploads with "closing because of goaway or
-      // rst_stream" even after switching to streaming request.body.
-
       const signRes = await fetch('/api/upload-url', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ key, contentType: file.type || 'application/octet-stream' }),
+        body: JSON.stringify({ key, contentType: uploadFile.type || 'application/octet-stream' }),
       });
       const signText = await signRes.text();
       let signed;
@@ -547,22 +670,19 @@ function renderSingleUploadForm(container, adminLibs) {
       }
       if (!signRes.ok) throw new Error(signed.error || `sign URL HTTP ${signRes.status}`);
 
-      statusEl.textContent = `Uploading ${(file.size / 1024 / 1024).toFixed(1)} MB directly to R2…`;
+      statusEl.textContent = `Uploading ${(uploadFile.size / 1024 / 1024).toFixed(2)} MB to R2…`;
       const putRes = await fetch(signed.url, {
         method: 'PUT',
         headers: { 'Content-Type': signed.contentType },
-        body: file,
+        body: uploadFile,
       });
       if (!putRes.ok) {
         const body = await putRes.text().catch(() => '');
         throw new Error(`R2 PUT failed HTTP ${putRes.status}: ${body.slice(0, 200)}`);
       }
-      const result = { url: signed.publicUrl, key: signed.key };
-
-      const { url } = result;
+      const url = signed.publicUrl;
       statusEl.textContent = 'Saving to database…';
 
-      // Insert into Supabase
       if (type === 'audio') {
         const { error } = await supabase.from('audio_files').insert({
           id: recId,
@@ -574,12 +694,14 @@ function renderSingleUploadForm(container, adminLibs) {
         });
         if (error) throw new Error('DB insert failed: ' + error.message);
       } else {
-        const { error } = await supabase.from('transcripts').insert({
+        const row = {
           id: recId,
           name,
           r2_transcript_link: url,
           library_id: libId,
-        });
+        };
+        if (transcriptText) row.text = transcriptText;
+        const { error } = await supabase.from('transcripts').insert(row);
         if (error) throw new Error('DB insert failed: ' + error.message);
       }
 
@@ -591,8 +713,9 @@ function renderSingleUploadForm(container, adminLibs) {
           <a href="${esc(url)}" target="_blank" rel="noopener">View in R2</a>
         </span>`;
 
-      // Reset form for next upload
       fileInput.value = '';
+      pasteArea.value = '';
+      fileInfo.textContent = '';
       nameInput.value = '';
       idInput.value = '';
     } catch (err) {
