@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { getActiveLibrary, getCurrentUser, getCurrentUserId } from './auth.js';
 
-const supabase = createClient(
+export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY,
 );
@@ -15,6 +15,24 @@ function parseAsrVersionKey(versionKey) {
   const stripped = (versionKey || '').replace(/^asr-/, '');
   const m = stripped.match(/^(.*)-(\d{10,})$/);
   return m ? { model: m[1], runId: m[2] } : { model: stripped, runId: null };
+}
+
+// ── KolYid import field decorator ───────────────────────────────────
+// Mutates each audio object in `audioObjects` to attach kolyid_imported_*
+// fields read from the matching DB row in `dbRows`. Done here, OUTSIDE the
+// audio mapper above, to keep this feature branch's diff to the mapper
+// at zero — concurrent branches that also add mapper fields will not
+// conflict with us at merge time.
+function decorateAudioWithKolyid(audioObjects, dbRows) {
+  if (!Array.isArray(audioObjects) || !Array.isArray(dbRows)) return;
+  const byId = new Map(dbRows.map(r => [r.id, r]));
+  for (const a of audioObjects) {
+    const row = byId.get(a.id);
+    if (!row) continue;
+    a.kolyidImportedAt = row.kolyid_imported_at || null;
+    a.kolyidImportedBy = row.kolyid_imported_by || null;
+    a.kolyidTranscriptUrl = row.kolyid_transcript_url || null;
+  }
 }
 
 // ── Audio file FK guard ──────────────────────────────────────────────
@@ -600,6 +618,11 @@ export async function loadFromSupabase(libraryId = null) {
       createdAt: a.created_at || null,
     }));
 
+    // Decorate kolyid_* fields here, AFTER the mapper, to keep the conflict
+    // surface zero against parallel feature branches that also add fields to
+    // the audio mapper (see CLAUDE.md → "merge hygiene").
+    decorateAudioWithKolyid(audio, audioData || []);
+
     const trims = {};
     audio.forEach(a => {
       if (a.trimStart || a.trimEnd) {
@@ -744,6 +767,9 @@ export async function loadForDetailPage(audioId, libraryId = null) {
       trainingExportedBy: a.training_exported_by || null,
       createdAt: a.created_at || null,
     }));
+
+    // Same post-map kolyid decoration as loadFromSupabase — see comment there.
+    decorateAudioWithKolyid(audio, audioRows);
 
     const trims = {};
     audio.forEach(x => { if (x.trimStart || x.trimEnd) trims[x.id] = { start: x.trimStart, end: x.trimEnd }; });

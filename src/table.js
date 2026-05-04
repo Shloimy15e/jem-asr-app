@@ -640,6 +640,23 @@ function buildTable(rows) {
             });
           });
           td.appendChild(nameSpan);
+          // Inline KolYid-imported badge — only shown when the row was pushed
+          // to the cleaner. Click goes to the imported transcript on KolYid;
+          // stops propagation so it doesn't trigger row-click navigation.
+          if (row.kolyidImportedAt) {
+            const badge = document.createElement('a');
+            badge.className = 'kolyid-badge';
+            badge.textContent = 'Imported';
+            badge.title = 'Imported to KolYid'
+              + (row.kolyidImportedBy ? ` by ${row.kolyidImportedBy}` : '');
+            if (row.kolyidTranscriptUrl) {
+              badge.href = row.kolyidTranscriptUrl;
+              badge.target = '_blank';
+              badge.rel = 'noopener';
+            }
+            badge.addEventListener('click', (e) => e.stopPropagation());
+            td.appendChild(badge);
+          }
           break;
         }
         case 'year': {
@@ -1467,6 +1484,15 @@ function updateTable() {
 
   // Build and append bulk action bar
   const bulkBar = buildBulkBar();
+  // KolYid send button installed post-build so buildBulkBar's diff stays
+  // empty for this feature — keeps merge clean against parallel branches
+  // that add their own bulk-bar buttons.
+  import('./send-to-kolyid.js').then(({ installSendToKolyidBulkButton }) => {
+    installSendToKolyidBulkButton(bulkBar, () => [...selectedIds], () => {
+      selectedIds.clear();
+      updateTable();
+    });
+  });
   _container.appendChild(bulkBar);
 }
 

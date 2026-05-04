@@ -321,6 +321,31 @@ function renderDetailPage(audioId, audio, state, container) {
   titleBar.appendChild(renderDetailPipeline(audioId));
   container.appendChild(titleBar);
 
+  // KolYid imported indicator — shown only when this row was successfully
+  // pushed to the cleaner. Keeps the user oriented (the badge in the table
+  // is small; this is the corresponding cue on Show).
+  if (audio.kolyidImportedAt) {
+    const line = document.createElement('div');
+    line.className = 'kolyid-status-line';
+    const checkmark = document.createElement('span');
+    checkmark.textContent = '✓';
+    line.appendChild(checkmark);
+    const label = document.createElement('span');
+    const dateText = new Date(audio.kolyidImportedAt).toLocaleDateString();
+    const byText = audio.kolyidImportedBy ? ` by ${audio.kolyidImportedBy}` : '';
+    label.textContent = `Imported to KolYid${byText} on ${dateText}`;
+    line.appendChild(label);
+    if (audio.kolyidTranscriptUrl) {
+      const link = document.createElement('a');
+      link.href = audio.kolyidTranscriptUrl;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = 'Open transcript →';
+      line.appendChild(link);
+    }
+    container.appendChild(line);
+  }
+
   // Split-relationship links — parent + sibling parts. Split IDs follow
   // `<parentId>_p<n>` (see split.js:nextSplitId) so the whole hierarchy is
   // derivable from `state.audio` without any schema change.
@@ -2351,6 +2376,15 @@ function renderApproveBar(audioId, container, pageContainer) {
   reCleanBtn.style.display = 'none';
   approveBar.appendChild(reCleanBtn);
 
+  // Send to KolYid — exports audio + alignment to the yiddish-cleaner app.
+  // Disabled while ineligible (no alignment / trimmed audio / no text); the
+  // canSendToKolyid reason surfaces as the button's tooltip.
+  const sendBtn = document.createElement('button');
+  sendBtn.className = 'btn btn-secondary';
+  sendBtn.style.cssText = 'margin-left:8px;';
+  sendBtn.textContent = 'Send to KolYid';
+  approveBar.appendChild(sendBtn);
+
   container.appendChild(approveBar);
 
   function sync() {
@@ -2375,8 +2409,75 @@ function renderApproveBar(audioId, container, pageContainer) {
       approveStatus.style.color = '';
     }
     reCleanBtn.style.display = isRejected ? '' : 'none';
+    syncSendBtn();
+  }
+
+  // Send-button gate: enable only when canSendToKolyid says yes; tooltip
+  // surfaces the disabled reason. Re-evaluated on every sync() so newly
+  // approved transcripts unlock the button without a re-render.
+  let canSendCache = null;
+  let canSendModule = null;
+  async function ensureCanSend() {
+    if (!canSendModule) canSendModule = await import('./send-to-kolyid.js');
+    return canSendModule;
+  }
+  function syncSendBtn() {
+    const audio = getState().audio.find(a => a.id === audioId);
+    if (audio?.kolyidImportedAt) {
+      sendBtn.textContent = '✓ Sent to KolYid';
+      sendBtn.title = audio.kolyidTranscriptUrl
+        ? `Open imported transcript: ${audio.kolyidTranscriptUrl}`
+        : 'Already sent — re-send to update';
+      sendBtn.disabled = false;
+      return;
+    }
+    // Lazy-evaluate eligibility on first sync; subsequent syncs reuse the
+    // cached predicate, which is cheap to recompute against current state.
+    ensureCanSend().then(({ canSendToKolyid }) => {
+      const result = canSendToKolyid(audioId);
+      canSendCache = result;
+      sendBtn.disabled = !result.ok;
+      sendBtn.title = result.ok ? 'Send to KolYid' : result.reason;
+      sendBtn.textContent = 'Send to KolYid';
+    }).catch(() => { /* ignore — module load failures will surface on click */ });
+    if (canSendCache) {
+      sendBtn.disabled = !canSendCache.ok;
+      sendBtn.title = canSendCache.ok ? 'Send to KolYid' : canSendCache.reason;
+    }
   }
   sync();
+
+  sendBtn.addEventListener('click', async () => {
+    const audio = getState().audio.find(a => a.id === audioId);
+    // Re-send is implicitly an "open" if the URL is already known — saves a
+    // round trip when the operator just wants to view what they exported.
+    if (audio?.kolyidImportedAt && audio?.kolyidTranscriptUrl
+        && !confirm('Already imported. Re-send and overwrite the KolYid copy?')) {
+      window.open(audio.kolyidTranscriptUrl, '_blank', 'noopener');
+      return;
+    }
+    sendBtn.disabled = true;
+    const originalText = sendBtn.textContent;
+    sendBtn.textContent = 'Sending…';
+    try {
+      const { sendOneToKolyid } = await ensureCanSend();
+      const result = await sendOneToKolyid(audioId);
+      if (result.ok) {
+        sync();
+        if (result.warning) {
+          alert(`Sent — but: ${result.warning}`);
+        }
+      } else {
+        alert('Failed to send: ' + (result.error || 'unknown error'));
+        sendBtn.textContent = originalText;
+        sendBtn.disabled = false;
+      }
+    } catch (err) {
+      alert('Failed to send: ' + err.message);
+      sendBtn.textContent = originalText;
+      sendBtn.disabled = false;
+    }
+  });
 
   approveBtn.addEventListener('click', () => {
     const s = getState();
