@@ -19,6 +19,22 @@ import { getActiveLibrary, getActiveLibraryConfig, getCurrentUser } from './auth
 import { getState } from './state.js';
 
 /**
+ * Treat only absolute http/https URLs as URL-shaped. Relative paths in
+ * r2TranscriptLink (e.g. "transcripts-txt/foo.txt" for older imports) are
+ * dropped from the payload — the receiver's `nullable | url` rule rejects
+ * everything else.
+ */
+function isHttpUrl(value) {
+  if (typeof value !== 'string' || value === '') return false;
+  try {
+    const u = new URL(value);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Returns { ok: boolean, reason?: string } — predicate that mirrors the
  * receiver's validation. Tells the UI whether the row is sendable; the bulk
  * action skips ineligible rows with this reason exposed in the failure list.
@@ -31,9 +47,6 @@ export function canSendToKolyid(audioId) {
 
   const alignment = state.alignments?.[audioId];
   if (!alignment) return { ok: false, reason: 'No alignment yet' };
-
-  const text = (state.edited?.[audioId]?.text || state.cleaning?.[audioId]?.cleanedText || '').trim();
-  if (!text) return { ok: false, reason: 'No edited or cleaned transcript text' };
 
   return { ok: true };
 }
@@ -60,7 +73,9 @@ export async function buildPayload(audioId) {
     }
   }
 
-  const text = (state.edited?.[audioId]?.text || state.cleaning?.[audioId]?.cleanedText || '').trim();
+  const text = state.edited?.[audioId]?.text?.trim()
+    || state.cleaning?.[audioId]?.cleanedText?.trim()
+    || words.map(w => (w.word ?? w.text ?? '')).filter(Boolean).join(' ');
   if (!text) throw new Error(`No transcript text for ${audioId}`);
 
   const mapping = state.mappings?.[audioId];
@@ -94,19 +109,21 @@ export async function buildPayload(audioId) {
     transcript: {
       name: transcript?.name || audio.name,
       text,
-      ...(transcript?.r2TranscriptLink ? { source_url: transcript.r2TranscriptLink } : {}),
+      ...(isHttpUrl(transcript?.r2TranscriptLink) ? { source_url: transcript.r2TranscriptLink } : {}),
       alignment: {
         provider: alignment.aligner || 'kohnai_align',
         ...(alignment.model ? { model: alignment.model } : {}),
         avg_confidence: alignment.avgConfidence ?? null,
         low_confidence_count: alignment.lowConfidenceCount ?? 0,
         aligned_at: alignment.alignedAt || new Date().toISOString(),
-        words: words.map(w => ({
-          word: w.word ?? w.text ?? '',
-          start: typeof w.start === 'number' ? w.start : 0,
-          end: typeof w.end === 'number' ? w.end : 0,
-          ...(typeof w.confidence === 'number' ? { confidence: w.confidence } : {}),
-        })),
+        words: words
+          .map(w => ({
+            word: String(w.word ?? w.text ?? '').trim(),
+            start: typeof w.start === 'number' ? w.start : 0,
+            end: typeof w.end === 'number' ? w.end : 0,
+            ...(typeof w.confidence === 'number' ? { confidence: w.confidence } : {}),
+          }))
+          .filter(w => w.word !== ''),
       },
     },
   };
@@ -238,7 +255,7 @@ export function installSendToKolyidBulkButton(bar, getSelectedIds, clearSelectio
  *
  * Resolves to { successes, failures, results: [{audioId, ok, error?, transcriptUrl?}] }.
  */
-export async function sendManyToKolyid(audioIds, { concurrency = 3, onProgress } = {}) {
+export async function sendManyToKolyid(audioIds, { concurrency = 1, onProgress } = {}) {
   const queue = [...audioIds];
   const results = [];
   let successes = 0;

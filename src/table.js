@@ -57,6 +57,7 @@ function toggleInlinePlay(btn, audioUrl, audioId) {
 // ── Internal state ──────────────────────────────────────────────────
 let fiftyFilter = '';  // '' = all, 'yes' = 50hr only, 'no' = not in 50hr
 let favoritesFilter = ''; // '' = all, 'yes' = favorites only
+let importedFilter = ''; // '' = all, 'yes' = imported to KolYid only, 'no' = not imported
 let statusFilter = [];  // array of selected statuses, empty = all
 let currentSort = { column: null, dir: 'asc' };
 let currentPage = 1;
@@ -92,6 +93,7 @@ function updateURL() {
   const params = new URLSearchParams();
   if (fiftyFilter) params.set('fifty', fiftyFilter);
   if (favoritesFilter) params.set('fav', favoritesFilter);
+  if (importedFilter) params.set('imported', importedFilter);
   if (statusFilter.length) params.set('status', statusFilter.join(','));
   if (currentPage > 1) params.set('page', String(currentPage));
   if (searchTerm) params.set('q', searchTerm);
@@ -183,6 +185,9 @@ function getRowData(audio) {
     status,
     isBenchmark: !!audio.isBenchmark,
     isSelected50hr: !!audio.isSelected50hr,
+    kolyidImportedAt: audio.kolyidImportedAt || null,
+    kolyidImportedBy: audio.kolyidImportedBy || null,
+    kolyidTranscriptUrl: audio.kolyidTranscriptUrl || null,
   };
 }
 
@@ -1223,6 +1228,7 @@ function renderTable(container, options = {}) {
   const initParams = new URLSearchParams(window.location.search);
   if (initParams.has('fifty')) fiftyFilter = initParams.get('fifty') || '';
   if (initParams.has('fav')) favoritesFilter = initParams.get('fav') || '';
+  if (initParams.has('imported')) importedFilter = initParams.get('imported') || '';
   if (initParams.has('status')) statusFilter = initParams.get('status').split(',').filter(Boolean);
   // Legacy: support old ?filter= param
   if (initParams.has('filter')) {
@@ -1263,6 +1269,19 @@ function renderTable(container, options = {}) {
     favSelect.value = favoritesFilter;
     favSelect.addEventListener('change', () => {
       favoritesFilter = favSelect.value;
+      currentPage = 1;
+      selectedIds.clear();
+      updateURL();
+      updateTable();
+    });
+  }
+
+  // Wire KolYid imported filter
+  const importedSelect = document.getElementById('filter-imported');
+  if (importedSelect) {
+    importedSelect.value = importedFilter;
+    importedSelect.addEventListener('change', () => {
+      importedFilter = importedSelect.value;
       currentPage = 1;
       selectedIds.clear();
       updateURL();
@@ -1362,6 +1381,7 @@ function renderTable(container, options = {}) {
     resetBtn.addEventListener('click', () => {
       fiftyFilter = '';
       favoritesFilter = '';
+      importedFilter = '';
       statusFilter = [];
       filterYear = '';
       filterMonth = '';
@@ -1428,6 +1448,13 @@ function updateTable() {
   if (favoritesFilter === 'yes') {
     const favs = getState().favorites || {};
     filteredAudio = filteredAudio.filter(a => !!favs[a.id]);
+  }
+
+  // Apply KolYid-imported filter
+  if (importedFilter === 'yes') {
+    filteredAudio = filteredAudio.filter(a => !!a.kolyidImportedAt);
+  } else if (importedFilter === 'no') {
+    filteredAudio = filteredAudio.filter(a => !a.kolyidImportedAt);
   }
 
   // Apply confidence filter
