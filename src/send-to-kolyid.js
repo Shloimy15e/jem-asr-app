@@ -80,12 +80,27 @@ function findMappedTranscript(state, audioId) {
  * URL exists we ship source_url and let KolYid parse it via its standard
  * import pipeline (PhpOffice/PhpWord), which handles .doc/.docx better
  * than the browser-side mammoth path.
+ *
+ * Defensive guard: any candidate that matches the mapped row's firstLine
+ * is treated as missing. firstLine is the 15-word preview the UI displays
+ * (see table.js "First 15 Words"), and cleaning.js's fetch fallback can
+ * surface it in place of the real text when both R2 and Supabase fail.
+ * Sending it would silently truncate the transcript downstream.
  */
 function resolveCachedTranscriptText(state, audioId) {
-  return state.edited?.[audioId]?.text?.trim()
-    || state.cleaning?.[audioId]?.cleanedText?.trim()
-    || findMappedTranscript(state, audioId)?.text?.trim()
-    || '';
+  const mapped = findMappedTranscript(state, audioId);
+  const firstLine = mapped?.firstLine?.trim() || null;
+
+  const candidates = [
+    state.edited?.[audioId]?.text?.trim(),
+    state.cleaning?.[audioId]?.cleanedText?.trim(),
+    mapped?.text?.trim(),
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && candidate !== firstLine) return candidate;
+  }
+  return '';
 }
 
 /**
