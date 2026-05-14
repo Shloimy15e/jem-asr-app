@@ -13,17 +13,16 @@
 // and state.audio[idx].kolyidTranscriptUrl in place so the table badge appears
 // immediately without reloading.
 
-import { supabase } from './db.js';
-import { loadAlignmentWords } from './db.js';
+import { supabase, loadAlignmentWords } from './db.js';
 import { getActiveLibrary, getActiveLibraryConfig, getCurrentUser } from './auth.js';
 import { getState } from './state.js';
 
-/**
- * Treat only absolute http/https URLs as URL-shaped. Relative paths in
- * r2TranscriptLink (e.g. "transcripts-txt/foo.txt" for older imports) are
- * dropped from the payload — the receiver's `nullable | url` rule rejects
- * everything else.
- */
+// Public R2 bucket that backs the local /api/transcript proxy — mirrors
+// DEFAULT_R2_BASE in functions/api/transcript.js. Used to upgrade relative
+// proxy paths (the form most state.transcripts rows carry) into the
+// absolute URLs KolYid needs in order to fetch the file itself.
+const R2_TRANSCRIPT_BASE = 'https://audio.kohnai.ai/transcripts-txt/';
+
 function isHttpUrl(value) {
   if (typeof value !== 'string' || value === '') return false;
   try {
@@ -35,21 +34,57 @@ function isHttpUrl(value) {
 }
 
 /**
- * Resolve the transcript text we want to ship. Three places hold one, in
- * decreasing freshness order: the operator's in-flight edits, the cleaned
- * output of the auto-cleaner, and the original transcript that lives on the
- * mapped state.transcripts row (cached by detail.js / cleaning.js when the
- * operator opened the file).
+ * Resolve a state.transcripts.r2TranscriptLink to an absolute, KolYid-fetchable
+ * URL. Handles three formats observed in production:
+ *  - already absolute https://audio.kohnai.ai/...  → returned verbatim
+ *  - local proxy "/api/transcript?name=foo.txt"   → upgraded to R2 absolute
+ *  - bare relative "transcripts-txt/foo.txt"      → upgraded to R2 absolute
+ *
+ * Returns null when nothing usable is present.
  */
-function resolveTranscriptText(state, audioId) {
-  const mapping = state.mappings?.[audioId];
-  const mappedTranscript = mapping
-    ? (state.transcripts || []).find(t => t.id === mapping.transcriptId)
-    : null;
+function resolveSourceUrl(link) {
+  if (typeof link !== 'string' || link === '') return null;
 
+  if (isHttpUrl(link)) return link;
+
+  if (link.startsWith('/api/transcript')) {
+    try {
+      const parsed = new URL(link, 'https://placeholder.local');
+      const name = parsed.searchParams.get('name');
+      if (name) return R2_TRANSCRIPT_BASE + encodeURIComponent(name);
+    } catch { /* fall through */ }
+    return null;
+  }
+
+  // Bare relative path — strip everything up to and including the last slash
+  // and re-attach it under the canonical bucket prefix.
+  const filename = link.split('/').pop();
+  if (filename) return R2_TRANSCRIPT_BASE + encodeURIComponent(filename);
+
+  return null;
+}
+
+/**
+ * Locate the mapped state.transcripts row for an audio file, if any.
+ */
+function findMappedTranscript(state, audioId) {
+  const mapping = state.mappings?.[audioId];
+  if (!mapping) return null;
+  return (state.transcripts || []).find(t => t.id === mapping.transcriptId) || null;
+}
+
+/**
+ * Text the operator already has in memory — edits, cleaner output, or the
+ * mapped transcript that detail.js / cleaning.js cached when the row was
+ * opened. We never fetch the original file ourselves: when only the file
+ * URL exists we ship source_url and let KolYid parse it via its standard
+ * import pipeline (PhpOffice/PhpWord), which handles .doc/.docx better
+ * than the browser-side mammoth path.
+ */
+function resolveCachedTranscriptText(state, audioId) {
   return state.edited?.[audioId]?.text?.trim()
     || state.cleaning?.[audioId]?.cleanedText?.trim()
-    || mappedTranscript?.text?.trim()
+    || findMappedTranscript(state, audioId)?.text?.trim()
     || '';
 }
 
@@ -58,9 +93,13 @@ function resolveTranscriptText(state, audioId) {
  * receiver's validation. Tells the UI whether the row is sendable; the bulk
  * action skips ineligible rows with this reason exposed in the failure list.
  *
- * Alignment is intentionally NOT required here: KolYid will run its own
- * aligner when the payload omits the alignment key, which lets us export
- * in-review transcripts that haven't been aligned yet.
+ * A row is sendable when ANY of three sources can produce transcript text:
+ *  - alignment row exists (its words join into text in buildPayload)
+ *  - text is already cached locally (operator edits / cleaning / mapped row)
+ *  - mapped transcript has a resolvable file URL (KolYid parses it)
+ *
+ * The transcript file is sent alongside text whenever it's resolvable —
+ * see buildPayload for the always-attach behavior.
  */
 export function canSendToKolyid(audioId) {
   const state = getState();
@@ -68,11 +107,13 @@ export function canSendToKolyid(audioId) {
   if (!audio) return { ok: false, reason: 'Audio not found in state' };
   if (!audio.r2Link) return { ok: false, reason: 'Audio has no R2 link' };
 
-  if (!resolveTranscriptText(state, audioId)) {
-    return { ok: false, reason: 'No transcript text yet' };
-  }
+  if (state.alignments?.[audioId]) return { ok: true };
+  if (resolveCachedTranscriptText(state, audioId)) return { ok: true };
 
-  return { ok: true };
+  const mapped = findMappedTranscript(state, audioId);
+  if (resolveSourceUrl(mapped?.r2TranscriptLink)) return { ok: true };
+
+  return { ok: false, reason: 'No alignment, text, or transcript file' };
 }
 
 /**
@@ -97,16 +138,21 @@ export async function buildPayload(audioId) {
   // Word-join is a last-ditch fallback when alignment exists but no canonical
   // text was ever loaded — covers historical rows where only the aligned
   // words made it into state.
-  const text = resolveTranscriptText(state, audioId)
+  const text = resolveCachedTranscriptText(state, audioId)
     || (Array.isArray(words) && words.length > 0
       ? words.map(w => (w.word ?? w.text ?? '')).filter(Boolean).join(' ')
       : '');
-  if (!text) throw new Error(`No transcript text for ${audioId}`);
 
-  const mapping = state.mappings?.[audioId];
-  const transcript = mapping
-    ? state.transcripts.find(t => t.id === mapping.transcriptId)
-    : null;
+  const transcript = findMappedTranscript(state, audioId);
+  const sourceUrl = resolveSourceUrl(transcript?.r2TranscriptLink);
+
+  // KolYid's contract is text-or-source_url. We always ship source_url when
+  // we have one, even alongside text — the receiver attaches the original
+  // file as media for downstream consumers. Reject only when neither is
+  // available, so the bulk progress UI shows a clear reason rather than a 422.
+  if (!text && !sourceUrl) {
+    throw new Error(`No transcript text or file for ${audioId}`);
+  }
 
   const libraryConfig = getActiveLibraryConfig();
   const libraryId = getActiveLibrary() || 'jemedia';
@@ -153,8 +199,8 @@ export async function buildPayload(audioId) {
     },
     transcript: {
       name: transcript?.name || audio.name,
-      text,
-      ...(isHttpUrl(transcript?.r2TranscriptLink) ? { source_url: transcript.r2TranscriptLink } : {}),
+      ...(text ? { text } : {}),
+      ...(sourceUrl ? { source_url: sourceUrl } : {}),
       ...alignmentPayload,
     },
   };
