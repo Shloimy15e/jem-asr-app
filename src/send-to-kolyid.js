@@ -35,9 +35,32 @@ function isHttpUrl(value) {
 }
 
 /**
+ * Resolve the transcript text we want to ship. Three places hold one, in
+ * decreasing freshness order: the operator's in-flight edits, the cleaned
+ * output of the auto-cleaner, and the original transcript that lives on the
+ * mapped state.transcripts row (cached by detail.js / cleaning.js when the
+ * operator opened the file).
+ */
+function resolveTranscriptText(state, audioId) {
+  const mapping = state.mappings?.[audioId];
+  const mappedTranscript = mapping
+    ? (state.transcripts || []).find(t => t.id === mapping.transcriptId)
+    : null;
+
+  return state.edited?.[audioId]?.text?.trim()
+    || state.cleaning?.[audioId]?.cleanedText?.trim()
+    || mappedTranscript?.text?.trim()
+    || '';
+}
+
+/**
  * Returns { ok: boolean, reason?: string } — predicate that mirrors the
  * receiver's validation. Tells the UI whether the row is sendable; the bulk
  * action skips ineligible rows with this reason exposed in the failure list.
+ *
+ * Alignment is intentionally NOT required here: KolYid will run its own
+ * aligner when the payload omits the alignment key, which lets us export
+ * in-review transcripts that haven't been aligned yet.
  */
 export function canSendToKolyid(audioId) {
   const state = getState();
@@ -45,37 +68,39 @@ export function canSendToKolyid(audioId) {
   if (!audio) return { ok: false, reason: 'Audio not found in state' };
   if (!audio.r2Link) return { ok: false, reason: 'Audio has no R2 link' };
 
-  const alignment = state.alignments?.[audioId];
-  if (!alignment) return { ok: false, reason: 'No alignment yet' };
+  if (!resolveTranscriptText(state, audioId)) {
+    return { ok: false, reason: 'No transcript text yet' };
+  }
 
   return { ok: true };
 }
 
 /**
  * Build the JSON payload that matches KolYid's /api/imports/jem-asr contract.
- * Triggers a lazy fetch of the alignment word array (omitted from startup
- * load) when needed.
+ * Alignment is optional: when an alignment row exists for the audio we lazy-fetch
+ * its words (omitted from the startup query) and embed them; otherwise we omit
+ * the alignment key entirely and KolYid runs its own aligner.
  */
 export async function buildPayload(audioId) {
   const state = getState();
   const audio = state.audio.find(a => a.id === audioId);
   if (!audio) throw new Error(`Audio ${audioId} not in state`);
 
-  const alignment = state.alignments[audioId];
-  if (!alignment) throw new Error(`No alignment for ${audioId}`);
-
-  // alignment.words is omitted from the startup query — fetch lazily.
-  let words = alignment.words;
-  if (!Array.isArray(words) || words.length === 0) {
-    words = await loadAlignmentWords(audioId);
-    if (!Array.isArray(words) || words.length === 0) {
-      throw new Error(`Alignment for ${audioId} has no words`);
-    }
+  const alignment = state.alignments?.[audioId] || null;
+  let words = null;
+  if (alignment) {
+    words = Array.isArray(alignment.words) && alignment.words.length > 0
+      ? alignment.words
+      : await loadAlignmentWords(audioId);
   }
 
-  const text = state.edited?.[audioId]?.text?.trim()
-    || state.cleaning?.[audioId]?.cleanedText?.trim()
-    || words.map(w => (w.word ?? w.text ?? '')).filter(Boolean).join(' ');
+  // Word-join is a last-ditch fallback when alignment exists but no canonical
+  // text was ever loaded — covers historical rows where only the aligned
+  // words made it into state.
+  const text = resolveTranscriptText(state, audioId)
+    || (Array.isArray(words) && words.length > 0
+      ? words.map(w => (w.word ?? w.text ?? '')).filter(Boolean).join(' ')
+      : '');
   if (!text) throw new Error(`No transcript text for ${audioId}`);
 
   const mapping = state.mappings?.[audioId];
@@ -90,6 +115,26 @@ export async function buildPayload(audioId) {
   const durationSeconds = (typeof audio.estMinutes === 'number' && audio.estMinutes > 0)
     ? audio.estMinutes * 60
     : null;
+
+  const alignmentPayload = (alignment && Array.isArray(words) && words.length > 0)
+    ? {
+      alignment: {
+        provider: alignment.aligner || 'kohnai_align',
+        ...(alignment.model ? { model: alignment.model } : {}),
+        avg_confidence: alignment.avgConfidence ?? null,
+        low_confidence_count: alignment.lowConfidenceCount ?? 0,
+        aligned_at: alignment.alignedAt || new Date().toISOString(),
+        words: words
+          .map(w => ({
+            word: String(w.word ?? w.text ?? '').trim(),
+            start: typeof w.start === 'number' ? w.start : 0,
+            end: typeof w.end === 'number' ? w.end : 0,
+            ...(typeof w.confidence === 'number' ? { confidence: w.confidence } : {}),
+          }))
+          .filter(w => w.word !== ''),
+      },
+    }
+    : {};
 
   return {
     source: {
@@ -110,21 +155,7 @@ export async function buildPayload(audioId) {
       name: transcript?.name || audio.name,
       text,
       ...(isHttpUrl(transcript?.r2TranscriptLink) ? { source_url: transcript.r2TranscriptLink } : {}),
-      alignment: {
-        provider: alignment.aligner || 'kohnai_align',
-        ...(alignment.model ? { model: alignment.model } : {}),
-        avg_confidence: alignment.avgConfidence ?? null,
-        low_confidence_count: alignment.lowConfidenceCount ?? 0,
-        aligned_at: alignment.alignedAt || new Date().toISOString(),
-        words: words
-          .map(w => ({
-            word: String(w.word ?? w.text ?? '').trim(),
-            start: typeof w.start === 'number' ? w.start : 0,
-            end: typeof w.end === 'number' ? w.end : 0,
-            ...(typeof w.confidence === 'number' ? { confidence: w.confidence } : {}),
-          }))
-          .filter(w => w.word !== ''),
-      },
+      ...alignmentPayload,
     },
   };
 }

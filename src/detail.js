@@ -2376,9 +2376,9 @@ function renderApproveBar(audioId, container, pageContainer) {
   reCleanBtn.style.display = 'none';
   approveBar.appendChild(reCleanBtn);
 
-  // Send to KolYid — exports audio + alignment to the yiddish-cleaner app.
-  // Disabled while ineligible (no alignment / trimmed audio / no text); the
-  // canSendToKolyid reason surfaces as the button's tooltip.
+  // Send to KolYid — exports audio + transcript (alignment optional) to the
+  // yiddish-cleaner app. Disabled while ineligible; the canSendToKolyid
+  // reason surfaces as the button's tooltip.
   const sendBtn = document.createElement('button');
   sendBtn.className = 'btn btn-secondary';
   sendBtn.style.cssText = 'margin-left:8px;';
